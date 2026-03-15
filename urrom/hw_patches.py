@@ -24,10 +24,12 @@ m232.org wiki, and the "engine-not-start" / RS2 non-starter threads):
      Boost range: stock 200 kPa → up to ~2.9 bar absolute with 400 kPa sensor
 
   2. AAN → RS2 ECU conversion (hardware equivalent)
-     └── Swap resistor R201 on motor board + install 3-bar (300 kPa) MAP sensor
+     └── Swap resistor R201 on motor board + install 300 kPa MAP sensor
          + install correct ADU/RS2 chip set (551C fuel chip, RS2 boost chip)
-     Note: AAN and RS2 ECU have identical hardware; differences are R201, MAP
-           sensor, and chip set only. No PCB hardware difference exists.
+     R201 spec: 5.6 kΩ 1%, 1206 SMD (confirmed by PRJ, S2Forum 2013)
+       - AAN stock R201 ≈ 6.15 kΩ; RS2 conversion requires 5.6 kΩ 1% 1206
+     Note: AAN and RS2 ECU share identical PCB hardware. No other board
+           differences exist — only R201, MAP sensor, and chip set.
 
   3. Chip socket installation
      └── De-solder original windowed EPROM chips, solder in DIP-28 sockets,
@@ -49,6 +51,57 @@ m232.org wiki, and the "engine-not-start" / RS2 non-starter threads):
      There is no software-computed checksum in unmodified stock M2.3 EPROMs.
      The M232csum.dll applies a 16-bit accumulator sum to verify prjmod ROMs
      after burning; stock ROMs rely on EPROM read-back verification only.
+
+──────────────────────────────────────────────────────────────────────────────
+M2.3.2 ECU ADC pin map — motor chip processor
+(Source: vwnut8392, S2Forum "Added feature Patcher for PRJmod", 2018–2022)
+
+  Motor chip ADCs:
+    AN0 = TPS  — Throttle Position Sensor
+    AN1 = UBAT — Battery voltage
+    AN2 = IAT  — Intake Air Temperature,  ECU pin 44
+    AN3 = ECT  — Engine Coolant Temperature, ECU pin 45
+    AN4 = Coding Plug Pin 2, ECU pin 39  ← FREE ADC (ethanol sensor, WB logging)
+    AN5 = (automatic transmission related in stock)  ← MAP sensor input in SD mode
+          When R660 is removed and the boost→motor inter-board wire is added,
+          the MAP sensor signal from the boost board arrives here.
+    AN6 = ECU pin 46 (map switching on early ECUs) ← repurposed for WB logging
+    AN7 = possibly Lambda on S600 variant
+
+  Boost chip ADCs (AN2 and AN6 are grounded by boost processor CPU — cannot be
+  activated without physically lifting/desoldering the boost chip processor):
+    AN2 = tied to ground by CPU  [requires boost processor lifted to use]
+    AN3 = TPS for boost code → RAM_6C
+    AN4 = IAT for boost → RAM_69
+    AN5 = ECT for boost → RAM_6A
+    AN6 = tied to ground by CPU  [requires boost processor lifted to use]
+    AN7 = Altitude sensor signal → RAM_67
+
+──────────────────────────────────────────────────────────────────────────────
+PRJmod firmware patches (from vwnut8392 patcher XDF, target: 8A0 907 551B only)
+
+  1. Wideband input logging (pin 46 / AN6):
+     Replaces MAF-related bytes in high-speed logging stream with ADC4 raw value.
+     8051 patch code at free space: 90 BE 04 12 17 CF 22
+     Works with Zeitronix ZT-2/ZT-3 or any 0-5V wideband controller.
+     Patcher also corrects motor chip checksum. Only works on unmodified 551B.
+     "Base data does not match" error = bin was already modified; hand-port instead.
+
+  2. NLS activation via coding plug pin 1 (instead of pin 2 + 12V):
+     Requires clutch pedal brake-light switch (open=up, ground=pressed).
+
+  3. Race fuel MAP switching via ECU pin 42 (BETA, untested as of 2018):
+     Grounding pin 42 switches motor chip to race fuel MAP.
+     May require adding wire to ECU connector.
+     Note: pin 42 also used as prjmod SD enable ground in some builds.
+
+  4. CEL as shift light:
+     CEL is a grounding output (ECU sinks). RPM threshold set ~300 RPM below shift.
+     European cars may need CEL wire added to harness.
+
+  AC idle fix (separate patch thread):
+     prjmod removed AC idle stepper increase from 551B. RAM_20.6 is the AC-on flag.
+     Patch restores reading of "in-drive" automatic idle map when AC is on.
 ──────────────────────────────────────────────────────────────────────────────
 """
 
