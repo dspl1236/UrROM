@@ -485,6 +485,284 @@ VARIANT_551AA = ROMVariant(
                           "Same codebase. Map addresses confirmed on ABY bin.",
 )
 
+# ── Confirmed map addresses — 551AA / 0x0202 prjmod + 034EFI firmware ────────
+#
+# Source: PRJ m232.xdf (136 tables) + .034 Rip Chip tuned file diff analysis
+#         (8 tuned files vs stock, byte-level diff).
+#
+# This firmware layout applies to:
+#   - 034EFI "Rip Chip" v1.0 (034 brand tuning, MAF-based SD)
+#   - prjmod base ROM for AAN/ABY
+#   - All 4A0907551AA / 551A  chips with build number 0x0202
+#
+# Axis values are dynamic (MAF-based, embedded in map data) and vary per tune.
+# Fixed decode formulas per PRJ XDF:
+#   Fuel:  1 / (raw/128) * 14.7 = AFR
+#   Ign:   raw * 0.75 - 22.5 = °BTDC
+#   MAP kPa: raw / 1.035
+#   WGDC %:  raw / 192 * 100
+#
+# Newly confirmed from .034 tune diff analysis:
+#   WH[0x0CEB:0x0CF0]  — Injector flow scaling (5×1) — varies with injector cc
+#   WH[0x0CBF:0x0CC4]  — MAF high-load voltage clamp upper (5×1)
+#   WH[0x0CCB:0x0CD0]  — MAF high-load voltage clamp lower (5×1)
+#   WH[0x0D71:0x0D8F]  — High-load injector correction (32 bytes, 550cc+ tunes)
+#   WH[0x1450:0x1456]  — Knock level 2 ignition limit (6×1, retarded 5° in 3071 tunes)
+#   WH[0x1B7A:0x1B7C]  — Warm idle setpoint RPM (3×1, raw×10 = RPM)
+#   WH[0x1CE8:0x1CF5]  — Boost target secondary table (2 rows × 6 cols, kPa)
+#   WH[0x7F00:0x7F40]  — ROM version/ID string (034EFI chip ID + tune description)
+#
+# Injector flow scaling reference (WH[0x0CEB], key byte [0]):
+#   0xAA (170) = stock AAN ~440cc equivalent
+#   0xA3 (163) = RS2 stock (~440cc RS2 injectors, slightly different)
+#   0x97 (151) = 28RS Stage1 unspecified injectors
+#   0x88 (136) = 42lb "green top" injectors (~440cc, different flow curve)
+#   0x82 (130) = 550cc 91Oct tune
+#   0x65 (101) = 440cc Siemens (2871 turbo build, higher flow needed)
+#   (Lower byte = larger effective injector flow at the sample MAF point)
+
+def _prj_ign_decode(raw):
+    return [round(b * 0.75 - 22.5, 1) for b in raw]
+
+def _prj_ign_encode(val_list):
+    return [max(0, min(255, round((v + 22.5) / 0.75))) for v in val_list]
+
+def _prj_fuel_decode(raw):
+    return [round(1 / (b / 128) * 14.7, 2) if b > 0 else 0.0 for b in raw]
+
+def _prj_fuel_encode(val_list):
+    return [max(1, min(255, round(14.7 / v * 128))) if v > 0 else 128 for v in val_list]
+
+def _prj_map_kpa_decode(raw):
+    return [round(b / 1.035, 1) for b in raw]
+
+def _prj_wgdc_decode(raw):
+    return [round(b / 192 * 100, 1) for b in raw]
+
+def _prj_rpm_decode(raw):
+    return [b * 40 for b in raw]
+
+_MAPS_0202_MAIN = [
+    # ── Fuel maps ──────────────────────────────────────────────────────────
+    MapDef("Fuel P/T (primary)",
+           "Primary part-throttle fuel map. 128 = 14.7:1 stoich. "
+           "Higher raw = richer. Axes are MAF-scaled, vary per tune.",
+           main_addr=0x0E13, rows=16, cols=16,
+           map_type="fuel", unit="AFR",
+           decode=_prj_fuel_decode, encode=_prj_fuel_encode,
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed. All 034EFI tunes use this address."),
+
+    MapDef("Fuel P/T (failsafe)",
+           "Fuelling map used on methanol/failsafe mode.",
+           main_addr=0x21A4, rows=16, cols=16,
+           map_type="fuel", unit="AFR",
+           decode=_prj_fuel_decode, encode=_prj_fuel_encode,
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed."),
+
+    MapDef("Fuel P/T (race fuel)",
+           "Fuelling map used on race fuel mode.",
+           main_addr=0x2224, rows=16, cols=16,
+           map_type="fuel", unit="AFR",
+           decode=_prj_fuel_decode, encode=_prj_fuel_encode,
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed."),
+
+    # ── Ignition maps ───────────────────────────────────────────────────────
+    MapDef("Ign P/T (no knock)",
+           "Primary ignition map, no knock active. raw×0.75−22.5 = °BTDC.",
+           main_addr=0x125F, rows=16, cols=16,
+           map_type="ign", unit="°BTDC",
+           decode=_prj_ign_decode, encode=_prj_ign_encode,
+           confidence="CONFIRMED",
+           notes="PRJ XDF + .034 diff confirmed. 034EFI tunes advance up to +7° vs stock."),
+
+    MapDef("Ign P/T (knock level 1)",
+           "Ignition map with knock level 1 active (mild knock).",
+           main_addr=0x1594, rows=16, cols=16,
+           map_type="ign", unit="°BTDC",
+           decode=_prj_ign_decode, encode=_prj_ign_encode,
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed."),
+
+    MapDef("Ign P/T (overrun)",
+           "Ignition map during overrun/deceleration.",
+           main_addr=0x10A8, rows=16, cols=16,
+           map_type="ign", unit="°BTDC",
+           decode=_prj_ign_decode, encode=_prj_ign_encode,
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed."),
+
+    # ── Boost control ───────────────────────────────────────────────────────
+    MapDef("MAP Target",
+           "Boost target in kPa absolute. raw/1.035 = kPa.",
+           main_addr=0x2520, rows=10, cols=16,
+           map_type="raw", unit="kPa",
+           decode=_prj_map_kpa_decode,
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed."),
+
+    MapDef("Base WGDC Pilot",
+           "Base wastegate duty cycle pilot map. raw/192×100 = %.",
+           main_addr=0x2480, rows=10, cols=16,
+           map_type="raw", unit="%DC",
+           decode=_prj_wgdc_decode,
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed."),
+
+    MapDef("MAP Limit",
+           "Hard boost cut limit in kPa absolute. 8-cell 1D table.",
+           main_addr=0x2A96, rows=8, cols=1,
+           map_type="raw", unit="kPa",
+           decode=_prj_map_kpa_decode,
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed. Stock = ~1.9 kPa (essentially no limit in these tunes)."),
+
+    MapDef("N75 Upper Limit",
+           "N75 solenoid upper duty cycle limit. raw/192×100 = %.",
+           main_addr=0x2A23, rows=8, cols=1,
+           map_type="raw", unit="%DC",
+           decode=_prj_wgdc_decode,
+           confidence="CONFIRMED"),
+
+    MapDef("N75 Lower Limit",
+           "N75 solenoid lower duty cycle limit.",
+           main_addr=0x2A1B, rows=8, cols=1,
+           map_type="raw", unit="%DC",
+           decode=_prj_wgdc_decode,
+           confidence="CONFIRMED"),
+
+    # ── Newly confirmed from 034 tune analysis ──────────────────────────────
+    MapDef("Boost Target Secondary",
+           "Secondary boost target cells (2 rows × 6 cols). "
+           "Varies significantly between 3071 and 2871 turbo tunes. "
+           "034EFI 3071 R9 tunes set all cells to 0x36 (flat 52 kPa abs). "
+           "raw/1.035 = kPa absolute.",
+           main_addr=0x1CE8, rows=2, cols=6,
+           map_type="raw", unit="kPa",
+           decode=_prj_map_kpa_decode,
+           confidence="PROVISIONAL",
+           notes="Confirmed from .034 diff: changes in all 3071 tunes, stable in Stage1/Stage1+."),
+
+    MapDef("Knock Level 2 Ign Limit",
+           "Ignition timing limit when knock level 2 is active. "
+           "034EFI 3071 tunes retard this by ~5° vs stock (0x50→0x45). "
+           "raw×0.75−22.5 = °BTDC limit.",
+           main_addr=0x1450, rows=6, cols=1,
+           map_type="ign", unit="°BTDC",
+           decode=_prj_ign_decode,
+           confidence="PROVISIONAL",
+           notes="Confirmed from .034 diff: 0x42,0x42,0x50×4 → 0x39,0x39,0x45×4 in 3071 tunes."),
+
+    MapDef("Injector Flow Scaling",
+           "MAF-based injector flow correction (5-cell 1D). "
+           "Key byte [0] encodes injector sizing:\n"
+           "  0xAA = stock AAN ~440cc | 0xA3 = RS2 stock\n"
+           "  0x88 = 42lb green tops  | 0x82 = 550cc 91Oct\n"
+           "  0x65 = 440cc Siemens (2871 build)\n"
+           "Lower value = larger injector at that MAF point.",
+           main_addr=0x0CEB, rows=5, cols=1,
+           map_type="raw", unit="corr",
+           confidence="PROVISIONAL",
+           notes="Confirmed from .034 diff: varies with injector spec per tune name."),
+
+    MapDef("Warm Idle Setpoint RPM",
+           "Warm idle RPM target (3-cell coolant-temperature stepped). "
+           "raw×10 = RPM. Stock: 1300/1000/800 RPM. "
+           "3071 tunes raise to 1350/1050/950.",
+           main_addr=0x1B7A, rows=3, cols=1,
+           map_type="raw", unit="RPM",
+           decode=lambda raw: [b * 10 for b in raw],
+           confidence="PROVISIONAL",
+           notes="Confirmed from .034 diff: 28RS_R2 and R9.1_550 both raise idle vs stock."),
+
+    # ── Axes (read-only reference) ──────────────────────────────────────────
+    MapDef("Fuel P/T RPM axis",
+           "RPM axis for fuel P/T map. MAF-scaled, varies per tune/injector.",
+           main_addr=0x0DF1, rows=16, cols=1,
+           map_type="raw", unit="raw",
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed. Axis varies between injector/MAF builds."),
+
+    MapDef("Fuel P/T Load axis",
+           "Load axis for fuel P/T map.",
+           main_addr=0x0E03, rows=16, cols=1,
+           map_type="raw", unit="raw",
+           confidence="CONFIRMED"),
+
+    MapDef("Ign P/T RPM axis",
+           "RPM axis for ignition P/T map.",
+           main_addr=0x123D, rows=16, cols=1,
+           map_type="raw", unit="raw",
+           confidence="CONFIRMED"),
+
+    MapDef("Ign P/T Load axis",
+           "Load axis for ignition P/T map.",
+           main_addr=0x124F, rows=16, cols=1,
+           map_type="raw", unit="raw",
+           confidence="CONFIRMED"),
+
+    MapDef("Injector Latency",
+           "Dead-time compensation per voltage step (5 cells). "
+           "0.010667 × raw = ms. IDENTICAL across all 034 tunes (no injector changes here).",
+           main_addr=0x0D14, rows=5, cols=1,
+           map_type="raw", unit="ms",
+           decode=lambda raw: [round(b * 0.010667, 3) for b in raw],
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed. Stock values: 0.64/0.32/0.62/0.03/0.27 ms. "
+                 "Injector sizing encoded in WH[0x0CEB] instead."),
+
+    MapDef("Warmup Enrichment (ECT×IAT)",
+           "Warmup fuel enrichment, coolant vs air temp. 6×6 table.",
+           main_addr=0x0D9A, rows=6, cols=6,
+           map_type="raw", unit="raw",
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed."),
+
+    MapDef("VE Table",
+           "Volumetric efficiency table (speed-density mode only). "
+           "Active only when SD mode is enabled. Blank (0x02) in MAF-based tunes.",
+           main_addr=0x2074, rows=16, cols=16,
+           map_type="raw", unit="%VE",
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed. 034EFI tunes leave this blank — they use MAF."),
+
+    MapDef("MAF Linearisation (low)",
+           "MAF sensor low-range linearisation (9-cell). "
+           "IDENTICAL across all 034EFI tunes — MAF sensor hardware not changed.",
+           main_addr=0x102D, rows=9, cols=1,
+           map_type="raw", unit="raw",
+           confidence="CONFIRMED",
+           notes="PRJ XDF confirmed. Unchanged across all .034 variants."),
+
+    MapDef("MAF Linearisation (mid)",
+           "MAF sensor mid-range linearisation (15-cell). Identical across .034 tunes.",
+           main_addr=0x1047, rows=15, cols=1,
+           map_type="raw", unit="raw",
+           confidence="CONFIRMED"),
+]
+
+VARIANT_551AA_0202 = ROMVariant(
+    name                = "AAN / ABY — 034EFI Rip Chip / prjmod (551AA 0x0202)",
+    software_id         = "551AA_0202",
+    engine_codes        = ["AAN", "ABY"],
+    ecu_pns             = ["4A0907551AA", "4A0907551A", "895907551A"],
+    bosch_pns           = ["0261200465", "0261200451"],
+    dual_eprom          = True,
+    working_half_offset = 0x8000,
+    main_maps           = _MAPS_0202_MAIN,
+    boost_maps          = _MAPS_BOOST_551,
+    notes               = "034EFI Rip Chip v1.0 / prjmod base firmware. Build number 0x0202. "
+                          "MAF-based (not MAP/SD). All 034 tunes (Stage1, Stage1+, 28RS, R8, R9.1) "
+                          "use this address layout. Map addresses confirmed from PRJ XDF + .034 diff. "
+                          "ROM tail WH[0x7F00:0x7F40] contains ASCII version string: "
+                          "'4A0907551AA [tune name] 034EFI [flasher info]'. "
+                          "Injector sizing encoded at WH[0x0CEB]: lower = larger injectors. "
+                          "Boost control uses secondary table at WH[0x1CE8] — disabled (zeroed) "
+                          "in some 3071 tunes that run boost from the boost chip only.",
+)
+
 VARIANT_404 = ROMVariant(
     name                = "3B / RR — 200 20vT / UrQ RR / S2 early (404)",
     software_id         = "404",
@@ -529,6 +807,7 @@ VARIANT_V8_PT = ROMVariant(
 ALL_VARIANTS: list[ROMVariant] = [
     VARIANT_551C,
     VARIANT_551AA,
+    VARIANT_551AA_0202,
     VARIANT_404,
     VARIANT_V8_ABH,
     VARIANT_V8_PT,
@@ -541,22 +820,36 @@ ALL_VARIANTS: list[ROMVariant] = [
 # Working half = entire file for 3B/V8.
 
 KNOWN_CRCS: dict[int, tuple[str, str]] = {
-    0x4378E077: ("551C",  "Stock — ADU RS2 (adu_fuel-ign_551c.bin)"),
-    0xA98CB481: ("551AA", "Stock — ABY S2 Coupe (aby_fuel-ign_551aa.bin)"),
-    0x0AE3CACD: ("404",   "Stock — 3B 200 20vT (stock fuel.BIN)"),
-    0x9245FA10: ("404",   "Stock — 3B Audi S2 (0261200484 MapFinder bin)"),
-    0x594F97FB: ("404V8", "Stock — PT V8 3.6L"),
-    0x750A9EB0: ("404V8", "ABT tune — PT V8 3.6L"),
+    0x4378E077: ("551C",      "Stock — ADU RS2 (adu_fuel-ign_551c.bin)"),
+    0xA98CB481: ("551AA",     "Stock — ABY S2 Coupe (aby_fuel-ign_551aa.bin)"),
+    0x0AE3CACD: ("404",       "Stock — 3B 200 20vT (stock fuel.BIN)"),
+    0x9245FA10: ("404",       "Stock — 3B Audi S2 (0261200484 MapFinder bin)"),
+    0x594F97FB: ("404V8",     "Stock — PT V8 3.6L"),
+    0x750A9EB0: ("404V8",     "ABT tune — PT V8 3.6L"),
+    # 034EFI Rip Chip / prjmod 0x0202 firmware (confirmed from .034 diff analysis)
+    0x956BFC9C: ("551AA_0202", "034EFI Stock Rip Chip (4A0907551AA)"),
+    0xA47011AB: ("551AA_0202", "034EFI Stage 1"),
+    0x16FD8953: ("551AA_0202", "034EFI Stage 1 (variant)"),
+    0x9A8A6B4E: ("551AA_0202", "034EFI Stage 1 28RS R2"),
+    0x6F3AE675: ("551AA_0202", "034EFI Stage 1 R8 42lb Green Tops"),
+    0x07DA1752: ("551AA_0202", "034EFI Stage 1 R9.1 550cc 91Oct"),
+    0x2EB58546: ("551AA_0202", "034EFI Stage 1 R9.1 550cc EV14"),
+    0xA77BB88E: ("551AA_0202", "034EFI Stage 1 AAN 2871 R9 440cc Siemens"),
+    0x28C04D7B: ("551AA_0202", "034EFI Rip Chip RS2 91Oct"),
+    0x81D197CF: ("551AA_0202", "PRJ AAN/ABY stock (m232.org)"),
+    0xAD9330AC: ("551AA_0202", "PRJ AAN bigturbo WMI"),
 }
 
 # Build number ranges for MEDIUM confidence detection (fallback when CRC unknown)
+# 551AA_0202 (prjmod/034EFI): build 0x0202 — must come BEFORE the 551AA range
 # 551AA covers both AAN (low builds ~0x0000-0x3FFF) and ABY (0x6450 range)
 # 551C (ADU/RS2) sits at 0x4533; overlap with ABY is resolved via CRC fingerprint
 BUILD_RANGES: dict[str, tuple[int, int]] = {
-    "551AA": (0x0000, 0x6FFF),   # AAN + ABY; CRC match takes priority for ADU
-    "551C":  (0x7000, 0x9FFF),   # ADU known build 0x4533 — CRC match used instead
-    "404":   (0xE000, 0xFFFF),
-    "404V8": (0xA000, 0xCFFF),
+    "551AA_0202": (0x0202, 0x0202),  # exact build number for prjmod/034EFI
+    "551AA":      (0x0000, 0x6FFF),  # AAN + ABY; CRC match takes priority
+    "551C":       (0x7000, 0x9FFF),  # ADU known build 0x4533 — CRC match used
+    "404":        (0xE000, 0xFFFF),
+    "404V8":      (0xA000, 0xCFFF),
 }
 
 
