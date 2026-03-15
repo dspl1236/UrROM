@@ -541,18 +541,20 @@ ALL_VARIANTS: list[ROMVariant] = [
 # Working half = entire file for 3B/V8.
 
 KNOWN_CRCS: dict[int, tuple[str, str]] = {
-    0xCCE86BB3: ("551C",  "Stock — ADU RS2 (adu_fuel-ign_551c.bin)"),
-    0x4929C54C: ("551AA", "Stock — ABY S2 Coupe (aby_fuel-ign_551aa.bin)"),
+    0x4378E077: ("551C",  "Stock — ADU RS2 (adu_fuel-ign_551c.bin)"),
+    0xA98CB481: ("551AA", "Stock — ABY S2 Coupe (aby_fuel-ign_551aa.bin)"),
     0x0AE3CACD: ("404",   "Stock — 3B 200 20vT (stock fuel.BIN)"),
     0x9245FA10: ("404",   "Stock — 3B Audi S2 (0261200484 MapFinder bin)"),
     0x594F97FB: ("404V8", "Stock — PT V8 3.6L"),
     0x750A9EB0: ("404V8", "ABT tune — PT V8 3.6L"),
 }
 
-# Build number ranges for MEDIUM confidence detection
+# Build number ranges for MEDIUM confidence detection (fallback when CRC unknown)
+# 551AA covers both AAN (low builds ~0x0000-0x3FFF) and ABY (0x6450 range)
+# 551C (ADU/RS2) sits at 0x4533; overlap with ABY is resolved via CRC fingerprint
 BUILD_RANGES: dict[str, tuple[int, int]] = {
-    "551C":  (0x4000, 0x7000),
-    "551AA": (0x0000, 0x3FFF),
+    "551AA": (0x0000, 0x6FFF),   # AAN + ABY; CRC match takes priority for ADU
+    "551C":  (0x7000, 0x9FFF),   # ADU known build 0x4533 — CRC match used instead
     "404":   (0xE000, 0xFFFF),
     "404V8": (0xA000, 0xCFFF),
 }

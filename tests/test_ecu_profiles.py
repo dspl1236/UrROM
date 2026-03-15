@@ -152,14 +152,14 @@ class TestNormalize:
 class TestDetect:
 
     def test_unknown_rom_returns_unknown(self):
-        # Use a build number outside all defined ranges
-        rom = bytes(_make_valid_rom(build_number=0x8000))
+        # Use a build number outside all defined ranges (0xD000 is in the gap between 404V8 and 404)
+        rom = bytes(_make_valid_rom(build_number=0xD000))
         result = detect_rom(rom)
         assert result.confidence == "UNKNOWN"
         assert result.variant is None
 
     def test_551aa_build_range_detected(self):
-        # 551C build range is 0x4000-0x7000 (from BUILD_RANGES)
+        # 551AA build range covers 0x0000-0x6FFF (AAN + ABY builds)
         rom = bytes(_make_valid_rom(build_number=0x5000))
         result = detect_rom(rom)
         assert result.confidence in ("MEDIUM", "HIGH")
@@ -192,7 +192,7 @@ class TestDetect:
         assert result.build_number == build
 
     def test_label_when_unknown(self):
-        rom = bytes(_make_valid_rom(build_number=0x8000))
+        rom = bytes(_make_valid_rom(build_number=0xD000))
         result = detect_rom(rom)
         assert "Unknown" in result.label
 
