@@ -687,6 +687,306 @@ class BoostTab(QWidget):
         self._table.setVisible(False)
 
 
+# ── Hardware / Patch tab ──────────────────────────────────────────────────────
+
+class HardwareTab(QWidget):
+    """
+    Hardware modification and firmware patch detection panel.
+
+    Shows detected patches, MAP sensor type, and required hardware mods.
+    Also allows loading a separate boost chip binary for enhanced detection.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(10)
+
+        # ── Header row ────────────────────────────────────────────────────
+        hdr = QHBoxLayout()
+        title = QLabel("Hardware & Patch Status")
+        title.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {FG};")
+        hdr.addWidget(title)
+        hdr.addStretch()
+
+        self._boost_lbl = QLabel("Boost chip: not loaded")
+        self._boost_lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
+        hdr.addWidget(self._boost_lbl)
+
+        self._open_boost_btn = QPushButton("Load boost chip…")
+        self._open_boost_btn.setFixedHeight(26)
+        self._open_boost_btn.setStyleSheet(
+            f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:0 10px;}}"
+            f"QPushButton:hover{{border-color:{ACCENT};}}")
+        self._open_boost_btn.clicked.connect(self._on_open_boost)
+        hdr.addWidget(self._open_boost_btn)
+        outer.addLayout(hdr)
+
+        # ── Subtitle ─────────────────────────────────────────────────────
+        sub = QLabel(
+            "Detected modifications and firmware patches in the loaded ROM. "
+            "Load the boost chip (32 KB) to enable MAP sensor identification."
+        )
+        sub.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
+        sub.setWordWrap(True)
+        outer.addWidget(sub)
+
+        # ── MAP sensor info card ──────────────────────────────────────────
+        self._sensor_card = self._make_sensor_card()
+        outer.addWidget(self._sensor_card)
+
+        # ── Section label ─────────────────────────────────────────────────
+        sec_lbl = QLabel("DETECTED PATCHES & MODIFICATIONS")
+        sec_lbl.setStyleSheet(
+            f"color: {FG_DIM}; font-size: 10px; letter-spacing: 1px;")
+        outer.addWidget(sec_lbl)
+
+        # ── Patch list ────────────────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(
+            f"QScrollArea{{border:none;background:{BG};}}"
+            f"QScrollBar:vertical{{width:8px;background:{BG2};}}"
+            f"QScrollBar::handle:vertical{{background:{BORDER};border-radius:4px;}}")
+        self._patch_container = QWidget()
+        self._patch_container.setStyleSheet(f"background:{BG};")
+        self._patch_layout = QVBoxLayout(self._patch_container)
+        self._patch_layout.setSpacing(6)
+        self._patch_layout.setContentsMargins(0, 0, 0, 0)
+        self._patch_layout.addStretch()
+        scroll.setWidget(self._patch_container)
+        outer.addWidget(scroll, 1)
+
+        # ── QLCC / Ben Swann note ─────────────────────────────────────────
+        note = QLabel(
+            "ℹ  QLCC (Quick Launch Control Chip, Ben Swann): No QLCC binary files were "
+            "found in public repositories. QLCC chips used MPX4250 (250 kPa) sensors "
+            "and custom LC implementations predating prjmod. If you have QLCC binaries, "
+            "open them directly — UrROM will analyse them using the same detection logic."
+        )
+        note.setStyleSheet(
+            f"color: {FG_DIM}; font-size: 10px; padding: 6px 8px; "
+            f"background: {BG2}; border-left: 2px solid {BORDER}; border-radius: 2px;")
+        note.setWordWrap(True)
+        outer.addWidget(note)
+
+        # State
+        self._boost_bytes: bytes | None = None
+        self._wh: bytes | None = None
+        self._variant_name: str = ""
+
+    # ── Sensor card ───────────────────────────────────────────────────────
+
+    def _make_sensor_card(self) -> QFrame:
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame{{background:{BG3};border:1px solid {BORDER};"
+            f"border-radius:4px;padding:4px;}}")
+        layout = QVBoxLayout(card)
+        layout.setSpacing(4)
+        layout.setContentsMargins(12, 8, 12, 8)
+
+        row1 = QHBoxLayout()
+        lbl = QLabel("MAP Sensor")
+        lbl.setStyleSheet(f"color:{FG};font-size:12px;font-weight:bold;")
+        self._sensor_type_lbl = QLabel("—")
+        self._sensor_type_lbl.setStyleSheet(f"color:{ACCENT};font-size:12px;font-weight:bold;")
+        row1.addWidget(lbl)
+        row1.addStretch()
+        row1.addWidget(self._sensor_type_lbl)
+        layout.addLayout(row1)
+
+        self._sensor_detail_lbl = QLabel(
+            "Load boost chip for sensor identification.  "
+            "Stock: Bosch 200 kPa.  SD mode requires MPXH6400A 400 kPa.")
+        self._sensor_detail_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+        self._sensor_detail_lbl.setWordWrap(True)
+        layout.addWidget(self._sensor_detail_lbl)
+
+        # Sensor comparison row
+        sensors_row = QHBoxLayout()
+        for kpa, label, notes in [
+            ("200 kPa", "Stock Bosch",   "≤1.0 bar gauge"),
+            ("250 kPa", "MPX4250",        "≤1.5 bar gauge"),
+            ("300 kPa", "MPX4300",        "≤2.0 bar gauge"),
+            ("400 kPa", "MPXH6400A",      "≤2.9 bar gauge\n(prjmod std)"),
+        ]:
+            cell = QFrame()
+            cell.setStyleSheet(
+                f"QFrame{{background:{BG2};border:1px solid {BORDER};"
+                f"border-radius:3px;}}")
+            cell_l = QVBoxLayout(cell)
+            cell_l.setContentsMargins(8, 4, 8, 4)
+            cell_l.setSpacing(1)
+            kpa_lbl = QLabel(kpa)
+            kpa_lbl.setStyleSheet(f"color:{FG};font-size:11px;font-weight:bold;")
+            name_lbl = QLabel(label)
+            name_lbl.setStyleSheet(f"color:{ACCENT};font-size:10px;")
+            notes_lbl = QLabel(notes)
+            notes_lbl.setStyleSheet(f"color:{FG_DIM};font-size:9px;")
+            for w in (kpa_lbl, name_lbl, notes_lbl):
+                cell_l.addWidget(w)
+            sensors_row.addWidget(cell)
+        layout.addLayout(sensors_row)
+        return card
+
+    # ── Patch card factory ────────────────────────────────────────────────
+
+    def _make_patch_card(self, result) -> QFrame:
+        """Build one patch result card widget."""
+        cat_colours = {
+            "firmware": ACCENT,
+            "hardware": AMBER,
+            "sensor":   "#c586c0",
+        }
+        cat_colour = cat_colours.get(result.category, FG_DIM)
+
+        # Status colour
+        if result.status == "DETECTED" or result.status.startswith("KNOWN"):
+            st_colour = GREEN
+        elif result.status == "NOT DETECTED" or result.status == "NOT REQUIRED":
+            st_colour = FG_DIM
+        elif result.status == "UNKNOWN":
+            st_colour = AMBER
+        elif "REQUIRED" in result.status:
+            st_colour = AMBER
+        else:
+            st_colour = FG
+
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame{{background:{BG2};border:1px solid {BORDER};"
+            f"border-left:3px solid {cat_colour};border-radius:3px;}}")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(3)
+
+        top = QHBoxLayout()
+        name_lbl = QLabel(result.name)
+        name_lbl.setStyleSheet(f"color:{FG};font-size:12px;font-weight:bold;")
+
+        cat_lbl = QLabel(result.category.upper())
+        cat_lbl.setStyleSheet(
+            f"color:{cat_colour};font-size:9px;font-weight:bold;"
+            f"background:{BG3};border-radius:2px;padding:1px 4px;")
+
+        st_lbl = QLabel(result.status)
+        st_lbl.setStyleSheet(
+            f"color:{st_colour};font-size:11px;font-weight:bold;")
+
+        conf_lbl = QLabel(result.confidence)
+        conf_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+
+        top.addWidget(name_lbl)
+        top.addWidget(cat_lbl)
+        top.addStretch()
+        if result.wh_offset is not None:
+            off_lbl = QLabel(f"WH 0x{result.wh_offset:04X}")
+            off_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+            top.addWidget(off_lbl)
+        top.addWidget(st_lbl)
+        top.addWidget(conf_lbl)
+        layout.addLayout(top)
+
+        detail_lbl = QLabel(result.detail)
+        detail_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+        detail_lbl.setWordWrap(True)
+        layout.addWidget(detail_lbl)
+
+        if result.recommended:
+            rec_lbl = QLabel("★  Recommended for this build")
+            rec_lbl.setStyleSheet(f"color:{AMBER};font-size:10px;")
+            layout.addWidget(rec_lbl)
+
+        return card
+
+    # ── Public update method ──────────────────────────────────────────────
+
+    def update(self, wh: bytes | None, variant_name: str = "") -> None:
+        """Called when main chip is loaded."""
+        self._wh = wh
+        self._variant_name = variant_name
+        self._refresh()
+
+    def set_boost(self, boost_bytes: bytes | None, filename: str = "") -> None:
+        """Called when boost chip is loaded."""
+        self._boost_bytes = boost_bytes
+        if boost_bytes:
+            self._boost_lbl.setText(
+                f"Boost chip: {filename or 'loaded'}  ({len(boost_bytes)} B)")
+        else:
+            self._boost_lbl.setText("Boost chip: not loaded")
+        self._refresh()
+
+    # ── Internal refresh ──────────────────────────────────────────────────
+
+    def _refresh(self) -> None:
+        from urrom.hw_patches import detect_patches
+
+        # Clear existing patch cards (all but the trailing stretch)
+        while self._patch_layout.count() > 1:
+            item = self._patch_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if self._wh is None:
+            placeholder = QLabel("Load a ROM to see patch detection results.")
+            placeholder.setStyleSheet(f"color:{FG_DIM};font-size:12px;")
+            placeholder.setAlignment(Qt.AlignCenter)
+            self._patch_layout.insertWidget(0, placeholder)
+            self._sensor_type_lbl.setText("—")
+            self._sensor_detail_lbl.setText("No ROM loaded.")
+            return
+
+        results = detect_patches(self._wh, self._variant_name, self._boost_bytes)
+
+        # Update sensor card
+        sensor_result = next((r for r in results if r.name == "MAP Sensor Type"), None)
+        if sensor_result:
+            self._sensor_type_lbl.setText(sensor_result.status)
+            col = (GREEN if "400kPa" in sensor_result.status
+                   else AMBER if "UNKNOWN" not in sensor_result.status
+                   else FG_DIM)
+            self._sensor_type_lbl.setStyleSheet(
+                f"color:{col};font-size:12px;font-weight:bold;")
+            self._sensor_detail_lbl.setText(sensor_result.detail)
+
+        # Insert patch cards (skip the sensor result — shown in card above)
+        insert_pos = 0
+        for r in results:
+            if r.name == "MAP Sensor Type":
+                continue
+            card = self._make_patch_card(r)
+            self._patch_layout.insertWidget(insert_pos, card)
+            insert_pos += 1
+
+    # ── Boost chip file open ──────────────────────────────────────────────
+
+    def _on_open_boost(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Boost Chip",
+            str(Path.home()),
+            "ROM files (*.bin *.BIN *.rom);;All files (*.*)")
+        if not path:
+            return
+        try:
+            raw = Path(path).read_bytes()
+        except OSError as e:
+            QMessageBox.critical(self, "Error", f"Cannot read boost chip:\n{e}")
+            return
+        if len(raw) not in (32768, 65536):
+            QMessageBox.warning(
+                self, "Unexpected size",
+                f"Expected 32 KB or 64 KB boost chip, got {len(raw)} bytes.\n"
+                "Loading anyway — results may be unreliable.")
+        # For 64KB doubled: take the upper half
+        if len(raw) == 65536:
+            raw = raw[0x8000:]
+        self.set_boost(raw, Path(path).name)
+
+
 # ── Compare tab ───────────────────────────────────────────────────────────────
 
 class CompareTab(QWidget):
@@ -954,11 +1254,13 @@ class MainWindow(QMainWindow):
         self._main_chip_tab = MainChipTab()
         self._boost_tab     = BoostTab()
         self._compare_tab   = CompareTab()
+        self._hardware_tab  = HardwareTab()
 
         self._tabs.addTab(self._overview_tab,  "Overview")
         self._tabs.addTab(self._main_chip_tab, "Main Chip Maps")
         self._tabs.addTab(self._boost_tab,     "Boost Chip")
         self._tabs.addTab(self._compare_tab,   "Compare")
+        self._tabs.addTab(self._hardware_tab,  "Hardware")
         root.addWidget(self._tabs)
 
         # Status bar
@@ -1052,6 +1354,7 @@ class MainWindow(QMainWindow):
         self._main_lbl.setStyleSheet(f"color: {FG}; font-size: 11px;")
         self._info_strip.update(det)
         self._overview_tab.update(det)
+        self._hardware_tab.update(bytes(wh), det.variant.name if det.variant else "")
         self._save_btn.setEnabled(True)
 
         if det.variant:
@@ -1104,6 +1407,7 @@ class MainWindow(QMainWindow):
         self._boost_lbl.setStyleSheet(f"color: {FG}; font-size: 11px;")
 
         self._boost_tab.load(boost_wh, self._det.variant)
+        self._hardware_tab.set_boost(bytes(raw), path.name)
         self._update_status(f"Boost chip loaded: {path.name}")
 
     def _on_save(self):
