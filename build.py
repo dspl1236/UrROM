@@ -39,9 +39,9 @@ def main():
     exe = DIST / f"{EXE_NAME}{exe_suffix}"
     if exe.exists():
         size_mb = exe.stat().st_size / 1024 / 1024
-        print(f"\n✓ Built: {exe}  ({size_mb:.1f} MB)")
+        print(f"\nBuilt: {exe}  ({size_mb:.1f} MB)")
     else:
-        print(f"\n✗ Expected output not found: {exe}")
+        print(f"\nERROR: Expected output not found: {exe}")
         sys.exit(1)
 
 
