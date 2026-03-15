@@ -24,8 +24,8 @@ from urrom.ecu_profiles import (
     normalize_rom, detect_rom, read_map, read_map_decoded,
     write_map, apply_checksum, DetectionResult, ROMVariant, MapDef,
     fuel_encode, ign_encode, ign_encode_3b,
+    get_axes,
     MAIN_CHIP_WORKING, MAIN_CHIP_PHYSICAL,
-    _RPM_AXIS_551, _LOAD_AXIS_551,
     ALL_VARIANTS,
 )
 
@@ -594,14 +594,9 @@ class MainChipTab(QWidget):
         m = self._maps[idx]
         v = self._variant
 
-        # Determine axes
-        from urrom.ecu_profiles import _RPM_AXIS_551, _LOAD_AXIS_551
-        if v and v.software_id in ("551C", "551AA"):
-            rpm_axis  = _RPM_AXIS_551
-            load_axis = _LOAD_AXIS_551
-        else:
-            rpm_axis  = None
-            load_axis = None
+        # Determine axes via ecu_profiles helper
+        from urrom.ecu_profiles import get_axes
+        rpm_axis, load_axis = get_axes(bytes(self._rom), m, v)
 
         self._table.load(self._rom, m, rpm_axis, load_axis)
         # Re-wire the signal each time a new map is loaded
@@ -636,6 +631,13 @@ class MainChipTab(QWidget):
 
     def on_table_changed(self):
         self._revert_btn.setEnabled(self._table.has_changes())
+        # Notify parent window to update title
+        p = self.parent()
+        while p is not None:
+            if hasattr(p, "_mark_dirty"):
+                p._mark_dirty()
+                break
+            p = p.parent()
 
 
 # ── Boost chip tab ────────────────────────────────────────────────────────────
@@ -852,6 +854,7 @@ class MainWindow(QMainWindow):
         self._main_rom  = bytearray(wh)
         self._det       = det
         self._unsaved   = False
+        self._clear_dirty()
 
         # Update UI
         fname = path.name
@@ -945,9 +948,19 @@ class MainWindow(QMainWindow):
 
         self._main_chip_tab._table.accept_current_as_baseline()
         self._unsaved = False
+        self._clear_dirty()
         self._update_status(f"Saved → {Path(path).name}  ({len(out_bytes):,} bytes)")
 
     # ── Misc ──────────────────────────────────────────────────────────────────
+
+    def _mark_dirty(self):
+        self._unsaved = True
+        if not self.windowTitle().startswith("*"):
+            self.setWindowTitle("* " + WINDOW_TITLE)
+
+    def _clear_dirty(self):
+        self._unsaved = False
+        self.setWindowTitle(WINDOW_TITLE)
 
     def _update_status(self, msg: str):
         self._status.showMessage(msg)

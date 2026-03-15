@@ -26,6 +26,8 @@ from urrom.ecu_profiles import (
     read_map, read_map_decoded, write_map,
     read_rev_limit, write_rev_limit,
     ign_decode, ign_encode,
+    get_axes, read_axes_from_header,
+    _RPM_AXIS_551, _LOAD_AXIS_551,
     # data
     ALL_VARIANTS, VARIANT_551AA, VARIANT_551C,
     VARIANT_404, VARIANT_V8_ABH, VARIANT_V8_PT,
@@ -373,3 +375,92 @@ class TestVariantRegistry:
     def test_ecu_pns_not_empty(self):
         for v in ALL_VARIANTS:
             assert len(v.ecu_pns) > 0
+
+
+# ── Axis helper tests ─────────────────────────────────────────────────────────
+
+class TestGetAxes:
+
+    def test_551c_returns_known_constants(self):
+        rom = bytes(MAIN_CHIP_WORKING)
+        m = VARIANT_551C.main_maps[0]
+        rpm, load = get_axes(rom, m, VARIANT_551C)
+        assert rpm  == _RPM_AXIS_551
+        assert load == _LOAD_AXIS_551
+
+    def test_551aa_returns_known_constants(self):
+        rom = bytes(MAIN_CHIP_WORKING)
+        m = VARIANT_551AA.main_maps[0]
+        rpm, load = get_axes(rom, m, VARIANT_551AA)
+        assert rpm  == _RPM_AXIS_551
+        assert load == _LOAD_AXIS_551
+
+    def test_404_reads_from_header(self):
+        # Build a synthetic 32KB ROM with a Bosch descriptor at the expected address.
+        # Ign Map 1 has main_addr = 0x7052 + 36 = 0x7076.
+        # Header is at 0x7076 - 36 = 0x7052.
+        ign_map = next(m for m in VARIANT_404.main_maps if m.map_type == "ign")
+        header_addr = ign_map.main_addr - 36
+        rom = bytearray(FLAT_32K)
+        # Write a minimal descriptor: [type 0x3A][count 16][16 rpm bytes][type 0x3F][count 16][16 load bytes]
+        rpm_vals  = list(range(10, 26))   # 10-25
+        load_vals = list(range(20, 36))   # 20-35
+        rom[header_addr]     = 0x3A
+        rom[header_addr + 1] = 16
+        rom[header_addr + 2: header_addr + 18] = bytes(rpm_vals)
+        rom[header_addr + 18] = 0x3F
+        rom[header_addr + 19] = 16
+        rom[header_addr + 20: header_addr + 36] = bytes(load_vals)
+        rpm_out, load_out = get_axes(bytes(rom), ign_map, VARIANT_404)
+        assert rpm_out  == rpm_vals
+        assert load_out == load_vals
+
+    def test_unknown_variant_returns_indices(self):
+        # Build a minimal unknown variant
+        from urrom.ecu_profiles import ROMVariant, MapDef
+        dummy_v = ROMVariant(
+            name="dummy", software_id="???",
+            engine_codes=["X"], ecu_pns=["0"], bosch_pns=["0"],
+            working_half_offset=0,
+        )
+        dummy_m = MapDef("test", "", 0x100, 8, 8)
+        rom = bytes(FLAT_32K)
+        rpm, load = get_axes(rom, dummy_m, dummy_v)
+        assert rpm  == list(range(8))
+        assert load == list(range(8))
+
+    def test_read_axes_from_header_out_of_bounds_returns_indices(self):
+        rom = bytes(10)  # tiny ROM
+        rpm, load = read_axes_from_header(rom, header_addr=5, rows=16, cols=16)
+        assert rpm  == list(range(16))
+        assert load == list(range(16))
+
+    def test_axes_length_matches_map_dims(self):
+        # For 551x: blank ROM is fine — we return the fixed constant arrays.
+        # For 404/V8: build a ROM with valid descriptor headers at each map's header address.
+        rom_551 = bytes(MAIN_CHIP_WORKING)
+
+        # Write headers for all non-551 variants into one shared 32KB buffer
+        rom_flat = bytearray(FLAT_32K)
+        for v in ALL_VARIANTS:
+            if v.software_id in ("551C", "551AA"):
+                continue
+            for m in v.main_maps:
+                if m.rows > 1 and m.cols > 1:
+                    ha = m.main_addr - 36
+                    if 0 <= ha and ha + 4 + m.rows + m.cols <= FLAT_32K:
+                        rom_flat[ha]      = 0x3A
+                        rom_flat[ha + 1]  = m.rows
+                        rom_flat[ha + 2: ha + 2 + m.rows] = bytes(range(m.rows))
+                        rom_flat[ha + 2 + m.rows]     = 0x3F
+                        rom_flat[ha + 3 + m.rows]     = m.cols
+                        rom_flat[ha + 4 + m.rows: ha + 4 + m.rows + m.cols] = bytes(range(m.cols))
+        rom_flat = bytes(rom_flat)
+
+        for v in ALL_VARIANTS:
+            rom = rom_551 if v.software_id in ("551C", "551AA") else rom_flat
+            for m in v.main_maps:
+                if m.rows > 1 and m.cols > 1:
+                    rpm, load = get_axes(rom, m, v)
+                    assert len(rpm)  == m.rows, f"{v.name}/{m.name}: rpm len {len(rpm)} != {m.rows}"
+                    assert len(load) == m.cols, f"{v.name}/{m.name}: load len {len(load)} != {m.cols}"

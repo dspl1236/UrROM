@@ -698,6 +698,56 @@ def detect_rom(rom: bytes) -> DetectionResult:
     )
 
 
+# ── Axis helpers ──────────────────────────────────────────────────────────────
+
+def read_axes_from_header(rom: bytes, header_addr: int,
+                          rows: int = 16, cols: int = 16
+                          ) -> tuple[list, list]:
+    """
+    Read RPM and load axis values from a Bosch descriptor header block.
+
+    Layout: [type:1][count:1][axis_bytes×count] repeated for row then col axis.
+    Used by 3B/RR maps where the header immediately precedes the map data.
+
+    Returns (rpm_axis, load_axis) as lists of integers.
+    If the header address is out of bounds, returns index lists [0..rows-1].
+    """
+    end = header_addr + 2 + rows + 2 + cols
+    if end > len(rom) or header_addr < 0:
+        return list(range(rows)), list(range(cols))
+
+    row_count = rom[header_addr + 1]
+    row_raw   = list(rom[header_addr + 2: header_addr + 2 + row_count])
+    col_start = header_addr + 2 + row_count
+    col_count = rom[col_start + 1]
+    col_raw   = list(rom[col_start + 2: col_start + 2 + col_count])
+
+    return row_raw, col_raw
+
+
+def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
+             ) -> tuple[list, list]:
+    """
+    Return (rpm_axis, load_axis) appropriate for the variant and map.
+
+    For 551C/551AA: returns the known confirmed axis arrays.
+    For 3B/404/V8: reads axis bytes from the Bosch descriptor header,
+                   which sits immediately before map_def.main_addr (data_addr - 36).
+    Returns lists of raw integers — the caller decides how to label them.
+    """
+    sw = variant.software_id if variant else ""
+    if sw in ("551C", "551AA"):
+        return list(_RPM_AXIS_551), list(_LOAD_AXIS_551)
+
+    if sw in ("404", "404V8"):
+        # Header is at data_addr - 36 (descriptor + 2 axes of 16 bytes each + 2 type/count bytes each)
+        header_addr = map_def.main_addr - 36
+        return read_axes_from_header(rom, header_addr, map_def.rows, map_def.cols)
+
+    # Unknown variant — use sequential indices
+    return list(range(map_def.rows)), list(range(map_def.cols))
+
+
 # ── Map I/O ───────────────────────────────────────────────────────────────────
 
 def read_map(rom: bytes, map_def: MapDef) -> list[list[int]]:
