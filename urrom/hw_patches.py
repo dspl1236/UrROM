@@ -379,7 +379,8 @@ def detect_patches(
         confidence="LOW",
         recommended=False,
     ))
-    else:
+
+    if not boost_bytes:
         results.append(PatchResult(
             name="MAP Sensor Type",
             category="sensor",

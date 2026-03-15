@@ -838,6 +838,9 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x28C04D7B: ("551AA_0202", "034EFI Rip Chip RS2 91Oct"),
     0x81D197CF: ("551AA_0202", "PRJ AAN/ABY stock (m232.org)"),
     0xAD9330AC: ("551AA_0202", "PRJ AAN bigturbo WMI"),
+    # vwnut8392/M232-Firmware — two further PRJmod revisions
+    0x9DD68BD3: ("551AA_0202", "PRJmod AAN D03PMC (vwnut8392/M232-Firmware TMS27C512)"),
+    0xF7432BB5: ("551AA_0202", "PRJmod 551A D02PMC (vwnut8392/M232-Firmware, 4A0907551A)"),
 }
 
 # Build number ranges for MEDIUM confidence detection (fallback when CRC unknown)
