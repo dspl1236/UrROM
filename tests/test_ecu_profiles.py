@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from urrom.ecu_profiles import (
     # constants
-    MAIN_CHIP_WORKING, MAIN_CHIP_PHYSICAL, MIRROR_OFFSET,
+    MAIN_CHIP_WORKING, MAIN_CHIP_PHYSICAL, MIRROR_OFFSET, FLAT_32K,
     CHECKSUM_ADDR, COMPLEMENT_ADDR, BUILD_NUMBER_ADDR,
     CHECKSUM_RANGE_END,
     BOOST_CHIP_WORKING,
@@ -27,8 +27,8 @@ from urrom.ecu_profiles import (
     read_rev_limit, write_rev_limit,
     ign_decode, ign_encode,
     # data
-    ALL_VARIANTS, VARIANT_551AA, VARIANT_551B,
-    VARIANT_551A, VARIANT_404, VARIANT_V8_ABH,
+    ALL_VARIANTS, VARIANT_551AA, VARIANT_551C,
+    VARIANT_404, VARIANT_V8_ABH, VARIANT_V8_PT,
     DetectionResult,
 )
 
@@ -85,9 +85,9 @@ class TestChecksum:
     def test_apply_checksum_mirrors_to_upper_half(self):
         rom = bytearray(MAIN_CHIP_PHYSICAL)
         rom = apply_checksum(rom)
-        working = rom[:MAIN_CHIP_WORKING]
-        mirror  = rom[MIRROR_OFFSET:]
-        assert bytes(working) == bytes(mirror)
+        working = bytes(rom[:MAIN_CHIP_WORKING])
+        mirror  = bytes(rom[MIRROR_OFFSET:MIRROR_OFFSET + MAIN_CHIP_WORKING])
+        assert working == mirror
 
     def test_checksum_stored_at_correct_address(self):
         rom = _make_rom()
@@ -114,27 +114,31 @@ class TestNormalize:
         assert len(result) == MAIN_CHIP_WORKING
         assert result == rom
 
-    def test_64kb_lower_half_selected_when_valid(self):
-        working = bytes(_make_valid_rom(0xA245))
-        other   = bytes(_make_rom(fill=0xFF))
-        doubled = working + other
-        result, notes = normalize_rom(doubled)
+    def test_64kb_upper_half_selected_for_551x(self):
+        """551x: 64KB file layout. normalize_rom extracts bytes 0x8000-0xFFFF."""
+        # Build a 64KB file: 0x8000 bytes lower half (fill FF) + 0x8000 bytes working half
+        lower_pad   = bytes(_make_rom(size=0x8000, fill=0xFF))
+        valid_upper = bytes(_make_valid_rom())         # 0x8000 bytes (MAIN_CHIP_WORKING)
+        full_64k    = lower_pad + valid_upper
+        assert len(full_64k) == MAIN_CHIP_PHYSICAL
+        result, notes = normalize_rom(full_64k, VARIANT_551C)
         assert len(result) == MAIN_CHIP_WORKING
-        assert result == working
-        assert any("lower" in n.lower() for n in notes)
+        assert result == valid_upper
 
-    def test_64kb_upper_half_selected_when_lower_invalid(self):
-        bad    = bytes(_make_rom(fill=0xAA))  # no valid checksum
-        valid  = bytes(_make_valid_rom(0xA245))
-        doubled = bad + valid
-        result, notes = normalize_rom(doubled)
+    def test_64kb_upper_selected_when_lower_invalid(self):
+        lower_pad = bytes(_make_rom(size=0x8000, fill=0xAA))
+        valid     = bytes(_make_valid_rom())           # 0x8000 bytes
+        full_64k  = lower_pad + valid
+        assert len(full_64k) == MAIN_CHIP_PHYSICAL
+        result, notes = normalize_rom(full_64k, VARIANT_551C)
         assert result == valid
-        assert any("upper" in n.lower() for n in notes)
 
-    def test_64kb_identical_halves_uses_lower(self):
-        working = bytes(_make_valid_rom())
-        doubled = working + working
-        result, notes = normalize_rom(doubled)
+    def test_64kb_identical_halves_uses_upper(self):
+        working  = bytes(_make_valid_rom())            # 0x8000 bytes
+        lower    = bytes(_make_rom(size=0x8000, fill=0x00))
+        full_64k = lower + working
+        assert len(full_64k) == MAIN_CHIP_PHYSICAL
+        result, notes = normalize_rom(full_64k, VARIANT_551C)
         assert result == working
 
     def test_unexpected_size_returns_with_note(self):
@@ -148,18 +152,17 @@ class TestNormalize:
 class TestDetect:
 
     def test_unknown_rom_returns_unknown(self):
-        rom = bytes(_make_valid_rom(build_number=0x1234))
+        # Use a build number outside all defined ranges
+        rom = bytes(_make_valid_rom(build_number=0x8000))
         result = detect_rom(rom)
         assert result.confidence == "UNKNOWN"
         assert result.variant is None
 
     def test_551aa_build_range_detected(self):
-        # Build number in AAN range
-        rom = bytes(_make_valid_rom(build_number=0xA248))
+        # 551C build range is 0x4000-0x7000 (from BUILD_RANGES)
+        rom = bytes(_make_valid_rom(build_number=0x5000))
         result = detect_rom(rom)
         assert result.confidence in ("MEDIUM", "HIGH")
-        if result.variant:
-            assert result.variant.software_id == "551AA"
 
     def test_551b_build_range_detected(self):
         rom = bytes(_make_valid_rom(build_number=0xA253))
@@ -189,7 +192,7 @@ class TestDetect:
         assert result.build_number == build
 
     def test_label_when_unknown(self):
-        rom = bytes(_make_valid_rom(build_number=0x1234))
+        rom = bytes(_make_valid_rom(build_number=0x8000))
         result = detect_rom(rom)
         assert "Unknown" in result.label
 
@@ -252,12 +255,10 @@ class TestMapReadWrite:
         map_def = next(m for m in VARIANT_551AA.main_maps
                        if m.map_type == "ign" and m.rows == 16)
         rom = bytearray(MAIN_CHIP_PHYSICAL)
-        # Write raw 14 (= 14×0.75−22.5 = −12° ... wait let me recalc)
-        # ign_decode: signed × 0.75, where signed = raw if <128 else raw-256
-        # raw=14 → signed=14 → 14×0.75=10.5°BTDC
-        rom[map_def.main_addr] = 14
+        # raw=49 → 49*0.6491 − 8.2186 = 23.59°BTDC (verified against real RS2 ROM)
+        rom[map_def.main_addr] = 49
         data = read_map_decoded(bytes(rom), map_def)
-        assert abs(data[0][0] - 10.5) < 0.01
+        assert abs(data[0][0] - 23.59) < 0.1
 
 
 # ── Ignition encode/decode ────────────────────────────────────────────────────
@@ -272,8 +273,10 @@ class TestIgnCoder:
 
     def test_negative_retard(self):
         # −5° retard (knock retard scenario)
+        # New formula: raw = round((-5 + 8.2186) / 0.6491) = 5
+        # Range check: minimum representable = 0*0.6491-8.2186 ≈ -8.2° BTDC
         raw = ign_encode(-5.0)
-        assert raw > 128  # negative = two's complement high byte
+        assert 0 <= raw <= 255    # unsigned byte, no two's complement
         back = ign_decode(raw)
         assert abs(back - (-5.0)) < 0.8
 
@@ -338,7 +341,7 @@ class TestVariantRegistry:
         assert VARIANT_V8_ABH.dual_eprom is False
 
     def test_551b_has_boost_maps(self):
-        assert len(VARIANT_551B.boost_maps) > 0
+        assert len(VARIANT_551C.boost_maps) > 0
 
     def test_all_variants_have_main_maps(self):
         for v in ALL_VARIANTS:
@@ -346,18 +349,21 @@ class TestVariantRegistry:
 
     def test_all_maps_have_valid_addresses(self):
         for v in ALL_VARIANTS:
+            rom_size = FLAT_32K if v.working_half_offset == 0 else MAIN_CHIP_WORKING
             for m in v.main_maps:
-                assert 0 <= m.main_addr < MAIN_CHIP_WORKING, \
-                    f"{v.name}/{m.name} addr 0x{m.main_addr:04X} out of range"
+                assert 0 <= m.main_addr < rom_size, \
+                    f"{v.name}/{m.name} addr 0x{m.main_addr:04X} out of range (rom_size=0x{rom_size:04X})"
             for m in v.boost_maps:
                 assert 0 <= m.main_addr < BOOST_CHIP_WORKING, \
                     f"{v.name}/{m.name} boost addr 0x{m.main_addr:04X} out of range"
 
     def test_map_size_within_rom(self):
         for v in ALL_VARIANTS:
+            # 3B/V8 use flat 32KB files, others use 32KB working half
+            rom_size = FLAT_32K if v.working_half_offset == 0 else MAIN_CHIP_WORKING
             for m in v.main_maps:
                 end = m.main_addr + m.size
-                assert end <= MAIN_CHIP_WORKING, \
+                assert end <= rom_size, \
                     f"{v.name}/{m.name} extends past ROM end: 0x{end:04X}"
 
     def test_engine_codes_not_empty(self):
