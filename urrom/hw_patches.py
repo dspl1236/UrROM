@@ -4,12 +4,52 @@ urrom/hw_patches.py
 Hardware modification and firmware patch detection for M2.3 / M2.3.2 ECUs.
 
 Detects:
-  - ECU hardware modifications (MAP sensor upgrade, R660 removal, board wire)
+  - ECU hardware modifications (MAP sensor upgrade, R660 removal, board wire,
+    R201 resistor swap for AAN→RS2 conversion)
   - Firmware patches (speed density, LC/NLS, MFTS bypass, load decap, etc.)
   - MAP sensor type from boost chip constant signatures
 
 All detection operates on the 32KB working half (wh) bytes.
 MAP sensor detection also needs the boost chip bytes when available.
+
+──────────────────────────────────────────────────────────────────────────────
+Physical ECU modifications reference (from community documentation, forum posts,
+m232.org wiki, and the "engine-not-start" / RS2 non-starter threads):
+
+  1. MPXH6400A MAP sensor upgrade (required for prjmod SD mode)
+     ├── Remove solder from via under 'S900'/'C660' label on BOOST board
+     ├── Remove solder from via to right of D232 (towards D235) on MOTOR board
+     ├── Solder wire through both vias connecting boost board to motor chip processor
+     └── Remove resistor R660 from motor board
+     Boost range: stock 200 kPa → up to ~2.9 bar absolute with 400 kPa sensor
+
+  2. AAN → RS2 ECU conversion (hardware equivalent)
+     └── Swap resistor R201 on motor board + install 3-bar (300 kPa) MAP sensor
+         + install correct ADU/RS2 chip set (551C fuel chip, RS2 boost chip)
+     Note: AAN and RS2 ECU have identical hardware; differences are R201, MAP
+           sensor, and chip set only. No PCB hardware difference exists.
+
+  3. Chip socket installation
+     └── De-solder original windowed EPROM chips, solder in DIP-28 sockets,
+         install 27C256 / 27C512 / UV-erasable replacements
+     Allows chip swapping without soldering. Professional service available.
+
+  4. MAP sensor options
+     ├── Stock Bosch (200 kPa, 0 280 142 xxx) — MAF-based builds only
+     ├── MPX4250AP (250 kPa) — QLCC-era chips, moderate boost (~1.5 bar gauge)
+     ├── MPX4300 (300 kPa) — 034EFI Rip Chip standard, AAN→RS2 R201 swap
+     ├── MPXH6400A (400 kPa) — prjmod SD standard, R660 + board wire required
+     └── MPX6300 (300 kPa absolute, 0-5V output) — some aftermarket SD builds
+
+  5. ECU checksum
+     The M232csum.dll (prjmod TunerPro plug-in) handles checksum computation
+     for prjmod-based chip sets. Stock Bosch chips use Bosch's own identification
+     bytes embedded as ASCII part-number text at the end of the working half
+     (e.g. "4A0907551C  2,2l R5 MOTR.RHV RS2D01PMC...") — NOT a computed checksum.
+     There is no software-computed checksum in unmodified stock M2.3 EPROMs.
+     The M232csum.dll applies a 16-bit accumulator sum to verify prjmod ROMs
+     after burning; stock ROMs rely on EPROM read-back verification only.
+──────────────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
@@ -244,9 +284,9 @@ def detect_patches(
             sensor_conf = "HIGH"
         sensor_labels = {
             "200kPa_STOCK":    "Bosch stock 200 kPa (0 280 142 xxx)",
-            "250kPa_MPX4250":  "Freescale MPX4250 — 250 kPa",
-            "300kPa_MPX4300":  "Freescale MPX4300 — 300 kPa",
-            "400kPa_MPXH6400A": "Freescale MPXH6400A — 400 kPa (prjmod standard)",
+            "250kPa_MPX4250":  "Freescale MPX4250 — 250 kPa (QLCC-era)",
+            "300kPa_MPX4300":  "Freescale MPX4300/MPX6300 — 300 kPa (034EFI Rip Chip std)",
+            "400kPa_MPXH6400A": "Freescale MPXH6400A — 400 kPa (prjmod SD standard)",
             "UNKNOWN":         "Unable to determine",
         }
         results.append(PatchResult(
@@ -256,15 +296,36 @@ def detect_patches(
             detail=(
                 f"Boost chip CJNE thresholds suggest a {kpa_range} sensor. "
                 "Stock Bosch 200 kPa limits boost to ~1.0 bar gauge. "
-                "MPXH6400A (400 kPa) is required for prjmod SD mode and allows "
-                "up to ~2.9 bar absolute (~1.9 bar gauge). "
-                "Upgrade requires: R660 removal + motor↔boost board wire (via C660/D235 vias). "
+                "MPX4250 (250 kPa): QLCC-era chips, ~1.5 bar gauge. "
+                "MPX4300 (300 kPa): 034EFI Rip Chip standard; AAN→RS2 R201 swap. "
+                "MPXH6400A (400 kPa): prjmod SD standard, allows up to ~2.9 bar absolute. "
+                "R660 + board wire mod required for external MAP to reach motor chip."
                 if sensor_type != "UNKNOWN" else
                 "Boost chip not loaded or pattern unclear."
             ),
             confidence=sensor_conf,
             recommended=sensor_type in ("400kPa_MPXH6400A",),
         ))
+
+    # ── 3b. AAN→RS2 R201 Resistor Swap ───────────────────────────────────
+    # Inferred from chip variant: if boost chip is RS2 (ADU) but main chip
+    # is AAN-family, the R201 resistor swap was likely performed.
+    # R201 swap changes the sensor reference voltage for the MAP input.
+    # Confirmed from RS2 non-starter S2Forum thread (2026).
+    results.append(PatchResult(
+        name="AAN → RS2 R201 Resistor Swap",
+        category="hardware",
+        status="NOT APPLICABLE",
+        detail="The R201 resistor on the motor board changes the MAP sensor reference "
+               "voltage. Swapping R201 (with 300 kPa MAP + RS2 chip set) converts an "
+               "AAN/UrS4/UrS6 ECU to RS2-equivalent specification. "
+               "No hardware difference exists between AAN and RS2 ECU PCBs. "
+               "Required components: R201 swap + MPX4300 (300 kPa) MAP + 551C fuel chip "
+               "+ ADU boost chip. "
+               "Detection: not possible from ROM alone — requires physical inspection.",
+        confidence="LOW",
+        recommended=False,
+    ))
     else:
         results.append(PatchResult(
             name="MAP Sensor Type",

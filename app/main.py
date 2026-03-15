@@ -762,9 +762,13 @@ class HardwareTab(QWidget):
         # ── QLCC / Ben Swann note ─────────────────────────────────────────
         note = QLabel(
             "ℹ  QLCC (Quick Launch Control Chip, Ben Swann): No QLCC binary files were "
-            "found in public repositories. QLCC chips used MPX4250 (250 kPa) sensors "
-            "and custom LC implementations predating prjmod. If you have QLCC binaries, "
-            "open them directly — UrROM will analyse them using the same detection logic."
+            "found in public repositories. QLCC chips used MPX4250 (250 kPa) sensors and "
+            "custom LC implementations predating prjmod. If you have QLCC binaries, open "
+            "them directly — UrROM will analyse them using the same detection logic.\n\n"
+            "ℹ  Bosch chip ID: Stock M2.3 EPROMs embed an ASCII part-number string at the "
+            "end of the working half (e.g. '4A0907551C  2,2l R5 MOTR.RHV RS2D01PMC…'). "
+            "This is not a computed checksum. prjmod ROMs use M232csum.dll for checksum "
+            "verification after burning; stock chips rely on EPROM read-back only."
         )
         note.setStyleSheet(
             f"color: {FG_DIM}; font-size: 10px; padding: 6px 8px; "
@@ -808,10 +812,10 @@ class HardwareTab(QWidget):
         # Sensor comparison row
         sensors_row = QHBoxLayout()
         for kpa, label, notes in [
-            ("200 kPa", "Stock Bosch",   "≤1.0 bar gauge"),
-            ("250 kPa", "MPX4250",        "≤1.5 bar gauge"),
-            ("300 kPa", "MPX4300",        "≤2.0 bar gauge"),
-            ("400 kPa", "MPXH6400A",      "≤2.9 bar gauge\n(prjmod std)"),
+            ("200 kPa", "Stock Bosch",   "≤1.0 bar gauge\nMAF builds only"),
+            ("250 kPa", "MPX4250",        "≤1.5 bar gauge\nQLCC-era"),
+            ("300 kPa", "MPX4300",        "≤2.0 bar gauge\n034EFI / R201 swap"),
+            ("400 kPa", "MPXH6400A",      "≤2.9 bar gauge\nprjmod SD std"),
         ]:
             cell = QFrame()
             cell.setStyleSheet(
