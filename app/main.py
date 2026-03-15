@@ -1025,6 +1025,18 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Cannot read file:\n{e}")
             return
 
+        # Descramble .034 Rip Chip files before normalising
+        if path.suffix.lower() == ".034":
+            from urrom.descramble import descramble_034, is_valid_034
+            if not is_valid_034(raw):
+                QMessageBox.warning(
+                    self, "Invalid .034 file",
+                    f"{path.name} does not appear to be a valid .034 Rip Chip file.\n\n"
+                    "The file may be a Wayback Machine HTML page or a corrupt dump.\n"
+                    "Expected: 65536-byte scrambled ROM binary.")
+                return
+            raw = descramble_034(raw)
+
         wh, notes = normalize_rom(raw)
         det = detect_rom(wh)
 
