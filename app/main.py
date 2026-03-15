@@ -687,22 +687,200 @@ class BoostTab(QWidget):
         self._table.setVisible(False)
 
 
-# ── Compare tab (stub) ────────────────────────────────────────────────────────
+# ── Compare tab ───────────────────────────────────────────────────────────────
 
 class CompareTab(QWidget):
+    """
+    Side-by-side ROM diff.
+    Left = ROM A (the currently loaded main chip).
+    Right = ROM B (a second file loaded independently for comparison).
+    Delta column shows B - A per cell; changed cells highlighted.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        self._rom_a    = None
+        self._rom_b    = None
+        self._variant  = None
+        self._maps     = []
 
-        lbl = QLabel(
-            "ROM comparison — coming soon.\n\n"
-            "Will show a side-by-side diff of two ROMs with cell-level delta highlighting.")
-        lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 12px;")
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
-        layout.addStretch()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # Toolbar
+        tb = QHBoxLayout()
+        tb.setSpacing(8)
+        self._map_combo = QComboBox()
+        self._map_combo.currentIndexChanged.connect(self._refresh)
+        tb.addWidget(QLabel("Map:"))
+        tb.addWidget(self._map_combo)
+        tb.addStretch()
+        self._load_b_btn = QPushButton("Load ROM B for compare\u2026")
+        self._load_b_btn.clicked.connect(self._on_load_b)
+        self._load_b_btn.setEnabled(False)
+        tb.addWidget(self._load_b_btn)
+        layout.addLayout(tb)
+
+        self._status = QLabel("Load a ROM A first, then load ROM B to compare.")
+        self._status.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
+        layout.addWidget(self._status)
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        def _panel(label_text, colour):
+            w = QWidget()
+            lay = QVBoxLayout(w)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet(f"color: {colour}; font-size: 10px; font-weight: bold;")
+            tbl = QTableWidget()
+            tbl.setEditTriggers(QTableWidget.NoEditTriggers)
+            lay.addWidget(lbl)
+            lay.addWidget(tbl)
+            return w, tbl
+
+        left_w,  self._table_a = _panel("ROM A  (base)",     ACCENT)
+        mid_w,   self._table_d = _panel("Delta  B \u2212 A", FG_DIM)
+        right_w, self._table_b = _panel("ROM B  (compare)",  AMBER)
+
+        splitter.addWidget(left_w)
+        splitter.addWidget(mid_w)
+        splitter.addWidget(right_w)
+        splitter.setSizes([380, 140, 380])
+        layout.addWidget(splitter, 1)
+
+        self._summary = QLabel("")
+        self._summary.setStyleSheet(f"color: {FG_DIM}; font-size: 10px;")
+        layout.addWidget(self._summary)
+
+    def set_rom_a(self, rom, variant):
+        self._rom_a   = rom
+        self._variant = variant
+        self._maps = [m for m in variant.main_maps
+                      if m.map_type in ("fuel", "ign") and m.rows > 1]
+        self._map_combo.blockSignals(True)
+        self._map_combo.clear()
+        for m in self._maps:
+            self._map_combo.addItem(f"{m.name}  [{m.rows}\u00d7{m.cols}  {m.unit}]")
+        self._map_combo.blockSignals(False)
+        self._load_b_btn.setEnabled(True)
+        if self._rom_b:
+            self._refresh()
+        else:
+            self._status.setText("ROM A loaded. Load ROM B to compare.")
+            self._clear_tables()
+
+    def clear(self):
+        self._rom_a = self._rom_b = self._variant = None
+        self._maps = []
+        self._map_combo.clear()
+        self._load_b_btn.setEnabled(False)
+        self._status.setText("Load a ROM A first, then load ROM B to compare.")
+        self._clear_tables()
+        self._summary.setText("")
+
+    def _on_load_b(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load ROM B for comparison", "",
+            "ROM files (*.bin *.BIN *.034 *.rom);;All files (*.*)")
+        if not path:
+            return
+        try:
+            raw = open(path, "rb").read()
+        except OSError as e:
+            QMessageBox.critical(self, "Error", str(e))
+            return
+        wh, _ = normalize_rom(raw)
+        self._rom_b = wh
+        self._status.setText(f"ROM B: {Path(path).name}  ({len(wh):,} bytes)")
+        self._refresh()
+
+    def _refresh(self):
+        idx = self._map_combo.currentIndex()
+        if not self._maps or idx < 0 or idx >= len(self._maps) or self._rom_a is None:
+            return
+        m = self._maps[idx]
+        v = self._variant
+
+        raw_a = read_map(self._rom_a, m)
+        raw_b = read_map(self._rom_b, m) if self._rom_b else None
+        decode = m.decode
+
+        rpm_ax, load_ax = get_axes(self._rom_a, m, v)
+        rpm_labels  = [str(r) for r in reversed(rpm_ax)]
+        load_labels = [str(l) for l in load_ax]
+
+        nrows, ncols = m.rows, m.cols
+        changed_count = 0
+
+        for tbl in (self._table_a, self._table_d, self._table_b):
+            tbl.setRowCount(nrows)
+            tbl.setColumnCount(ncols)
+            tbl.setVerticalHeaderLabels(rpm_labels)
+            tbl.setHorizontalHeaderLabels(load_labels)
+            tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            tbl.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+
+        all_raws_a = [raw_a[r][c] for r in range(nrows) for c in range(ncols)]
+        vmin, vmax = min(all_raws_a), max(all_raws_a)
+
+        for r in range(nrows):
+            disp_r = nrows - 1 - r
+            for c in range(ncols):
+                a_raw = raw_a[r][c]
+                b_raw = raw_b[r][c] if raw_b else a_raw
+                delta = b_raw - a_raw
+                changed = delta != 0
+                if changed:
+                    changed_count += 1
+
+                a_disp = f"{decode(a_raw):.1f}" if decode else str(a_raw)
+                b_disp = f"{decode(b_raw):.1f}" if decode else str(b_raw)
+
+                if m.map_type == "ign" and decode:
+                    bg_a = _ign_colour(decode(a_raw))
+                    bg_b = _ign_colour(decode(b_raw)) if raw_b else bg_a
+                elif m.map_type == "fuel":
+                    bg_a = _fuel_colour(a_raw)
+                    bg_b = _fuel_colour(b_raw) if raw_b else bg_a
+                else:
+                    bg_a = _heat(a_raw, vmin, vmax)
+                    bg_b = _heat(b_raw, vmin, vmax) if raw_b else bg_a
+
+                if delta > 0:
+                    bg_d, fg_d, d_text = QColor("#1a3a1a"), QColor(GREEN), f"+{delta}"
+                elif delta < 0:
+                    bg_d, fg_d, d_text = QColor("#3a1a1a"), QColor(RED),   str(delta)
+                else:
+                    bg_d, fg_d, d_text = QColor(BG2),       QColor(FG_DIM), "\u2014"
+
+                def _mk(text, bg, fg=None, bold=False):
+                    it = QTableWidgetItem(text)
+                    it.setBackground(QBrush(bg))
+                    it.setForeground(QBrush(fg or _text_colour(bg)))
+                    it.setTextAlignment(Qt.AlignCenter)
+                    if bold:
+                        f = it.font(); f.setBold(True); it.setFont(f)
+                    it.setFlags(Qt.ItemIsEnabled)
+                    return it
+
+                self._table_a.setItem(disp_r, c, _mk(a_disp, bg_a))
+                self._table_d.setItem(disp_r, c, _mk(d_text, bg_d, fg_d, bold=changed))
+                self._table_b.setItem(disp_r, c, _mk(b_disp, bg_b))
+
+        total = nrows * ncols
+        if raw_b:
+            pct = 100 * changed_count / total
+            self._summary.setText(
+                f"{changed_count} of {total} cells changed  ({pct:.0f}%)  \u2014  {m.name}")
+        else:
+            self._summary.setText(f"Load ROM B to see delta  \u2014  {m.name}")
+
+    def _clear_tables(self):
+        for tbl in (self._table_a, self._table_d, self._table_b):
+            tbl.setRowCount(0)
+            tbl.setColumnCount(0)
 
 
 # ── Main window ───────────────────────────────────────────────────────────────
@@ -866,9 +1044,11 @@ class MainWindow(QMainWindow):
 
         if det.variant:
             self._main_chip_tab.load(self._main_rom, det.variant)
+            self._compare_tab.set_rom_a(bytes(self._main_rom), det.variant)
             self._tabs.setCurrentIndex(1)  # jump to map editor
         else:
             self._main_chip_tab.clear()
+            self._compare_tab.clear()
             self._tabs.setCurrentIndex(0)
             QMessageBox.warning(
                 self, "Unknown ROM",
