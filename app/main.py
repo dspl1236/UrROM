@@ -562,9 +562,14 @@ class MainChipTab(QWidget):
     def load(self, rom: bytearray, variant: ROMVariant):
         self._variant = variant
         self._rom = rom
-        # Show fuel + ign maps (not boost, not unconfirmed rev limit)
-        self._maps = [m for m in variant.main_maps
-                      if m.map_type in ("fuel", "ign") and m.rows > 1]
+        # Show all multi-cell maps that are tunable (fuel, ign, raw with decode,
+        # or raw without decode for informational viewing). Exclude 1-row axis
+        # tables that are just index references, and very large lookup tables
+        # (DTC classes 60×60) that aren't tune targets.
+        self._maps = [
+            m for m in variant.main_maps
+            if m.rows > 1 and not (m.rows >= 50 and m.cols >= 50)
+        ]
 
         self._map_combo.blockSignals(True)
         self._map_combo.clear()
@@ -650,15 +655,24 @@ class BoostTab(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
+        # ── Toolbar ───────────────────────────────────────────────────────
+        tb = QHBoxLayout()
+        self._map_combo = QComboBox()
+        self._map_combo.setMinimumWidth(300)
+        self._map_combo.currentIndexChanged.connect(self._on_map_selected)
+        tb.addWidget(self._map_combo)
+        tb.addStretch()
+        layout.addLayout(tb)
+
         self._status = QLabel("No boost chip loaded")
         self._status.setStyleSheet(f"color: {FG_DIM}; font-size: 12px;")
         layout.addWidget(self._status)
 
         self._note = QLabel(
-            "Boost chip maps (boost target, N75 duty cycle, knock threshold) "
-            "are displayed here once a boost chip file is loaded.\n\n"
-            "Boost chip addresses are currently PROVISIONAL — load a known-good "
-            "chip file and verify map data before editing.")
+            "Boost chip maps (boost target, N75 duty cycle) are displayed here "
+            "once a boost chip file is loaded.\n\n"
+            "Boost chip addresses are PROVISIONAL — verify map data against "
+            "known-good values before editing.")
         self._note.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
         self._note.setWordWrap(True)
         layout.addWidget(self._note)
@@ -668,22 +682,43 @@ class BoostTab(QWidget):
         layout.addWidget(self._table)
 
         layout.addStretch()
+        self._boost_rom = None
+        self._maps = []
 
     def load(self, boost_rom: bytearray, variant):
-        boost_maps = [m for m in variant.boost_maps if m.rows > 1]
-        if not boost_maps:
+        self._boost_rom = boost_rom
+        self._maps = [m for m in variant.boost_maps if m.rows > 1]
+        self._map_combo.blockSignals(True)
+        self._map_combo.clear()
+        if not self._maps:
             self._status.setText("No confirmed boost chip maps for this variant")
             self._table.setVisible(False)
+            self._map_combo.blockSignals(False)
             return
-        # Load the first boost map for now
-        m = boost_maps[0]
-        self._table.load(boost_rom, m)
+        for m in self._maps:
+            self._map_combo.addItem(f"{m.name}  [{m.rows}×{m.cols}  {m.unit}]")
+        self._map_combo.blockSignals(False)
+        self._map_combo.setCurrentIndex(0)
+        self._on_map_selected(0)
+
+    def _on_map_selected(self, idx: int):
+        if not self._maps or self._boost_rom is None:
+            return
+        if idx < 0 or idx >= len(self._maps):
+            return
+        m = self._maps[idx]
+        self._table.load(self._boost_rom, m)
         self._table.setVisible(True)
+        self._note.setVisible(False)
         self._status.setText(
-            f"Boost chip loaded  —  showing: {m.name}  [{m.confidence}]")
+            f"Boost chip  —  {m.name}  [{m.rows}×{m.cols}  {m.confidence}]")
 
     def clear(self):
+        self._boost_rom = None
+        self._maps = []
+        self._map_combo.clear()
         self._status.setText("No boost chip loaded")
+        self._note.setVisible(True)
         self._table.setVisible(False)
 
 
@@ -1061,8 +1096,10 @@ class CompareTab(QWidget):
     def set_rom_a(self, rom, variant):
         self._rom_a   = rom
         self._variant = variant
-        self._maps = [m for m in variant.main_maps
-                      if m.map_type in ("fuel", "ign") and m.rows > 1]
+        self._maps = [
+            m for m in variant.main_maps
+            if m.rows > 1 and not (m.rows >= 50 and m.cols >= 50)
+        ]
         self._map_combo.blockSignals(True)
         self._map_combo.clear()
         for m in self._maps:
@@ -1422,6 +1459,17 @@ class MainWindow(QMainWindow):
         rom_out = bytearray(self._main_rom)
         rom_out = self._main_chip_tab.commit_to_rom(rom_out)
 
+        # Apply checksum for prjmod / 0x0202 firmware chips that require it.
+        # Stock Bosch chips store ASCII part-number text at 0x3FFA–0x3FFF instead
+        # of a computed checksum, so we only apply for variants that use prjmod.
+        variant = self._det.variant if self._det else None
+        needs_checksum = (
+            variant is not None
+            and getattr(variant, 'software_id', '') in ('551AA_0202',)
+        )
+        if needs_checksum:
+            rom_out = apply_checksum(rom_out)
+
         # Build full 64KB file for 551x, or 32KB flat for 3B/V8
         if self._det and self._det.variant and self._det.variant.working_half_offset == 0x8000:
             # 551x: pad to 64KB with lower mirror
@@ -1446,10 +1494,11 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Cannot save:\n{e}")
             return
 
+        cs_note = "  (checksum applied)" if needs_checksum else ""
         self._main_chip_tab._table.accept_current_as_baseline()
         self._unsaved = False
         self._clear_dirty()
-        self._update_status(f"Saved → {Path(path).name}  ({len(out_bytes):,} bytes)")
+        self._update_status(f"Saved → {Path(path).name}  ({len(out_bytes):,} bytes){cs_note}")
 
     # ── Misc ──────────────────────────────────────────────────────────────────
 
