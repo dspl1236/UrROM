@@ -1646,6 +1646,81 @@ def detect_rom(rom: bytes) -> DetectionResult:
 
 # ── Axis helpers ──────────────────────────────────────────────────────────────
 
+# 551AA_0202 axis address lookup: data_offset → (row_axis_addr, col_axis_addr)
+# row  = y-axis in TunerPro convention (load / MAP / coolant etc.)
+# col  = x-axis (RPM or secondary dimension)
+# None means no dedicated axis table — caller falls back to sequential indices
+# Source: PRJ m232.xdf z-axis + y-axis + x-axis mmedaddress values
+_AXES_0202: dict[int, tuple[int | None, int | None]] = {
+    # Fuel P/T family (rows=load, cols=RPM×40)
+    0x0E13: (0x0E03, 0x0DF1),
+    0x21A4: (0x0E03, 0x0DF1),
+    0x2224: (0x0E03, 0x0DF1),
+    # Ignition P/T family (rows=load, cols=RPM×40)
+    0x125F: (0x124F, 0x123D),
+    0x1594: (0x124F, 0x123D),
+    0x10A8: (0x124F, 0x123D),
+    0x2198: (0x124F, 0x123D),   # Ign LPG
+    0x2424: (0x124F, 0x123D),   # Ign race fuel
+    # VE table (rows=MAP kPa, cols=RPM×40)
+    0x2074: (0x2064, 0x2052),
+    # Boost / WG maps (rows=RPM narrow, cols=RPM raw/scaled)
+    0x2480: (0x2391, 0x2600),
+    0x2520: (0x2391, 0x2600),
+    # Boost correction tables 8×10 (rows=RPM narrow, cols=IAT or pATM)
+    0x264B: (0x2391, 0x2385),
+    0x269B: (0x2391, 0x2385),
+    0x26EB: (0x2391, 0x2385),
+    0x282B: (0x2391, 0x2385),
+    0x2893: (0x2391, 0x2385),
+    0x28E3: (0x2391, 0x2385),
+    0x2933: (0x2391, 0x2385),
+    # Idle / ISV (rows=coolant, cols=RPM×40)
+    0x1AA2: (0x1A9C, 0x1A93),
+    0x1ADB: (0x1AD5, 0x1ACE),
+    # Wall film (rows=coolant, cols=RPM×40)
+    0x0D66: (0x0D58, 0x0D60),
+    0x0D4A: (0x0D46, 0x0D41),
+    # MAF low-voltage correction (rows=voltage, cols=RPM×40)
+    0x0C3C: (0x0C30, 0x0C22),
+    # Ignition idle / warmup (rows=coolant, cols=RPM×40)
+    0x11B7: (None,   0x11AA),
+    0x11E2: (None,   0x1202),
+    0x120F: (0x120A, 0x1202),
+    0x17C7: (None,   0x1202),
+    0x1A3D: (None,   0x1A93),
+    0x22D9: (None,   0x11AA),
+    0x2312: (0x120A, 0x1202),
+    # Dwell (col=RPM×40 only)
+    0x150E: (None,   0x14F9),
+    # Fuel IATxRPM correction (rows=IAT, cols=RPM×40 subset)
+    0x0F21: (0x1024, 0x0DF1),
+    0x22B2: (0x1024, 0x0DF1),
+    # Knock threshold per cylinder (rows=MAP, cols=RPM×40)
+    0x2218: (None,   0x21D9),
+    0x2240: (None,   0x21D9),
+    0x2268: (None,   0x21D9),
+    0x2290: (None,   0x21D9),
+    0x22B8: (None,   0x21D9),
+    # Load filter (rows=load, cols=RPM×40)
+    0x0D27: (None,   0x0D1B),
+    # Alpha/N error filling map (rows=TPS, cols=RPM×40)
+    0x1ED2: (0x1ECC, 0x1EBE),
+    # 0x9F7C RPM×Load 4×4 (reuse ign axes, first 4 values)
+    0x1F88: (0x124F, 0x123D),
+    # Warmup enrichment (no dedicated axes — use sequential)
+    # Wall film load gradient, retard, events — 1D, no axes needed
+}
+
+# RPM-scaled columns in 0x0202: raw × 40 = RPM for these axis addresses
+_RPM_SCALE_ADDRS_0202 = {
+    0x0DF1, 0x123D, 0x2052, 0x2600, 0x2391, 0x1A93,
+    0x11AA, 0x1202, 0x14F9, 0x0C22, 0x0D60, 0x1EBE, 0x21D9,
+}
+
+# MAP kPa columns in 0x0202: raw / 1.035 ≈ kPa absolute
+_MAP_SCALE_ADDRS_0202 = {0x2064}
+
 def read_axes_from_header(rom: bytes, header_addr: int,
                           rows: int = 16, cols: int = 16
                           ) -> tuple[list, list]:
@@ -1674,14 +1749,38 @@ def read_axes_from_header(rom: bytes, header_addr: int,
 def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
              ) -> tuple[list, list]:
     """
-    Return (rpm_axis, load_axis) appropriate for the variant and map.
+    Return (row_axis, col_axis) appropriate for the variant and map.
+
+    For 551AA_0202 (prjmod/034EFI): reads axis values from ROM at the
+    confirmed WH addresses for each map, decoded appropriately (RPM×40,
+    MAP kPa, or raw). Falls back to sequential indices for unmapped tables.
 
     For 551C/551AA: returns the known confirmed axis arrays.
     For 3B/404/V8: reads axis bytes from the Bosch descriptor header,
                    which sits immediately before map_def.main_addr (data_addr - 36).
-    Returns lists of raw integers — the caller decides how to label them.
+
+    Returns lists of decoded values — the caller uses them directly as
+    row/column header labels in the map table.
     """
     sw = variant.software_id if variant else ""
+
+    if sw == "551AA_0202":
+        row_addr, col_addr = _AXES_0202.get(map_def.main_addr, (None, None))
+
+        def _read_axis(addr: int | None, n: int) -> list:
+            if addr is None or addr + n > len(rom):
+                return list(range(n))
+            raw = list(rom[addr: addr + n])
+            if addr in _RPM_SCALE_ADDRS_0202:
+                return [b * 40 for b in raw]
+            if addr in _MAP_SCALE_ADDRS_0202:
+                return [round(b / 1.035, 1) for b in raw]
+            return raw
+
+        rows = _read_axis(row_addr, map_def.rows)
+        cols = _read_axis(col_addr, map_def.cols)
+        return rows, cols
+
     if sw in ("551C", "551AA"):
         return list(_RPM_AXIS_551), list(_LOAD_AXIS_551)
 

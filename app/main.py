@@ -366,8 +366,10 @@ class MapTable(QTableWidget):
         self._map_def = map_def
         self._is_ign  = map_def.map_type == "ign"
         self._is_fuel = map_def.map_type == "fuel"
-        self._rpm_axis  = rpm_axis  or list(range(map_def.rows))
-        self._load_axis = load_axis or list(range(map_def.cols))
+        # get_axes returns (row_axis, col_axis) — row axis labels vertical header,
+        # col axis labels horizontal header.
+        self._row_axis = rpm_axis  or list(range(map_def.rows))
+        self._col_axis = load_axis or list(range(map_def.cols))
 
         raw = read_map(bytes(rom), map_def)
         self._original_raw = copy.deepcopy(raw)
@@ -376,11 +378,17 @@ class MapTable(QTableWidget):
         self.setRowCount(map_def.rows)
         self.setColumnCount(map_def.cols)
 
-        # Axis labels — RPM on rows (inverted: row 0 = highest RPM), load on cols
-        rpm_labels  = [str(r) for r in reversed(self._rpm_axis)]
-        load_labels = [str(l) for l in self._load_axis]
-        self.setVerticalHeaderLabels(rpm_labels)
-        self.setHorizontalHeaderLabels(load_labels)
+        # Row headers: display inverted (row 0 = highest index = top of visual table)
+        # so the highest-value row axis entry appears at the top
+        def _fmt(v) -> str:
+            if isinstance(v, float) and v != int(v):
+                return f"{v:.1f}"
+            return str(int(v))
+
+        row_labels = [_fmt(v) for v in reversed(self._row_axis)]
+        col_labels = [_fmt(v) for v in self._col_axis]
+        self.setVerticalHeaderLabels(row_labels)
+        self.setHorizontalHeaderLabels(col_labels)
 
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)

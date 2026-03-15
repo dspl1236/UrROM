@@ -464,3 +464,72 @@ class TestGetAxes:
                     rpm, load = get_axes(rom, m, v)
                     assert len(rpm)  == m.rows, f"{v.name}/{m.name}: rpm len {len(rpm)} != {m.rows}"
                     assert len(load) == m.cols, f"{v.name}/{m.name}: load len {len(load)} != {m.cols}"
+
+    def test_0202_fuel_axes_read_from_rom(self):
+        """551AA_0202: fuel P/T axes read from confirmed WH addresses."""
+        from urrom.ecu_profiles import VARIANT_551AA_0202
+        rom = bytearray(MAIN_CHIP_WORKING)
+        # Plant known RPM axis at 0x0DF1 (16 bytes, ×40 decode)
+        rpm_raw = list(range(1, 17))   # 40, 80, 120, ... 640 after decode
+        rom[0x0DF1:0x0E01] = bytes(rpm_raw)
+        # Plant known Load axis at 0x0E03 (16 bytes, raw)
+        load_raw = list(range(10, 26))
+        rom[0x0E03:0x0E13] = bytes(load_raw)
+        fuel_m = next(m for m in VARIANT_551AA_0202.main_maps if m.main_addr == 0x0E13)
+        rows, cols = get_axes(bytes(rom), fuel_m, VARIANT_551AA_0202)
+        assert rows == load_raw, f"Load axis mismatch: {rows}"
+        assert cols == [b * 40 for b in rpm_raw], f"RPM axis mismatch: {cols}"
+
+    def test_0202_ign_axes_independent_of_fuel(self):
+        """551AA_0202: ign P/T uses separate axis addresses from fuel P/T."""
+        from urrom.ecu_profiles import VARIANT_551AA_0202
+        rom = bytearray(MAIN_CHIP_WORKING)
+        ign_rpm = list(range(5, 21))   # 200, 240, ... 800 after decode
+        ign_load = list(range(20, 36))
+        rom[0x123D:0x124D] = bytes(ign_rpm)
+        rom[0x124F:0x125F] = bytes(ign_load)
+        ign_m = next(m for m in VARIANT_551AA_0202.main_maps if m.main_addr == 0x125F)
+        rows, cols = get_axes(bytes(rom), ign_m, VARIANT_551AA_0202)
+        assert rows == ign_load
+        assert cols == [b * 40 for b in ign_rpm]
+
+    def test_0202_ve_map_axis(self):
+        """551AA_0202: VE table uses separate RPM+MAP axes."""
+        from urrom.ecu_profiles import VARIANT_551AA_0202
+        rom = bytearray(MAIN_CHIP_WORKING)
+        ve_rpm = list(range(2, 18))   # RPM×40
+        ve_map = [int(b * 1.035) for b in range(16)]  # raw MAP values → kPa after decode
+        rom[0x2052:0x2062] = bytes(ve_rpm)
+        rom[0x2064:0x2074] = bytes(range(16))
+        ve_m = next(m for m in VARIANT_551AA_0202.main_maps if m.main_addr == 0x2074)
+        rows, cols = get_axes(bytes(rom), ve_m, VARIANT_551AA_0202)
+        assert cols == [b * 40 for b in ve_rpm]
+        # rows should be kPa-decoded (raw/1.035)
+        assert len(rows) == 16
+        assert rows[0] == round(0 / 1.035, 1)
+
+    def test_0202_unmapped_table_returns_sequential(self):
+        """551AA_0202: tables not in _AXES_0202 fall back to sequential indices."""
+        from urrom.ecu_profiles import VARIANT_551AA_0202
+        rom = bytes(MAIN_CHIP_WORKING)
+        # Warmup Enrichment has no axis entry
+        wu_m = next(m for m in VARIANT_551AA_0202.main_maps if m.main_addr == 0x0D9A)
+        rows, cols = get_axes(rom, wu_m, VARIANT_551AA_0202)
+        assert rows == list(range(wu_m.rows))
+        assert cols == list(range(wu_m.cols))
+
+    def test_0202_all_mapped_axes_correct_length(self):
+        """551AA_0202: every axis in _AXES_0202 produces lists matching map dims."""
+        from urrom.ecu_profiles import VARIANT_551AA_0202, _AXES_0202
+        rom = bytearray(MAIN_CHIP_WORKING)
+        # Plant non-zero data in all axis regions so decodes produce meaningful values
+        for addr in set(a for row, col in _AXES_0202.values() for a in (row, col) if a):
+            end = min(addr + 16, MAIN_CHIP_WORKING)
+            for i in range(addr, end):
+                rom[i] = (i % 200) + 1
+        rom_b = bytes(rom)
+        for m in VARIANT_551AA_0202.main_maps:
+            if m.main_addr in _AXES_0202:
+                rows, cols = get_axes(rom_b, m, VARIANT_551AA_0202)
+                assert len(rows) == m.rows, f"{m.name}: row axis len {len(rows)} != {m.rows}"
+                assert len(cols) == m.cols, f"{m.name}: col axis len {len(cols)} != {m.cols}"
