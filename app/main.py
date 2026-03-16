@@ -1660,6 +1660,17 @@ class MainWindow(QMainWindow):
             # Tell KWP monitor which PNs are valid for this variant
             self._kwp_monitor.set_rom_part_numbers(det.variant.ecu_pns)
             self._refresh_kwp_badge()
+
+            # Warn on variants with unconfirmed map addresses
+            v_name = det.variant.name or ""
+            if "V8" in v_name or "ABH" in v_name or "PT" in v_name:
+                QMessageBox.warning(
+                    self, "V8 ROM — unconfirmed map addresses",
+                    "V8 map addresses have not been verified against real hardware.\n\n"
+                    "You can view the ROM in hex and compare files, but do not\n"
+                    "write map values until the addresses are confirmed.\n\n"
+                    "If you have a V8 chip read, please contribute it — "
+                    "it would be the first confirmed V8 ROM in this tool.")
         else:
             self._main_chip_tab.clear()
             self._compare_tab.clear()

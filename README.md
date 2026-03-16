@@ -21,11 +21,12 @@ used in Audi's legendary 5-cylinder 2.2 20v turbo and V8 engines.
 | PT     | 443 907 404 A  | 404V8    | Audi V8 3.6L |
 | ABH    | 4A0 907 557 A  | 557      | Audi V8 4.2L |
 
-## Status: v0.1.0 — Early development
+## Status
 
-- ROM normalisation, checksum verify/rewrite, variant detection
-- Map read/write, rev limit, ignition encode/decode
-- 42 unit tests passing
-- GUI coming next
+> **⚠ Before writing any ROM** — always read and save the original chip first. Read it twice, compare the files, keep both copies safe.
 
-Map addresses are PROVISIONAL pending ROM contributions.
+**5-cylinder I5 turbo (3B / AAN / ABY / ADU):** Map offsets confirmed from real chip reads and community .034 tune diffs. Safe to use for reading and writing.
+
+**V8 (PT / ABH):** Map addresses are UNCONFIRMED — V8 documentation is scarce and no V8 chip reads have been contributed yet. ROM loading and hex view work, but do not write V8 map values until addresses are verified.
+
+**Rev limit cell (all variants):** Currently UNCONFIRMED — scan data suggests `0x3FF0` may not be the rev limit as labelled. Read-only until confirmed.
