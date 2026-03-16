@@ -1475,6 +1475,7 @@ class MainWindow(QMainWindow):
             f"QMenu {{ background: {BG2}; color: {FG}; border: 1px solid {BORDER}; }}"
             f"QMenu::item:selected {{ background: {BG3}; }}")
 
+        # ── File ─────────────────────────────────────────────────────────────
         file_menu = mb.addMenu("File")
 
         open_act = QAction("Open ROM…", self)
@@ -1495,15 +1496,115 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        quit_act = QAction("Quit", self)
+        quit_act = QAction("Quit\t", self)
         quit_act.setShortcut("Ctrl+Q")
         quit_act.triggered.connect(self.close)
         file_menu.addAction(quit_act)
 
+        # ── Tools ─────────────────────────────────────────────────────────────
+        tools_menu = mb.addMenu("Tools")
+
+        self._act_kwp_status = QAction("KWPBridge: not running", self)
+        self._act_kwp_status.setEnabled(False)
+        tools_menu.addAction(self._act_kwp_status)
+
+        tools_menu.addSeparator()
+
+        kwp_dlg_act = QAction("Live Data Connection…", self)
+        kwp_dlg_act.setShortcut("Ctrl+K")
+        kwp_dlg_act.triggered.connect(self._show_kwp_dialog)
+        tools_menu.addAction(kwp_dlg_act)
+
+        # 2-second timer keeps the menu label current
+        self._kwp_menu_timer = QTimer(self)
+        self._kwp_menu_timer.timeout.connect(self._refresh_kwp_menu_label)
+        self._kwp_menu_timer.start(2000)
+
+        # ── Help ─────────────────────────────────────────────────────────────
         help_menu = mb.addMenu("Help")
         about_act = QAction("About UrROM", self)
         about_act.triggered.connect(self._on_about)
         help_menu.addAction(about_act)
+
+    def _refresh_kwp_menu_label(self):
+        """Update Tools menu KWP label every 2 seconds."""
+        if not hasattr(self, '_act_kwp_status'):
+            return
+        if not kwpbridge_available():
+            self._act_kwp_status.setText("KWPBridge: not installed")
+        elif kwpbridge_running():
+            pn = self._kwp_monitor.current_pn()
+            if pn:
+                self._act_kwp_status.setText(f"KWPBridge: connected  ·  {pn}")
+            else:
+                self._act_kwp_status.setText("KWPBridge: running — no ECU")
+        else:
+            self._act_kwp_status.setText("KWPBridge: not running")
+
+    def _show_kwp_dialog(self):
+        """Show KWPBridge connection status and info dialog."""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                     QDialogButtonBox)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Live Data — KWPBridge Connection")
+        dlg.setMinimumWidth(420)
+        dlg.setStyleSheet(f"background:{BG2}; color:{FG};")
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(12)
+
+        if not kwpbridge_available():
+            dot, body = "⚫", (
+                "<b>KWPBridge is not installed.</b><br><br>"
+                "UrROM works fully standalone without it.<br><br>"
+                "KWPBridge adds optional live ECU data overlay:<br>"
+                "• Real-time RPM, load, coolant on the map tabs<br>"
+                "• Lambda and timing overlaid on active map cells<br>"
+                "• Part-number safety gate before writing<br><br>"
+                "Install KWPBridge and run it alongside UrROM.")
+        elif kwpbridge_running():
+            pn = self._kwp_monitor.current_pn()
+            det = self._det
+            pns = det.variant.ecu_pns if det and det.variant else []
+            if pn:
+                matched = self._kwp_matched
+                dot  = "🟢" if matched else "🟡"
+                if matched:
+                    body = (f"<b>KWPBridge connected.</b><br><br>"
+                            f"ECU: <b>{pn}</b><br>"
+                            "ECU matches loaded ROM — live overlay active.")
+                else:
+                    rom_str = ", ".join(pns) if pns else "(none loaded)"
+                    body = (f"<b>KWPBridge connected.</b><br><br>"
+                            f"ECU: <b>{pn}</b><br>"
+                            f"ROM expects: <b>{rom_str}</b><br>"
+                            "Load the matching ROM to enable overlay.")
+            else:
+                dot  = "🟡"
+                body = ("<b>KWPBridge running — no ECU detected.</b><br><br>"
+                        "Connect your KL-line interface and turn ignition on.")
+        else:
+            dot  = "🔴"
+            body = ("<b>KWPBridge is installed but not running.</b><br><br>"
+                    "UrROM is fully operational without it.<br><br>"
+                    "Start KWPBridge to enable live ECU data overlay.<br>"
+                    "It will be detected automatically within 2 seconds.")
+
+        icon = QLabel(dot)
+        icon.setStyleSheet("font-size: 28px;")
+        msg = QLabel(body)
+        msg.setWordWrap(True)
+
+        row = QHBoxLayout()
+        row.addWidget(icon)
+        row.addWidget(msg, 1)
+        w = QWidget()
+        w.setLayout(row)
+        lay.addWidget(w)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok)
+        bb.accepted.connect(dlg.accept)
+        lay.addWidget(bb)
+        dlg.exec_()
 
     # ── File operations ───────────────────────────────────────────────────────
 
@@ -1694,28 +1795,6 @@ class MainWindow(QMainWindow):
         if summary:
             self._update_status(f"🟢  {summary}")
 
-    def _refresh_kwp_badge(self):
-        variant  = self._det.variant if self._det else None
-        pns      = variant.ecu_pns if variant else []
-        text, colour = kwp_status_label(self._kwp_monitor, pns)
-        # Compact badge text
-        if "not installed" in text or "not running" in text:
-            badge = "● KWP"
-            c     = FG_DIM
-        elif "🟢" in text:
-            badge = "🟢 KWP"
-            c     = "#2dff6e"
-        elif "🟡" in text:
-            badge = "🟡 KWP"
-            c     = "#ffaa00"
-        else:
-            badge = "● KWP"
-            c     = FG_DIM
-        self._kwp_badge.setText(badge)
-        self._kwp_badge.setStyleSheet(
-            f"color: {c}; font-size: 10px; padding: 0 8px;")
-        self._kwp_badge.setToolTip(text)
-
     # ── Misc ──────────────────────────────────────────────────────────────────
 
     def _mark_dirty(self):
@@ -1790,7 +1869,8 @@ class MainWindow(QMainWindow):
         self._refresh_kwp_badge(lv)
 
     def _refresh_kwp_badge(self, lv=None):
-        """Update the KWP status badge in the file bar."""
+        """Update the KWP status badge in the file bar and Tools menu label."""
+        self._refresh_kwp_menu_label()
         rom_pns = (self._det.variant.ecu_pns
                    if self._det and self._det.variant else [])
         text, colour = kwp_status_label(self._kwp_monitor, rom_pns)

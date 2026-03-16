@@ -106,9 +106,8 @@ PRJmod firmware patches (from vwnut8392 patcher XDF, target: 8A0 907 551B only)
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
-import struct
 
 
 # ── Result dataclass ─────────────────────────────────────────────────────────

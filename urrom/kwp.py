@@ -256,7 +256,17 @@ if _QT_AVAILABLE and _KWP_AVAILABLE:
             self._matched = new_match
 
 else:
+    class _NoOpSignal:
+        def connect(self, *a, **kw):    pass
+        def disconnect(self, *a, **kw): pass
+        def emit(self, *a, **kw):       pass
+
     class KWPMonitor:  # type: ignore
+        connected    = _NoOpSignal()
+        disconnected = _NoOpSignal()
+        live_data    = _NoOpSignal()
+        mismatch     = _NoOpSignal()
+
         def __init__(self, parent=None): pass
         def set_rom_part_numbers(self, pns): pass
         def start(self): pass
