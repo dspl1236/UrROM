@@ -26,6 +26,9 @@ from urrom.ecu_profiles import (
     read_map, read_map_decoded, write_map,
     read_rev_limit, write_rev_limit,
     ign_decode, ign_encode,
+    ign_decode_3b, ign_encode_3b,
+    rpm_decode, load_decode, temp_decode,
+    fuel_decode, fuel_encode,
     get_axes, read_axes_from_header,
     _RPM_AXIS_551, _LOAD_AXIS_551,
     # data
@@ -533,3 +536,67 @@ class TestGetAxes:
                 rows, cols = get_axes(rom_b, m, VARIANT_551AA_0202)
                 assert len(rows) == m.rows, f"{m.name}: row axis len {len(rows)} != {m.rows}"
                 assert len(cols) == m.cols, f"{m.name}: col axis len {len(cols)} != {m.cols}"
+
+
+# ── Decode / encode functions ─────────────────────────────────────────────────
+
+class TestDecodeFunctions:
+    """Unit tests for the raw→physical decode functions used by the map editor."""
+
+    def test_rpm_decode_zero(self):
+        assert rpm_decode(0) == pytest.approx(0.0)
+
+    def test_rpm_decode_scale(self):
+        # 100 raw → 4000 RPM (scale = 40 RPM/count)
+        assert rpm_decode(100) == pytest.approx(4000.0)
+
+    def test_rpm_decode_max(self):
+        assert rpm_decode(255) > 6000   # well above redline
+
+    def test_load_decode_zero(self):
+        assert load_decode(0) == pytest.approx(0.0)
+
+    def test_load_decode_scale(self):
+        # Linear: 128 raw → ~6.4 g/rev
+        val = load_decode(128)
+        assert 5.0 < val < 8.0
+
+    def test_temp_decode_cold(self):
+        # 0 raw → -48°C (cold start temperature)
+        assert temp_decode(0) == pytest.approx(-48.0)
+
+    def test_temp_decode_warm(self):
+        # ~90°C should be reachable
+        raw = next(r for r in range(256) if temp_decode(r) >= 90.0)
+        assert 150 < raw < 256
+
+    def test_ign_encode_decode_roundtrip(self):
+        for deg in [-5.0, 0.0, 10.0, 20.0, 30.0, 42.0]:
+            raw  = ign_encode(deg)
+            back = ign_decode(raw)
+            assert abs(back - deg) < 1.0, \
+                f"ign round-trip {deg}° → raw {raw} → {back}°"
+
+    def test_ign_advance_positive_raw(self):
+        # Positive advance should produce positive raw value
+        assert ign_encode(20.0) > ign_encode(0.0)
+
+    def test_ign_3b_encode_decode_roundtrip(self):
+        # 3B engine uses slightly different coefficients
+        for deg in [0.0, 15.0, 30.0, 45.0]:
+            raw  = ign_encode_3b(deg)
+            back = ign_decode_3b(raw)
+            assert abs(back - deg) < 1.0, \
+                f"ign_3b round-trip {deg}° → raw {raw} → {back}°"
+
+    def test_fuel_encode_decode_roundtrip(self):
+        for val in [50.0, 80.0, 100.0, 120.0, 150.0]:
+            raw  = fuel_encode(val)
+            back = fuel_decode(raw)
+            assert abs(back - val) < 1.0, \
+                f"fuel round-trip {val} → raw {raw} → {back}"
+
+    def test_fuel_identity_at_integer(self):
+        # Fuel map uses raw = val directly for most values
+        for val in range(10, 200, 20):
+            assert fuel_decode(val) == pytest.approx(float(val))
