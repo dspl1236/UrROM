@@ -521,26 +521,26 @@ VARIANT_551AA = ROMVariant(
 #   0x65 (101) = 440cc Siemens (2871 turbo build, higher flow needed)
 #   (Lower byte = larger effective injector flow at the sample MAF point)
 
-def _prj_ign_decode(raw):
-    return [round(b * 0.75 - 22.5, 1) for b in raw]
+def _prj_ign_decode(b: int) -> float:
+    return round(b * 0.75 - 22.5, 1)
 
-def _prj_ign_encode(val_list):
-    return [max(0, min(255, round((v + 22.5) / 0.75))) for v in val_list]
+def _prj_ign_encode(v: float) -> int:
+    return max(0, min(255, round((v + 22.5) / 0.75)))
 
-def _prj_fuel_decode(raw):
-    return [round(1 / (b / 128) * 14.7, 2) if b > 0 else 0.0 for b in raw]
+def _prj_fuel_decode(b: int) -> float:
+    return round(1 / (b / 128) * 14.7, 2) if b > 0 else 0.0
 
-def _prj_fuel_encode(val_list):
-    return [max(1, min(255, round(14.7 / v * 128))) if v > 0 else 128 for v in val_list]
+def _prj_fuel_encode(v: float) -> int:
+    return max(1, min(255, round(14.7 / v * 128))) if v > 0 else 128
 
-def _prj_map_kpa_decode(raw):
-    return [round(b / 1.035, 1) for b in raw]
+def _prj_map_kpa_decode(b: int) -> float:
+    return round(b / 1.035, 1)
 
-def _prj_wgdc_decode(raw):
-    return [round(b / 192 * 100, 1) for b in raw]
+def _prj_wgdc_decode(b: int) -> float:
+    return round(b / 192 * 100, 1)
 
-def _prj_rpm_decode(raw):
-    return [b * 40 for b in raw]
+def _prj_rpm_decode(b: int) -> int:
+    return b * 40
 
 _MAPS_0202_MAIN = [
     # ── Fuel maps ──────────────────────────────────────────────────────────
@@ -673,7 +673,7 @@ _MAPS_0202_MAIN = [
            "3071 tunes raise to 1350/1050/950.",
            main_addr=0x1B7A, rows=3, cols=1,
            map_type="raw", unit="RPM",
-           decode=lambda raw: [b * 10 for b in raw],
+           decode=lambda b: b * 10,
            confidence="PROVISIONAL",
            notes="Confirmed from .034 diff: 28RS_R2 and R9.1_550 both raise idle vs stock."),
 
@@ -708,7 +708,7 @@ _MAPS_0202_MAIN = [
            "0.010667 × raw = ms. IDENTICAL across all 034 tunes (no injector changes here).",
            main_addr=0x0D14, rows=5, cols=1,
            map_type="raw", unit="ms",
-           decode=lambda raw: [round(b * 0.010667, 3) for b in raw],
+           decode=lambda b: round(b * 0.010667, 3),
            confidence="CONFIRMED",
            notes="PRJ XDF confirmed. Stock values: 0.64/0.32/0.62/0.03/0.27 ms. "
                  "Injector sizing encoded in WH[0x0CEB] instead."),
@@ -755,7 +755,7 @@ _MAPS_0202_MAIN = [
            "256-cell ignition cut RPM curve for launch control. raw×40 = RPM.",
            main_addr=0x06C0, rows=256, cols=1,
            map_type="raw", unit="RPM",
-           decode=lambda raw: [b*40 for b in raw],
+           decode=lambda b: b*40,
            confidence="CONFIRMED"),
 
     MapDef("Wall Film Events (SD)",
@@ -772,7 +772,7 @@ _MAPS_0202_MAIN = [
            "Ignition retard applied on positive load delta (31-cell). raw×0.75 = °.",
            main_addr=0x0A20, rows=31, cols=1,
            map_type="raw", unit="°",
-           decode=lambda raw: [round(b*0.75, 2) for b in raw],
+           decode=lambda b: round(b*0.75, 2),
            confidence="CONFIRMED"),
 
     MapDef("Wall Film Events (MAF)",
@@ -895,7 +895,7 @@ _MAPS_0202_MAIN = [
            "Cranking fuel injection amount vs coolant temperature (6-cell). raw/8.",
            main_addr=0x0F65, rows=6, cols=1,
            map_type="raw", unit="raw",
-           decode=lambda raw: [round(b/8, 2) for b in raw],
+           decode=lambda b: round(b/8, 2),
            confidence="CONFIRMED"),
 
     MapDef("Cylinder Re-Activation RPM",
@@ -907,7 +907,7 @@ _MAPS_0202_MAIN = [
            "Cylinder re-activation delta correction (4-cell). raw×40 = RPM.",
            main_addr=0x0FE0, rows=4, cols=1,
            map_type="raw", unit="RPM",
-           decode=lambda raw: [b*40 for b in raw],
+           decode=lambda b: b*40,
            confidence="CONFIRMED"),
 
     MapDef("IAT Correction Axis",
@@ -1081,7 +1081,7 @@ _MAPS_0202_MAIN = [
            "Stock: 1300/1000/800. 3071 tunes raise to 1350/1050/950.",
            main_addr=0x1BAF, rows=3, cols=1,
            map_type="raw", unit="RPM",
-           decode=lambda raw: [b*10 for b in raw],
+           decode=lambda b: b*10,
            confidence="CONFIRMED"),
 
     MapDef("Lambda Threshold",
@@ -1178,7 +1178,7 @@ _MAPS_0202_MAIN = [
            "Injector dead-time compensation for LPG mode (5-cell). 0.010667×raw = ms.",
            main_addr=0x229F, rows=5, cols=1,
            map_type="raw", unit="ms",
-           decode=lambda raw: [round(b*0.010667, 3) for b in raw],
+           decode=lambda b: round(b*0.010667, 3),
            confidence="CONFIRMED"),
 
     MapDef("Fuel IATxRPM Correction (LPG)",
@@ -1235,28 +1235,28 @@ _MAPS_0202_MAIN = [
            "Cylinder-selective knock retard step at part-throttle (8-cell). raw×0.5 = °.",
            main_addr=0x2317, rows=8, cols=1,
            map_type="raw", unit="°",
-           decode=lambda raw: [round(b*0.5, 2) for b in raw],
+           decode=lambda b: round(b*0.5, 2),
            confidence="CONFIRMED"),
 
     MapDef("Cyl KR Retard Step WOT",
            "Cylinder-selective knock retard step at wide-open-throttle (8-cell). raw×0.5 = °.",
            main_addr=0x231F, rows=8, cols=1,
            map_type="raw", unit="°",
-           decode=lambda raw: [round(b*0.5, 2) for b in raw],
+           decode=lambda b: round(b*0.5, 2),
            confidence="CONFIRMED"),
 
     MapDef("Cyl KR Retard Limit P/T",
            "Cylinder-selective knock retard limit at part-throttle (8-cell). raw×0.5 = °.",
            main_addr=0x2327, rows=8, cols=1,
            map_type="raw", unit="°",
-           decode=lambda raw: [round(b*0.5, 2) for b in raw],
+           decode=lambda b: round(b*0.5, 2),
            confidence="CONFIRMED"),
 
     MapDef("Cyl KR Retard Limit WOT",
            "Cylinder-selective knock retard limit at wide-open-throttle (8-cell). raw×0.5 = °.",
            main_addr=0x232F, rows=8, cols=1,
            map_type="raw", unit="°",
-           decode=lambda raw: [round(b*0.5, 2) for b in raw],
+           decode=lambda b: round(b*0.5, 2),
            confidence="CONFIRMED"),
 
     MapDef("Cyl KR Phase-In Delay",
@@ -1333,56 +1333,56 @@ _MAPS_0202_MAIN = [
            "Boost IAT correction table, alternate 1 (8×10). raw/128.",
            main_addr=0x264B, rows=8, cols=10,
            map_type="raw", unit="corr",
-           decode=lambda raw: [round(b/128, 3) for b in raw],
+           decode=lambda b: round(b/128, 3),
            confidence="CONFIRMED"),
 
     MapDef("Boost IAT Correction Alt 2",
            "Boost IAT correction table, alternate 2 (8×10). raw/128.",
            main_addr=0x269B, rows=8, cols=10,
            map_type="raw", unit="corr",
-           decode=lambda raw: [round(b/128, 3) for b in raw],
+           decode=lambda b: round(b/128, 3),
            confidence="CONFIRMED"),
 
     MapDef("Boost IAT Correction Alt 3",
            "Boost IAT correction table, alternate 3 (8×10). raw/128.",
            main_addr=0x26EB, rows=8, cols=10,
            map_type="raw", unit="corr",
-           decode=lambda raw: [round(b/128, 3) for b in raw],
+           decode=lambda b: round(b/128, 3),
            confidence="CONFIRMED"),
 
     MapDef("Base WGDC IAT Correction",
            "Base wastegate duty cycle IAT correction (8×10). raw/128.",
            main_addr=0x282B, rows=8, cols=10,
            map_type="raw", unit="corr",
-           decode=lambda raw: [round(b/128, 3) for b in raw],
+           decode=lambda b: round(b/128, 3),
            confidence="CONFIRMED"),
 
     MapDef("Boost pATM Correction 1",
            "Boost atmospheric pressure correction table 1 (8×10). raw/128.",
            main_addr=0x2893, rows=8, cols=10,
            map_type="raw", unit="corr",
-           decode=lambda raw: [round(b/128, 3) for b in raw],
+           decode=lambda b: round(b/128, 3),
            confidence="CONFIRMED"),
 
     MapDef("Boost pATM Correction 2",
            "Boost atmospheric pressure correction table 2 (8×10). raw/128.",
            main_addr=0x28E3, rows=8, cols=10,
            map_type="raw", unit="corr",
-           decode=lambda raw: [round(b/128, 3) for b in raw],
+           decode=lambda b: round(b/128, 3),
            confidence="CONFIRMED"),
 
     MapDef("Base WGDC pATM Correction",
            "Base wastegate duty cycle atmospheric pressure correction (8×10). raw/128.",
            main_addr=0x2933, rows=8, cols=10,
            map_type="raw", unit="corr",
-           decode=lambda raw: [round(b/128, 3) for b in raw],
+           decode=lambda b: round(b/128, 3),
            confidence="CONFIRMED"),
 
     MapDef("Cyl KR Sum Threshold",
            "Cylinder-selective KR sum threshold for global knock retard (8-cell). raw×0.5 = °.",
            main_addr=0x2AA0, rows=8, cols=1,
            map_type="raw", unit="°",
-           decode=lambda raw: [round(b*0.5, 2) for b in raw],
+           decode=lambda b: round(b*0.5, 2),
            confidence="CONFIRMED"),
 
     MapDef("Global KR Activation Threshold",
