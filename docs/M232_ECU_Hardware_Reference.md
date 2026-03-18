@@ -744,3 +744,26 @@ This is consistent with:
 - The "034EFI Stock Rip Chip" (0x956BFC9C) is a **reconstructed** stock tune, not a direct chip read
 
 The **only confirmed direct chip read with real stock calibration** is the ABY 551B chip (0xA98CB481).
+
+---
+
+## Boost Chip N75 Map — Real Data (ABY direct read, 2026-03)
+
+The ABY 551B boost chip (0x3b_boost = `aby_boost_551aa.bin`, 32KB) N75 map at WH 0x2480 shows:
+
+- Rows 0 (600 RPM): all zero — no wastegate duty at lowest RPM
+- Row 9 (7200 RPM): 39–74% duty cycle (100→189 raw ÷ 255 × 100)
+- Progressive increase: row 5 first shows significant duty (~6-42%)
+- High-load cols show higher duty (expected for boost control)
+
+**Axis confirmation:** Axes are NOT stored in a data table. Scan found no ascending
+10-byte sequence matching [600,1000,1500...7200] × 40. The values are embedded in
+the MCU code as immediate operands — requires Ghidra disassembly to extract.
+
+The community estimate `[600, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 7200]`
+is consistent with the N75 map data pattern (zero duty at low RPM, progressive increase).
+
+**Boost pressure map at 0x2520:** Row 0 values 94-144 raw = 110-169 kPa absolute
+(at 300kPa sensor: 94/255×300=110kPa, 144/255×300=169kPa). These represent
+atmospheric plus a small boost at idle — consistent with stock operation.
+

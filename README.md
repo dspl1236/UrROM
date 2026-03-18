@@ -3,135 +3,137 @@
 Open-source ROM editor for **Bosch Motronic M2.3 / M2.3.2** — the ECU family
 used in Audi's 5-cylinder 2.2 20v turbo and V8 engines.
 
+**130 tests passing** · Python 3.12 + PyQt5 · Windows / Linux / macOS
+
 ---
 
 ## Supported ECUs
 
-### 5-cylinder 2.2 20vT — dual EPROM (main chip + boost chip)
+### I5 20v Turbo — Dual EPROM (fuel/ign + boost chip)
+
+| Engine | ECU Part Number | Software | Trigger | Notes |
+|--------|----------------|----------|---------|-------|
+| AAN (early) | 4A0907551A | 551A | Distributor D02 | Factory-blank calibration |
+| AAN (late) | 4A0907551AA | 551AA | Cam+Hall D03+HS | Factory-blank calibration |
+| ABY S2 Coupe | 895907551B | 551B | Cam+Hall D01+HS | ✓ Real calibration confirmed |
+| RS2 D02 (early) | 8A0907551B | 551B_D02 | Distributor D02 | Partial calibration |
+| ADU RS2 Avant | 8A0907551C | 551C | Cam+Hall+RS2 | ✓ Real calibration confirmed |
+| AAN/ABY/ADU (034EFI) | 4A0907551AA | 551AA_0202 | Any | PRJmod firmware, 136 maps |
+
+### 3B / RR — Single EPROM
 
 | Engine | ECU Part Number | Software | Application |
 |--------|----------------|----------|-------------|
-| 3B     | 447 907 404 AA | 404      | Audi 200 20vT / UrQuattro / S2 early |
-| 3B/RR  | 857 907 404 B  | 404      | RR S2 Coupe |
-| AAN    | 4A0 907 551 AA | 551AA    | UrS4 / UrS6 |
-| AAN    | 4A0 907 551 A  | 551A     | UrS4 early (distributor trigger) |
-| ABY    | 895 907 551 B  | 551B     | S2 Coupe (cam trigger) |
-| ADU    | 8A0 907 551 C  | 551C     | RS2 Avant (cam trigger, 300kPa MAP) |
-| RS2 D02| 8A0 907 551 B  | 551B_D02 | RS2 Avant early (distributor trigger) |
+| 3B | 447907404AA | 404 | Audi 200 20vT / UrQuattro / S2 early |
+| 3B/RR | 857907404B | 404 | RR S2 Coupe |
 
-### V8 32v — single EPROM
+### V8 32v — Single EPROM (map addresses unconfirmed, need ROMs)
 
 | Engine | ECU Part Number | Software | Application |
 |--------|----------------|----------|-------------|
-| PT     | 443 907 404 A  | 404V8    | Audi V8 3.6L |
-| ABH    | 4A0 907 557 A  | 557      | Audi V8 4.2L |
+| PT | 443907404A | 404V8 | Audi V8 3.6L |
+| ABH | 4A0907557A | 557 | Audi V8 4.2L |
 
-### 034EFI prjmod (551AA\_0202)
+### 034EFI prjmod (551AA_0202)
 
-| Firmware | ECU PN | Application |
-|---|---|---|
-| 4A0 907 551 AA + prjmod | Any 551AA ECU | 034EFI RipChip / prjmod base ROM |
-
-All 034EFI `.034` Rip Chip files (Stage 1, Stage 1 variants, big turbo WMI, etc.)
-are auto-detected and descrambled on open.
+Complete set of 034EFI `.034` Rip Chip files fingerprinted:
+GT2871 / GT28RS / GT3071 / K24 Stage 1/1+, RS2 91Oct, Stock Rip Chip.
+All files fingerprinted by CRC32, boost chip pairing validated automatically.
 
 ---
 
 ## Features
 
-### ROM management
-- Open `.bin` and `.034` (034EFI Rip Chip) files — `.034` descrambled automatically
-- Save as `.bin` or re-scramble back to `.034` format
-- PRJmod checksum computed and applied on save for all tuned variants
-- Stock Bosch chips: ASCII ID string preserved (no computed checksum)
-- Dual-EPROM: main chip (fuel/ign) + boost chip loaded and edited independently
+### Map Editing
+- Double-click cell, type decoded value (°BTDC, AFR, raw)
+- Copy/paste TSV (Excel-compatible), Ctrl+C/V/A
+- **Undo/redo** 30-level stack (Ctrl+Z/Y)
+- Right-click: Scale ×, Interpolate rows/cols, Smooth, Fill, Invert
+- **Copy map from another ROM** (.bin or .034 source)
+- Cell annotations (notes with `*` marker and tooltip)
+- Decoded/raw display toggle
 
-### Map editor
-- Heat-mapped editable 16×16 (or N×M) fuel and ignition tables
-- **Real axis labels** — RPM and load values read from Bosch map descriptor headers
-- Decoded display: fuel as AFR, ignition as °BTDC
-- Live KWP1281 cursor overlay — current operating cell highlighted while driving
-- **Right-click context menu:**
-  - Copy / Paste (TSV — paste into Excel or between maps)
-  - Scale selection (multiply all cells by factor)
-  - Linear interpolate rows
-  - 3-point smooth
-  - Fill with value
-  - Invert (255 − x)
+### Analysis
+- **Find in maps (Ctrl+F)** — search all maps by value with operator
+- **Tuning health scan (Ctrl+Shift+S)** — 7 automated checks, click-to-jump
+- **Compare tab** — decoded delta (°BTDC/AFR), jump to most-changed map
+- **Compare to stock baseline** — auto-loads matching reference chip
+- **Data log overlay** — load VCDS/OBD CSV, annotate cells with hit count
+- **Grid view** — all-maps thumbnail heat-map overview
 
-### Speed-density (SD) mode
-- VE table editor (WH 0x2074, 16×16) for prjmod SD builds
-- SD active detection: notice bar when VE table is non-blank
-- Warning when editing fuel P/T map while SD mode is active
+### Hardware Tab
+- Editable LC/NLS scalars (551AA_0202): RPM limit, LC speed, NLS angle
+- MAP sensor detection from boost chip
+- Boost chip pairing validation (warns on mismatched fuel+boost chip)
+- Patch detection: SD mode, MFTS bypass, load decap
 
-### Boost chip
-- Boost pressure, N75 duty cycle, characteristic map, limit tables
-- All 9 confirmed / provisional tables from vwnut8392 XDF
-- Separate boost chip file load
+### Import/Export
+- Open .bin / .034 (auto-descramble), drag & drop
+- Save .bin or .034 Rip Chip, checksum auto-applied
+- Import TunerPro XDF v1.50 (auto-inject for 551AA_0202)
+- Export map as HTML / full ROM reference (printable)
+- Export session changelog (per-cell edit history)
+- Export diff report (.txt)
 
-### Hardware detection
-- MAP sensor type identified from boost chip calibration constants
-- Firmware patch detection: SD mode, LC/NLS, MFTS bypass, load decap
-- **LC/NLS scalar panel** — 8 scalars with decoded RPM values (prjmod 0x0202 only)
+### CLI
+```bash
+python -m urrom.cli scan rom.034           # exit 2 on errors
+python -m urrom.cli scan rom.034 --json    # machine-readable
+python -m urrom.cli info rom.034           # identification
+```
 
-### Compare / diff
-- Side-by-side A vs B comparison for any map
-- Delta cells show decoded units (°BTDC, AFR) — not raw byte deltas
-- Changed cell count + max/min Δ in summary bar
-- Accepts `.034` for ROM B
-
-### Live dashboard (requires KWPBridge)
-- 10-gauge panel: RPM, ECT, Load, Lambda, Timing, MAP, N75, IAT, Speed, Knock
-- 5-channel per-cylinder knock display
-- Status strip with compact live readout
-
-### Overview tab
-- Full map inventory with address, size, unit, confidence
-- Double-click any map → jumps directly to editor
-- Chip info: ECU PN, EPROM type, boost chip status
-- Checksum state and tuning warnings
+### Tools Menu
+- **Injector scaling wizard** — rescale all fuel maps for new cc size + FPR
+- **Fuel pressure calculator** — effective flow + duty cycle estimate
 
 ---
 
-## ROM status
+## Calibration Status
 
-> **Before writing any ROM** — always read and save the original chip first.
-> Read it twice, compare the files, keep both copies.
+Only two direct chip reads with real stock calibration are confirmed:
+- **ABY 551B** (895907551B) — S2 Coupe, cam trigger
+- **ADU 551C** (8A0907551C) — RS2 Avant, cam+RS2 trigger
 
-| Variant | Fuel map | Ign maps | Boost | Status |
-|---|---|---|---|---|
-| 3B / RR (404) | ✓ Confirmed | ✓ Confirmed | Provisional | Safe to edit |
-| AAN (551AA) | ✓ Confirmed | ✓ Confirmed | ✓ Confirmed | Safe to edit |
-| ABY (551B) | ✓ Confirmed | ✓ Confirmed | ✓ Confirmed | Safe to edit |
-| ADU (551C) | ✓ Confirmed | ✓ Confirmed | ✓ Confirmed | Safe to edit |
-| 034EFI (551AA\_0202) | ✓ 132 maps | ✓ Full PRJ XDF | ✓ Confirmed | Full feature set |
-| V8 PT / ABH | ❌ Unconfirmed | ❌ Unconfirmed | N/A | Read-only until verified |
-
-**Map address notes:**
-- Stock ABY/ADU calibration occupies WH 0x2D00–0x3FFF (code fills 0x0000–0x2CFF)
-- PRJmod (034EFI) uses a different firmware layout with maps starting at WH 0x0000
-- AAN direct chip read still pending to confirm addresses match ABY layout
+The AAN chips (551A, 551AA) are factory-erased — calibration area is all 0x02.
+Use the 034EFI Stock Rip Chip as the nearest AAN baseline.
 
 ---
 
-## Hardware reference
-
-See `docs/M232_ECU_Hardware_Reference.md` for:
-- Two-board architecture (Zusatzplatte + Grundplatte) with full IC inventory
-- SAB80C535 CPU spec, ADC SFRs, ADC channel map (all 8 channels confirmed)
-- Firmware ID string format and full variant table
-- PRJmod checksum algorithm, WinlogDriver decode formulas, MAP sensor constants
-- Hardware modification procedures (R660 removal, R201 resistor swap, socket install)
-- LC/NLS scalar addresses and EC tuning reference
-
----
-
-## Quick start
+## Installation
 
 ```bash
 pip install PyQt5
-python main.py
+python app/main.py
 ```
 
-Open a `.bin` or `.034` file via the toolbar or File menu.
+---
 
+## Architecture
+
+```
+urrom/ecu_profiles.py   # All 551x/404/V8 variant definitions + KNOWN_CRCS
+urrom/tuning_checks.py  # 7 automated health checks
+urrom/map_export.py     # HTML export (single map + full ROM reference)
+urrom/session_log.py    # Per-cell edit changelog
+urrom/datalog.py        # CSV data log parsing + coverage overlay
+urrom/xdf_import.py     # TunerPro XDF v1.50 parser
+urrom/kwp.py            # KWP2000 live data dashboard
+urrom/cli.py            # Headless CLI scan mode
+```
+
+Full documentation: `docs/UrROM_Master_Reference.md`
+
+---
+
+## Community Resources
+
+- **S2Forum** — hardware threads, schematic discussions
+- **vwnut8392/M232-Firmware** — PRJmod base ROMs and XDFs
+- **034EFI** — `.034` Rip Chip tuning packages (GT2871/GT28RS/GT3071/K24)
+- **HachiRom / DigiTool** — reference ROM editors (UrROM aims for parity+)
+
+---
+
+## License
+
+MIT — see LICENSE file.
