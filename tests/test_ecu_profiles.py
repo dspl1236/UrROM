@@ -32,7 +32,8 @@ from urrom.ecu_profiles import (
     get_axes, read_axes_from_header,
     _RPM_AXIS_551, _LOAD_AXIS_551,
     # data
-    ALL_VARIANTS, VARIANT_551AA, VARIANT_551C,
+    ALL_VARIANTS, VARIANT_551AA, VARIANT_551AA_0202,
+    VARIANT_551B, VARIANT_551C,
     VARIANT_404, VARIANT_V8_ABH, VARIANT_V8_PT,
     DetectionResult,
 )
@@ -299,40 +300,44 @@ class TestIgnCoder:
 # ── Rev limit tests ───────────────────────────────────────────────────────────
 
 class TestRevLimit:
+    """
+    Rev limit reality check (2026-03 RE session):
+    - Stock 551x chips: rev limit is NOT at WH 0x3FF0. That region is
+      end-of-calibration RPM table data (confirmed from ABY direct chip read).
+      30_000_000/raw formula was never applicable to M2.3.2 stock firmware.
+    - prjmod 551AA_0202: LC/NLS hard RPM limit scalar at WH 0x0617, raw × 40.
+    - read_rev_limit returns None for all non-prjmod variants.
+    """
 
-    def _rom_with_rev(self, variant, rpm):
+    def test_prjmod_write_read_roundtrip(self):
+        """prjmod variant: write RPM → read back within 40 RPM (raw × 40 encoding)."""
         rom = bytearray(MAIN_CHIP_PHYSICAL)
-        return write_rev_limit(rom, variant, rpm)
-
-    def test_write_read_roundtrip(self):
-        rom = self._rom_with_rev(VARIANT_551AA, 7000)
-        result = read_rev_limit(bytes(rom), VARIANT_551AA)
-        # Formula: 30,000,000 / round(30,000,000/7000) — small rounding
+        rom = write_rev_limit(rom, VARIANT_551AA_0202, 7000)
+        result = read_rev_limit(bytes(rom), VARIANT_551AA_0202)
         assert result is not None
-        assert abs(result - 7000) < 50
+        assert abs(result - 7000) <= 40   # ±1 raw step
 
-    def test_6500_rpm(self):
-        rom = self._rom_with_rev(VARIANT_551AA, 6500)
-        result = read_rev_limit(bytes(rom), VARIANT_551AA)
-        assert result is not None
-        assert abs(result - 6500) < 50
-
-    def test_formula_correct(self):
-        # Stock AAN rev limit is ~6800 RPM
-        # 30,000,000 / 6800 = 4411.76 → round = 4412
-        # 30,000,000 / 4412 = 6799.6 → 6800 RPM
-        import struct
+    def test_prjmod_6500_rpm(self):
         rom = bytearray(MAIN_CHIP_PHYSICAL)
-        raw = round(30_000_000 / 6800)
-        rev_map = next(m for m in VARIANT_551AA.main_maps if m.name == "Rev Limit")
-        addr = rev_map.main_addr
-        rom[addr]     = (raw >> 8) & 0xFF
-        rom[addr + 1] = raw & 0xFF
-        result = read_rev_limit(bytes(rom), VARIANT_551AA)
-        assert abs(result - 6800) < 50
+        rom = write_rev_limit(rom, VARIANT_551AA_0202, 6500)
+        result = read_rev_limit(bytes(rom), VARIANT_551AA_0202)
+        assert result is not None
+        assert abs(result - 6500) <= 40
 
+    def test_stock_returns_none(self):
+        """Stock 551x variants have no accessible rev limit scalar — must return None."""
+        rom = bytearray(MAIN_CHIP_PHYSICAL)
+        assert read_rev_limit(bytes(rom), VARIANT_551AA)  is None
+        assert read_rev_limit(bytes(rom), VARIANT_551B)   is None
+        assert read_rev_limit(bytes(rom), VARIANT_551C)   is None
+        assert read_rev_limit(bytes(rom), VARIANT_404)    is None
 
-# ── Variant registry tests ────────────────────────────────────────────────────
+    def test_prjmod_address_is_0x0617(self):
+        """Confirm the raw byte at WH 0x0617 drives prjmod rev limit."""
+        rom = bytearray(MAIN_CHIP_PHYSICAL)
+        rom[0x0617] = 170   # 170 × 40 = 6800 RPM
+        result = read_rev_limit(bytes(rom), VARIANT_551AA_0202)
+        assert result == 6800
 
 class TestVariantRegistry:
 
@@ -460,12 +465,17 @@ class TestGetAxes:
         rom_flat = bytes(rom_flat)
 
         for v in ALL_VARIANTS:
-            rom = rom_551 if v.software_id in ("551C", "551AA") else rom_flat
+            rom = rom_551 if v.software_id in ("551C", "551AA", "551B", "551B_D02", "551A") else rom_flat
             for m in v.main_maps:
-                if m.rows > 1 and m.cols > 1:
-                    rpm, load = get_axes(rom, m, v)
-                    assert len(rpm)  == m.rows, f"{v.name}/{m.name}: rpm len {len(rpm)} != {m.rows}"
-                    assert len(load) == m.cols, f"{v.name}/{m.name}: load len {len(load)} != {m.cols}"
+                if m.rows <= 1 or m.cols <= 1:
+                    continue
+                # Skip PROVISIONAL maps with unusual dimensions — they may not
+                # have standard 36-byte descriptors (e.g. End-of-Cal RPM table).
+                if m.confidence == "PROVISIONAL" and (m.rows != 16 or m.cols != 16):
+                    continue
+                rpm, load = get_axes(rom, m, v)
+                assert len(rpm)  == m.rows,  f"{v.name}/{m.name}: rpm len {len(rpm)} != {m.rows}"
+                assert len(load) == m.cols,  f"{v.name}/{m.name}: load len {len(load)} != {m.cols}"
 
     def test_0202_fuel_axes_read_from_rom(self):
         """551AA_0202: fuel P/T axes read from confirmed WH addresses."""

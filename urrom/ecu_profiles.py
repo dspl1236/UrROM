@@ -232,15 +232,19 @@ _MAPS_551C_MAIN = [
            decode=ign_decode, encode=ign_encode,
            confidence="CONFIRMED"),
 
-    # Rev limit
-    MapDef("Rev Limit",
-           "Fuel cut RPM. Address UNCONFIRMED — 0x3FF0 gives idle-speed values "
-           "in real ROMs. Rev limit is likely embedded in 8051 code as an "
-           "immediate compare; needs Ghidra disassembly to locate.",
-           main_addr=0x3FF0, rows=1, cols=2,
+    # End-of-calibration RPM table (replaces mis-labelled "Rev Limit")
+    MapDef("End-of-Cal RPM table",
+           "32-byte RPM-encoded table at end of working half (WH 0x3FE0–0x3FFF). "
+           "ABY direct chip read: values span 1000–8000 RPM (raw × 40). "
+           "Pattern suggests tiered RPM thresholds — possibly ignition cut "
+           "or fuel cut hysteresis. NOT the stock rev limit address. "
+           "Stock rev limit is in 8051 code as an immediate compare; "
+           "requires Ghidra disassembly to locate. "
+           "For prjmod ROMs, LC/NLS rev limit is at WH 0x0617 / 0x066E.",
+           main_addr=0x3FE0, rows=2, cols=16,
            map_type="raw", unit="RPM",
-           confidence="UNCONFIRMED",
-           notes="Scan of real ROMs shows 0x3FF0 = ~700 RPM range, not rev limit."),
+           confidence="PROVISIONAL",
+           notes="DO NOT write — address not fully understood. Read-only reference only."),
 ]
 
 # ── Confirmed map addresses — 551AA / ABY ─────────────────────────────────────
@@ -311,11 +315,13 @@ _MAPS_551AA_MAIN = [
            confidence="CONFIRMED",
            notes="Verified on ABY: 20-21°BTDC at PT."),
 
-    MapDef("Rev Limit",
-           "Fuel cut RPM. Address UNCONFIRMED — needs disassembly.",
-           main_addr=0x3FF0, rows=1, cols=2,
+    MapDef("End-of-Cal RPM table",
+           "32-byte RPM table at WH 0x3FE0–0x3FFF. Values × 40 = RPM. "
+           "Likely RPM-threshold array (ign/fuel cut). NOT a simple rev limit. "
+           "See variant RE notes for details.",
+           main_addr=0x3FE0, rows=2, cols=16,
            map_type="raw", unit="RPM",
-           confidence="UNCONFIRMED"),
+           confidence="PROVISIONAL"),
 ]
 
 # ── 3B / RR map addresses ─────────────────────────────────────────────────────
@@ -395,11 +401,12 @@ _MAPS_3B_MAIN = [
            decode=ign_decode_3b, encode=ign_encode_3b,
            confidence="CONFIRMED"),
 
-    MapDef("Rev Limit",
-           "Fuel cut RPM. Address UNCONFIRMED — needs disassembly.",
-           main_addr=0x3FF0, rows=1, cols=2,
+    MapDef("End-of-Cal RPM table",
+           "32-byte RPM table at WH 0x3FE0–0x3FFF. Values × 40 = RPM. "
+           "Likely RPM-threshold array (ign/fuel cut). NOT a simple rev limit.",
+           main_addr=0x3FE0, rows=2, cols=16,
            map_type="raw", unit="RPM",
-           confidence="UNCONFIRMED"),
+           confidence="PROVISIONAL"),
 ]
 
 # ── V8 maps ───────────────────────────────────────────────────────────────────
@@ -2064,8 +2071,11 @@ def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
         header_addr = map_def.main_addr - 36
         rpm, load = read_axes_from_header(rom, header_addr, map_def.rows, map_def.cols)
         # Validate: if rpm values are all identical or very low, fall back to static
+        # Only use static axis if the map dimensions match (16x16); otherwise use indices
         if len(set(rpm)) <= 2 or max(rpm) < 200:
-            return list(_RPM_AXIS_551), list(_LOAD_AXIS_551)
+            if map_def.rows == 16 and map_def.cols == 16:
+                return list(_RPM_AXIS_551), list(_LOAD_AXIS_551)
+            return list(range(map_def.rows)), list(range(map_def.cols))
         return rpm, load
 
     if sw in ("404", "404V8", "RR"):
@@ -2113,22 +2123,25 @@ def write_map(rom: bytearray, map_def: MapDef,
 
 
 def read_rev_limit(rom: bytes, variant: ROMVariant) -> Optional[int]:
-    rev = next((m for m in variant.main_maps if m.name == "Rev Limit"), None)
-    if not rev or rev.main_addr + 2 > len(rom):
-        return None
-    raw = (rom[rev.main_addr] << 8) | rom[rev.main_addr + 1]
-    return round(30_000_000 / raw) if raw else None
+    """Rev limit address is not confirmed for any stock 551x variant.
+    For prjmod 551AA_0202, the LC/NLS hard RPM limit is at WH 0x0617 (raw × 40).
+    This function returns None for all non-prjmod variants until confirmed."""
+    sw = variant.software_id if variant else ""
+    if sw == "551AA_0202":
+        # LC/NLS hard RPM limit scalar (confirmed prjmod address)
+        if 0x0617 < len(rom):
+            return rom[0x0617] * 40
+    return None
 
 
 def write_rev_limit(rom: bytearray, variant: ROMVariant, rpm: int) -> bytearray:
-    rev = next((m for m in variant.main_maps if m.name == "Rev Limit"), None)
-    if not rev:
-        return rom
-    raw  = round(30_000_000 / rpm)
-    addr = rev.main_addr
-    rom[addr]     = (raw >> 8) & 0xFF
-    rom[addr + 1] = raw & 0xFF
-    if len(rom) >= MAIN_CHIP_PHYSICAL:
-        rom[MIRROR_OFFSET + addr]     = rom[addr]
-        rom[MIRROR_OFFSET + addr + 1] = rom[addr + 1]
+    """Write rev limit scalar. Only implemented for prjmod 551AA_0202 (WH 0x0617).
+    Stock 551x variants have no confirmed rev limit address — returns rom unchanged."""
+    sw = variant.software_id if variant else ""
+    if sw == "551AA_0202" and 0x0617 < len(rom):
+        raw = max(0, min(255, rpm // 40))
+        rom[0x0617] = raw
+        # Mirror to lower half if full 64KB doubled ROM
+        if len(rom) >= MAIN_CHIP_PHYSICAL:
+            rom[MIRROR_OFFSET + 0x0617] = raw
     return rom
