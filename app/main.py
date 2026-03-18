@@ -1386,6 +1386,18 @@ class MainChipTab(QWidget):
 
         toolbar.addStretch()
 
+        self._grid_btn = QPushButton("⊞ Grid")
+        self._grid_btn.setCheckable(True)
+        self._grid_btn.setChecked(False)
+        self._grid_btn.setFixedWidth(70)
+        self._grid_btn.setStyleSheet(
+            f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:0 6px;font-size:10px;}}"
+            f"QPushButton:checked{{background:{ACCENT}30;border-color:{ACCENT};}}"
+            f"QPushButton:hover{{border-color:{ACCENT};}}")
+        self._grid_btn.clicked.connect(self._on_toggle_grid)
+        toolbar.addWidget(self._grid_btn)
+
         self._decode_btn = QPushButton("Decoded ▾")
         self._decode_btn.setCheckable(True)
         self._decode_btn.setChecked(True)
@@ -1410,6 +1422,16 @@ class MainChipTab(QWidget):
         self._desc_lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 10px;")
         self._desc_lbl.setWordWrap(True)
         layout.addWidget(self._desc_lbl)
+
+        # ── Grid overview panel (all maps side by side) ──────────────────────
+        self._grid_panel = QScrollArea()
+        self._grid_panel.setWidgetResizable(True)
+        self._grid_panel.setStyleSheet(
+            f"QScrollArea{{border:none;background:{BG};}}"
+            f"QScrollBar:horizontal{{height:8px;background:{BG2};}}"
+            f"QScrollBar::handle:horizontal{{background:{BORDER};border-radius:4px;}}")
+        self._grid_panel.setVisible(False)
+        layout.addWidget(self._grid_panel)
 
         # SD mode / VE table notice bar
         self._sd_bar = QLabel("")
@@ -1627,6 +1649,110 @@ class MainChipTab(QWidget):
         self._revert_btn.setEnabled(False)
 
         self._update_sd_bar(m)
+
+    def _on_toggle_grid(self):
+        """Toggle between single-map editor and all-maps grid overview."""
+        show_grid = self._grid_btn.isChecked()
+        self._table.setVisible(not show_grid)
+        self._sd_bar.setVisible(False)
+        self._grid_panel.setVisible(show_grid)
+        if show_grid and self._rom is not None and self._variant is not None:
+            self._refresh_grid()
+
+    def _refresh_grid(self):
+        """Build the all-maps mini-grid overview."""
+        from urrom.ecu_profiles import read_map, get_axes
+        from PyQt5.QtWidgets import QWidget, QGridLayout, QLabel, QFrame, QVBoxLayout
+        from PyQt5.QtCore import Qt
+
+        # Only show ign + fuel maps with rows > 1
+        maps = [m for m in self._maps if m.rows > 1 and m.cols > 1]
+
+        container = QWidget()
+        container.setStyleSheet(f"background:{BG};")
+        grid = QGridLayout(container)
+        grid.setSpacing(12)
+        grid.setContentsMargins(12, 12, 12, 12)
+
+        CELL_SIZE = 6   # px per map cell in the mini thumbnail
+
+        for map_idx, m in enumerate(maps):
+            col_pos = map_idx % 4
+            row_pos = map_idx // 4
+
+            frame = QFrame()
+            frame.setStyleSheet(
+                f"QFrame{{background:{BG3};border:1px solid {BORDER};"
+                f"border-radius:4px;padding:2px;}}")
+            frame.setFixedSize(
+                m.cols * CELL_SIZE + 24,
+                m.rows * CELL_SIZE + 36)
+            frame.mousePressEvent = (lambda e, idx=map_idx: (
+                self._grid_btn.setChecked(False),
+                self._on_toggle_grid(),
+                self._map_combo.setCurrentIndex(idx)
+            ))
+            frame.setCursor(Qt.PointingHandCursor)
+
+            vl = QVBoxLayout(frame)
+            vl.setContentsMargins(4, 4, 4, 4)
+            vl.setSpacing(2)
+
+            title = QLabel(m.name)
+            title.setStyleSheet(
+                f"color:{FG};font-size:9px;font-weight:bold;border:none;")
+            title.setAlignment(Qt.AlignCenter)
+            vl.addWidget(title)
+
+            # Build mini pixel-art grid as a single QLabel with rich background
+            try:
+                raw_data = read_map(bytes(self._rom), m)
+                decode   = m.decode
+                all_raws = [raw_data[r][c] for r in range(m.rows)
+                            for c in range(m.cols)]
+                vmin, vmax = min(all_raws), max(all_raws)
+
+                # Build HTML table for the thumbnail
+                cells_html = ""
+                for disp_r in range(m.rows):
+                    raw_r = m.rows - 1 - disp_r
+                    for c in range(m.cols):
+                        rv = raw_data[raw_r][c]
+                        if decode:
+                            dv = decode(rv)
+                            if m.map_type == "ign":
+                                bg = _ign_colour(float(dv) if dv else 0)
+                            elif m.map_type == "fuel":
+                                bg = _fuel_colour(rv)
+                            else:
+                                bg = _heat(rv, vmin, vmax)
+                        else:
+                            bg = _heat(rv, vmin, vmax)
+                        cells_html += (
+                            f'<td style="background:{bg.name()};'
+                            f'width:{CELL_SIZE}px;height:{CELL_SIZE}px;'
+                            f'padding:0;border:none;"></td>')
+                    cells_html += "</tr><tr>"
+
+                html_tbl = (
+                    f'<table style="border-collapse:collapse;'
+                    f'border-spacing:0;border:none;">'
+                    f'<tr>{cells_html}</tr></table>')
+                lbl = QLabel()
+                lbl.setTextFormat(Qt.RichText)
+                lbl.setText(html_tbl)
+                lbl.setStyleSheet("border:none;")
+                vl.addWidget(lbl)
+
+            except Exception:
+                err_lbl = QLabel("error")
+                err_lbl.setStyleSheet(f"color:{RED};font-size:9px;border:none;")
+                vl.addWidget(err_lbl)
+
+            grid.addWidget(frame, row_pos, col_pos)
+
+        # Pad remaining cells
+        self._grid_panel.setWidget(container)
 
     def _on_toggle_decode(self):
         """Toggle between showing decoded values (°BTDC, AFR) and raw bytes."""
@@ -2614,6 +2740,14 @@ class MainWindow(QMainWindow):
             f"QMenuBar::item:selected {{ background: {BG3}; }}"
             f"QMenu {{ background: {BG2}; color: {FG}; border: 1px solid {BORDER}; }}"
             f"QMenu::item:selected {{ background: {BG3}; }}")
+        help_menu = mb.addMenu("Help")
+        shortcuts_act = QAction("Keyboard shortcuts…", self)
+        shortcuts_act.triggered.connect(self._on_show_shortcuts)
+        about_act = QAction("About UrROM", self)
+        about_act.triggered.connect(self._on_about)
+        help_menu.addAction(shortcuts_act)
+        help_menu.addSeparator()
+        help_menu.addAction(about_act)
 
         # ── File ─────────────────────────────────────────────────────────────
         file_menu = mb.addMenu("File")
@@ -2796,6 +2930,9 @@ class MainWindow(QMainWindow):
         fname = path.name
         self._main_lbl.setText(fname)
         self._main_lbl.setStyleSheet(f"color: {FG}; font-size: 11px;")
+        # Update window title to show ROM name
+        from urrom.version import APP_VERSION, APP_NAME
+        self._refresh_title()
         self._info_strip.update(det)
         self._overview_tab.update(det, self._boost_det if hasattr(self, "_boost_det") else None)
         self._hardware_tab.update(bytes(wh), det.variant.name if det.variant else "")
@@ -3245,6 +3382,67 @@ class MainWindow(QMainWindow):
         if summary:
             self._update_status(f"🟢  {summary}")
 
+    def _on_show_shortcuts(self):
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Keyboard Shortcuts")
+        dlg.setMinimumWidth(400)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+        shortcuts = [
+            ("File", [
+                ("Ctrl+O", "Open ROM"),
+                ("Ctrl+S", "Save ROM"),
+                ("Ctrl+F", "Find in maps"),
+            ]),
+            ("Map Editor", [
+                ("Ctrl+Z", "Undo"),
+                ("Ctrl+Y / Ctrl+Shift+Z", "Redo"),
+                ("Ctrl+C", "Copy selection (TSV)"),
+                ("Ctrl+V", "Paste"),
+                ("Ctrl+A", "Select all"),
+                ("Del",    "Clear selection"),
+                ("Double-click", "Edit cell (type decoded value)"),
+                ("Right-click",  "Context menu: scale, interpolate, smooth…"),
+            ]),
+            ("Navigation", [
+                ("Overview tab → double-click map row", "Jump to map editor"),
+                ("Ctrl+F result → double-click",        "Jump to cell in map"),
+                ("⊞ Grid button", "All-maps thumbnail overview"),
+            ]),
+        ]
+        for section, keys in shortcuts:
+            sec_lbl = QLabel(section.upper())
+            sec_lbl.setStyleSheet(
+                f"color:{FG_DIM};font-size:10px;letter-spacing:1px;"
+                f"margin-top:8px;")
+            lay.addWidget(sec_lbl)
+            for key, desc in keys:
+                row = QLabel(f'  <b style="color:{ACCENT};">{key}</b>'
+                             f'  <span style="color:{FG};">— {desc}</span>')
+                row.setTextFormat(Qt.RichText)
+                lay.addWidget(row)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok)
+        btns.accepted.connect(dlg.accept)
+        lay.addWidget(btns)
+        dlg.exec_()
+
+    def _on_about(self):
+        from PyQt5.QtWidgets import QMessageBox
+        from urrom.version import APP_VERSION
+        QMessageBox.about(self, "About UrROM",
+            f"<b>UrROM v{APP_VERSION}</b><br>"
+            "<br>"
+            "Open-source ROM editor for Bosch Motronic M2.3 / M2.3.2<br>"
+            "Audi 5-cylinder 20v turbo and V8 engines<br>"
+            "<br>"
+            "Supported variants: 551A/AA/B/C, 551B_D02, 551AA_0202,<br>"
+            "404 (3B), 404V8 (PT), 557 (ABH)<br>"
+            "<br>"
+            "Built with Python + PyQt5<br>"
+            '<a href="https://github.com/dspl1236/UrROM">'
+            "github.com/dspl1236/UrROM</a>")
+
     def _toggle_dashboard(self):
         """Open or close the live ECU dashboard window."""
         from urrom.kwp import DashboardWindow
@@ -3264,7 +3462,18 @@ class MainWindow(QMainWindow):
 
     def _clear_dirty(self):
         self._unsaved = False
-        self.setWindowTitle(WINDOW_TITLE)
+        self._refresh_title()
+
+    def _refresh_title(self):
+        from urrom.version import APP_VERSION, APP_NAME
+        if self._main_path and self._det and self._det.variant:
+            variant_short = self._det.variant.software_id
+            dirty_mark = " •" if self._unsaved else ""
+            self.setWindowTitle(
+                f"{APP_NAME}  v{APP_VERSION}  —  "
+                f"{self._main_path.name}  [{variant_short}]{dirty_mark}")
+        else:
+            self.setWindowTitle(WINDOW_TITLE)
 
     def _update_status(self, msg: str):
         self._status.showMessage(msg)
