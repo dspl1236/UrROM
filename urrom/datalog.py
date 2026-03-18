@@ -167,9 +167,24 @@ def compute_coverage(log: DataLog, map_def, variant,
     Returns dict: (raw_row, col) → hit_count
     raw_row = 0 is lowest RPM (NOT display row, which is inverted).
     """
-    from urrom.ecu_profiles import get_axes
+    from urrom.ecu_profiles import get_axes, _RPM_AXIS_551, _LOAD_AXIS_551, _BOOST_RPM_AXIS, _BOOST_LOAD_AXIS
 
     rpm_axis, load_axis = get_axes(rom, map_def, variant)
+
+    # Validate axes — get_axes may return live MCU data (not real RPM values)
+    # Fall back to static known-good axes when the data looks wrong
+    sw = getattr(variant, 'software_id', '') if variant else ''
+    if not rpm_axis or max(rpm_axis) < 500:   # real RPM axis always ≥ 600
+        if 'boost' in sw.lower() or map_def.main_addr < 0x1000:
+            rpm_axis = _BOOST_RPM_AXIS[:map_def.rows]
+        else:
+            rpm_axis = _RPM_AXIS_551[:map_def.rows]
+    if not load_axis or max(load_axis) < 5:
+        if 'boost' in sw.lower() or map_def.main_addr < 0x1000:
+            load_axis = _BOOST_LOAD_AXIS[:map_def.cols]
+        else:
+            load_axis = _LOAD_AXIS_551[:map_def.cols]
+
     if not rpm_axis or not load_axis:
         return {}
 
@@ -222,3 +237,79 @@ def coverage_stats(hits: dict[tuple[int,int], int],
         'sparse_cells':  sparse,
         'unvisited':     zero_cells,
     }
+
+
+# ── Wideband AFR overlay ──────────────────────────────────────────────────────
+
+@dataclass
+class AFRSample:
+    rpm:  float
+    load: float
+    afr:  float
+    time_s: float
+
+
+def compute_afr_overlay(log: DataLog, map_def, variant,
+                         rom: bytes,
+                         target_afr: float = 14.7) -> dict[tuple[int,int], dict]:
+    """
+    Compute average measured AFR per map cell.
+
+    Returns dict: (raw_row, col) → {
+        'afr_mean': float,
+        'afr_min': float,
+        'afr_max': float,
+        'count': int,
+        'delta': float,    # measured - target (positive = lean)
+        'note': str,
+    }
+    """
+    from urrom.ecu_profiles import get_axes, _RPM_AXIS_551, _LOAD_AXIS_551, _BOOST_RPM_AXIS, _BOOST_LOAD_AXIS
+
+    rpm_axis, load_axis = get_axes(rom, map_def, variant)
+    sw = getattr(variant, 'software_id', '') if variant else ''
+    if not rpm_axis or max(rpm_axis) < 500:
+        rpm_axis = _RPM_AXIS_551[:map_def.rows]
+    if not load_axis or max(load_axis) < 5:
+        load_axis = _LOAD_AXIS_551[:map_def.cols]
+
+    if not rpm_axis or not load_axis:
+        return {}
+
+    cell_samples: dict[tuple[int,int], list[float]] = {}
+
+    for lr in log.rows:
+        if lr.rpm is None or lr.afr is None:
+            continue
+        # Only log under-load measurements (filter idle/coast)
+        if lr.tps is not None and lr.tps < 20:
+            continue  # skip light throttle (not a meaningful fuel cell)
+
+        row = min(range(len(rpm_axis)), key=lambda i: abs(rpm_axis[i] - lr.rpm))
+        col = 0
+        if lr.load is not None and load_axis:
+            col = min(range(len(load_axis)), key=lambda i: abs(load_axis[i] - lr.load))
+
+        key = (row, col)
+        cell_samples.setdefault(key, []).append(lr.afr)
+
+    result = {}
+    for (r, c), afrs in cell_samples.items():
+        mean = sum(afrs) / len(afrs)
+        delta = mean - target_afr
+        if delta > 1.0:
+            note = f"Lean {delta:+.1f} AFR"
+        elif delta < -1.0:
+            note = f"Rich {delta:+.1f} AFR"
+        else:
+            note = f"~Target {mean:.1f}"
+        result[(r, c)] = {
+            'afr_mean': round(mean, 2),
+            'afr_min':  round(min(afrs), 2),
+            'afr_max':  round(max(afrs), 2),
+            'count':    len(afrs),
+            'delta':    round(delta, 2),
+            'note':     note,
+        }
+
+    return result

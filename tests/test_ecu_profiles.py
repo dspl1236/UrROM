@@ -1451,3 +1451,96 @@ class TestDataLog:
         assert stats['max_hits'] == 10
         assert len(stats['unvisited']) == 61
         assert len(stats['sparse_cells']) == 2   # count < 5
+
+
+# ── Wideband AFR overlay ───────────────────────────────────────────────────────
+
+class TestWidebandOverlay:
+
+    def test_compute_afr_overlay_basic(self, tmp_path):
+        import sys; sys.path.insert(0, '.')
+        import pytest
+        from pathlib import Path
+        from urrom.datalog import load_log, compute_afr_overlay
+        from urrom.ecu_profiles import normalize_rom, detect_rom
+
+        aby_path = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        if not aby_path.exists():
+            pytest.skip("ABY ROM not available")
+
+        wh, _ = normalize_rom(aby_path.read_bytes())
+        det = detect_rom(bytes(wh))
+        v = det.variant
+        m = next(mm for mm in v.main_maps if mm.map_type == 'fuel' and mm.rows > 1)
+
+        csv_file = tmp_path / "wb_log.csv"
+        csv_file.write_text(
+            "Time_s,RPM,Load,AFR,TPS\n"
+            "0.0,2000,50,13.5,80\n"
+            "0.1,3000,80,12.8,90\n"
+            "0.2,4000,100,12.5,95\n"
+            "0.3,2000,50,14.7,85\n"
+        )
+        log = load_log(csv_file)
+        overlay = compute_afr_overlay(log, m, v, bytes(wh), target_afr=14.7)
+        assert len(overlay) > 0
+
+    def test_afr_overlay_lean_rich_detection(self, tmp_path):
+        import sys; sys.path.insert(0, '.')
+        import pytest
+        from pathlib import Path
+        from urrom.datalog import load_log, compute_afr_overlay
+        from urrom.ecu_profiles import normalize_rom, detect_rom
+
+        aby_path = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        if not aby_path.exists():
+            pytest.skip("ABY ROM not available")
+
+        wh, _ = normalize_rom(aby_path.read_bytes())
+        det = detect_rom(bytes(wh))
+        v = det.variant
+        m = next(mm for mm in v.main_maps if mm.map_type == 'fuel' and mm.rows > 1)
+
+        csv_file = tmp_path / "wb_log.csv"
+        # Use load values within _LOAD_AXIS_551 range [2,6,9,13...]
+        # and clearly different RPM rows to ensure distinct cells
+        csv_file.write_text(
+            "Time_s,RPM,Load,AFR,TPS\n"
+            "0.0,1000,6,16.5,80\n"    # lean (+1.8) → RPM row 1, load col 1
+            "0.1,5000,15,12.5,90\n"   # rich (-2.2) → RPM row 11, load col 4
+        )
+        log = load_log(csv_file)
+        overlay = compute_afr_overlay(log, m, v, bytes(wh), target_afr=14.7)
+
+        lean_cells = [(k, d) for k, d in overlay.items() if d['delta'] > 1.0]
+        rich_cells = [(k, d) for k, d in overlay.items() if d['delta'] < -1.0]
+        assert len(lean_cells) > 0, "Lean cell not detected"
+        assert len(rich_cells) > 0, "Rich cell not detected"
+
+    def test_afr_overlay_filters_idle(self, tmp_path):
+        import sys; sys.path.insert(0, '.')
+        import pytest
+        from pathlib import Path
+        from urrom.datalog import load_log, compute_afr_overlay
+        from urrom.ecu_profiles import normalize_rom, detect_rom
+
+        aby_path = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        if not aby_path.exists():
+            pytest.skip("ABY ROM not available")
+
+        wh, _ = normalize_rom(aby_path.read_bytes())
+        det = detect_rom(bytes(wh))
+        v = det.variant
+        m = next(mm for mm in v.main_maps if mm.map_type == 'fuel' and mm.rows > 1)
+
+        csv_file = tmp_path / "wb_log.csv"
+        # Only idle rows (TPS < 20%) — should be filtered out
+        csv_file.write_text(
+            "Time_s,RPM,Load,AFR,TPS\n"
+            "0.0,800,10,14.7,5\n"
+            "0.1,900,12,14.5,8\n"
+        )
+        log = load_log(csv_file)
+        overlay = compute_afr_overlay(log, m, v, bytes(wh), target_afr=14.7)
+        # Idle filtered = no overlay data
+        assert len(overlay) == 0

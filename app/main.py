@@ -2964,6 +2964,9 @@ class MainWindow(QMainWindow):
         # Session changelog
         from urrom.session_log import SessionLog
         self._session_log = SessionLog()
+        # Map edit snapshots for cross-save history
+        self._save_count = 0
+        self._save_snapshots: list[dict] = []  # [{name, crc, timestamp}]
         # Recent files (stored in memory — persisted on exit via QSettings)
         from PyQt5.QtCore import QSettings
         self._settings = QSettings("UrROM", "UrROM")
@@ -3063,6 +3066,10 @@ class MainWindow(QMainWindow):
 
         # Wire hover status bar for map table
         self._main_chip_tab.set_status_fn(self._update_status)
+        # Restore window geometry from previous session
+        geom = self._settings.value("geometry")
+        if geom:
+            self.restoreGeometry(geom)
 
         # Wire session log — per-cell recording via MapTable._log_fn
         def _log_cell(map_def, r, c, old_raw, new_raw):
@@ -3091,8 +3098,11 @@ class MainWindow(QMainWindow):
         fpr_act.triggered.connect(self._on_fpr_calculator)
         log_act = QAction("Overlay data log on map…", self)
         log_act.triggered.connect(self._on_overlay_datalog)
+        wb_act = QAction("Overlay wideband AFR on fuel map…", self)
+        wb_act.triggered.connect(self._on_overlay_wideband)
         tools_menu.addAction(fpr_act)
         tools_menu.addAction(log_act)
+        tools_menu.addAction(wb_act)
         help_menu = mb.addMenu("Help")
         shortcuts_act = QAction("Keyboard shortcuts…", self)
         shortcuts_act.triggered.connect(self._on_show_shortcuts)
@@ -3161,8 +3171,11 @@ class MainWindow(QMainWindow):
         fpr_act.triggered.connect(self._on_fpr_calculator)
         log_act = QAction("Overlay data log on map…", self)
         log_act.triggered.connect(self._on_overlay_datalog)
+        wb_act = QAction("Overlay wideband AFR on fuel map…", self)
+        wb_act.triggered.connect(self._on_overlay_wideband)
         tools_menu.addAction(fpr_act)
         tools_menu.addAction(log_act)
+        tools_menu.addAction(wb_act)
         help_menu = mb.addMenu("Help")
         about_act = QAction("About UrROM", self)
         about_act.triggered.connect(self._on_about)
@@ -3458,6 +3471,18 @@ class MainWindow(QMainWindow):
         self._main_chip_tab._table.accept_current_as_baseline()
         self._unsaved = False
         self._clear_dirty()
+        # Record save snapshot in session log
+        self._save_count += 1
+        if self._session_log.count > 0:
+            snap_note = (f"Save #{self._save_count}: "
+                        f"{self._session_log.count} edits in "
+                        f"{len(self._session_log.changed_maps)} maps")
+            self._save_snapshots.append({
+                'save': self._save_count,
+                'path': str(path),
+                'edits': self._session_log.count,
+                'maps': list(self._session_log.changed_maps),
+            })
         self._update_status(f"Saved → {Path(path).name}  ({len(out_bytes):,} bytes){note_str}")
 
     # ── KWPBridge overlay ──────────────────────────────────────────────────────
@@ -4191,6 +4216,102 @@ class MainWindow(QMainWindow):
         btns.accepted.connect(_apply_overlay)
         dlg.exec_()
 
+    def _on_overlay_wideband(self):
+        """Load a CSV with AFR data and overlay deviation from target on the fuel map."""
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            QMessageBox.information(self, "Wideband overlay", "Load a ROM first.")
+            return
+        tab = self._main_chip_tab
+        # Find the primary fuel map
+        v = self._det.variant
+        fuel_maps = [m for m in tab._maps if m.map_type == 'fuel' and m.rows > 1]
+        if not fuel_maps:
+            QMessageBox.information(self, "Wideband overlay",
+                "No fuel map available. Open Main Chip Maps tab first.")
+            return
+
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
+                                      QDoubleSpinBox, QDialogButtonBox)
+        # Get target AFR
+        cfg_dlg = QDialog(self)
+        cfg_dlg.setWindowTitle("Wideband overlay settings")
+        cfg_dlg.setMinimumWidth(320)
+        cfg_dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        cfg_lay = QVBoxLayout(cfg_dlg)
+        form = QFormLayout()
+        target_spin = QDoubleSpinBox()
+        target_spin.setRange(10.0, 20.0); target_spin.setValue(14.7); target_spin.setDecimals(1)
+        target_spin.setSuffix("  AFR target")
+        target_spin.setStyleSheet(
+            f"background:{BG2};color:{FG};border:1px solid {BORDER};border-radius:3px;padding:2px 4px;")
+        form.addRow("Target AFR (stoich=14.7):", target_spin)
+        cfg_lay.addLayout(form)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.rejected.connect(cfg_dlg.reject)
+        btns.accepted.connect(cfg_dlg.accept)
+        cfg_lay.addWidget(btns)
+        if cfg_dlg.exec_() != QDialog.Accepted:
+            return
+        target_afr = target_spin.value()
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load wideband log CSV", "",
+            "CSV files (*.csv *.CSV *.txt);;All files (*.*)")
+        if not path:
+            return
+        try:
+            from urrom.datalog import load_log, compute_afr_overlay
+            log = load_log(Path(path))
+        except Exception as e:
+            QMessageBox.critical(self, "Error loading log", str(e))
+            return
+        if not log.rows or not any(r.afr for r in log.rows if r.afr):
+            QMessageBox.warning(self, "Wideband log",
+                "No AFR data found in log.\n"
+                "Check that the file has a column named 'AFR', 'WBO2', or 'Lambda'.")
+            return
+
+        m = fuel_maps[0]
+        # Switch to fuel map in editor
+        if m in tab._maps:
+            tab._map_combo.setCurrentIndex(tab._maps.index(m))
+
+        overlay = compute_afr_overlay(log, m, v, bytes(self._main_rom), target_afr)
+        if not overlay:
+            QMessageBox.information(self, "Wideband overlay",
+                "No matching data points with AFR measurements found.")
+            return
+
+        # Apply as colour-coded annotations
+        tbl = tab._table
+        lean_count = sum(1 for d in overlay.values() if d['delta'] > 1.0)
+        rich_count = sum(1 for d in overlay.values() if d['delta'] < -1.0)
+        on_target  = len(overlay) - lean_count - rich_count
+
+        for (raw_r, c), data in overlay.items():
+            d = data['delta']
+            afr = data['afr_mean']
+            count = data['count']
+            if d > 2.0:
+                prefix = "⚠ LEAN"
+            elif d > 1.0:
+                prefix = "↑ lean"
+            elif d < -2.0:
+                prefix = "⚠ RICH"
+            elif d < -1.0:
+                prefix = "↓ rich"
+            else:
+                prefix = "✓ ok"
+            tbl._annotations[(raw_r, c)] = (
+                f"{prefix} {afr:.1f} AFR  Δ{d:+.1f}  n={count}")
+
+        tbl._redraw()
+        self._tabs.setCurrentWidget(self._main_chip_tab)
+        self._update_status(
+            f"Wideband overlay: {len(overlay)} cells logged  —  "
+            f"lean: {lean_count}  rich: {rich_count}  on-target: {on_target}  "
+            f"target={target_afr} AFR")
+
     def _on_fpr_calculator(self):
         """Standalone fuel pressure / injector sizing calculator."""
         from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
@@ -4457,6 +4578,102 @@ class MainWindow(QMainWindow):
 
         btns.accepted.connect(_apply_overlay)
         dlg.exec_()
+
+    def _on_overlay_wideband(self):
+        """Load a CSV with AFR data and overlay deviation from target on the fuel map."""
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            QMessageBox.information(self, "Wideband overlay", "Load a ROM first.")
+            return
+        tab = self._main_chip_tab
+        # Find the primary fuel map
+        v = self._det.variant
+        fuel_maps = [m for m in tab._maps if m.map_type == 'fuel' and m.rows > 1]
+        if not fuel_maps:
+            QMessageBox.information(self, "Wideband overlay",
+                "No fuel map available. Open Main Chip Maps tab first.")
+            return
+
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
+                                      QDoubleSpinBox, QDialogButtonBox)
+        # Get target AFR
+        cfg_dlg = QDialog(self)
+        cfg_dlg.setWindowTitle("Wideband overlay settings")
+        cfg_dlg.setMinimumWidth(320)
+        cfg_dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        cfg_lay = QVBoxLayout(cfg_dlg)
+        form = QFormLayout()
+        target_spin = QDoubleSpinBox()
+        target_spin.setRange(10.0, 20.0); target_spin.setValue(14.7); target_spin.setDecimals(1)
+        target_spin.setSuffix("  AFR target")
+        target_spin.setStyleSheet(
+            f"background:{BG2};color:{FG};border:1px solid {BORDER};border-radius:3px;padding:2px 4px;")
+        form.addRow("Target AFR (stoich=14.7):", target_spin)
+        cfg_lay.addLayout(form)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.rejected.connect(cfg_dlg.reject)
+        btns.accepted.connect(cfg_dlg.accept)
+        cfg_lay.addWidget(btns)
+        if cfg_dlg.exec_() != QDialog.Accepted:
+            return
+        target_afr = target_spin.value()
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load wideband log CSV", "",
+            "CSV files (*.csv *.CSV *.txt);;All files (*.*)")
+        if not path:
+            return
+        try:
+            from urrom.datalog import load_log, compute_afr_overlay
+            log = load_log(Path(path))
+        except Exception as e:
+            QMessageBox.critical(self, "Error loading log", str(e))
+            return
+        if not log.rows or not any(r.afr for r in log.rows if r.afr):
+            QMessageBox.warning(self, "Wideband log",
+                "No AFR data found in log.\n"
+                "Check that the file has a column named 'AFR', 'WBO2', or 'Lambda'.")
+            return
+
+        m = fuel_maps[0]
+        # Switch to fuel map in editor
+        if m in tab._maps:
+            tab._map_combo.setCurrentIndex(tab._maps.index(m))
+
+        overlay = compute_afr_overlay(log, m, v, bytes(self._main_rom), target_afr)
+        if not overlay:
+            QMessageBox.information(self, "Wideband overlay",
+                "No matching data points with AFR measurements found.")
+            return
+
+        # Apply as colour-coded annotations
+        tbl = tab._table
+        lean_count = sum(1 for d in overlay.values() if d['delta'] > 1.0)
+        rich_count = sum(1 for d in overlay.values() if d['delta'] < -1.0)
+        on_target  = len(overlay) - lean_count - rich_count
+
+        for (raw_r, c), data in overlay.items():
+            d = data['delta']
+            afr = data['afr_mean']
+            count = data['count']
+            if d > 2.0:
+                prefix = "⚠ LEAN"
+            elif d > 1.0:
+                prefix = "↑ lean"
+            elif d < -2.0:
+                prefix = "⚠ RICH"
+            elif d < -1.0:
+                prefix = "↓ rich"
+            else:
+                prefix = "✓ ok"
+            tbl._annotations[(raw_r, c)] = (
+                f"{prefix} {afr:.1f} AFR  Δ{d:+.1f}  n={count}")
+
+        tbl._redraw()
+        self._tabs.setCurrentWidget(self._main_chip_tab)
+        self._update_status(
+            f"Wideband overlay: {len(overlay)} cells logged  —  "
+            f"lean: {lean_count}  rich: {rich_count}  on-target: {on_target}  "
+            f"target={target_afr} AFR")
 
     def _on_fpr_calculator(self):
         """Standalone fuel pressure / injector sizing calculator."""
