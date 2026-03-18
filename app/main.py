@@ -275,28 +275,82 @@ class OverviewTab(QWidget):
         self._info.setWordWrap(True)
         layout.addWidget(self._info)
 
-        # Map inventory table
-        map_title = QLabel("Map inventory")
-        map_title.setStyleSheet(f"color: {FG_DIM}; font-size: 10px; text-transform: uppercase;")
-        layout.addWidget(map_title)
+        # Chip info row
+        chip_row = QHBoxLayout()
+        self._main_chip_lbl = QLabel("Main chip: —")
+        self._main_chip_lbl.setStyleSheet(f"color:{FG};font-size:11px;")
+        self._boost_chip_lbl = QLabel("Boost chip: —")
+        self._boost_chip_lbl.setStyleSheet(f"color:{FG};font-size:11px;")
+        self._checksum_lbl = QLabel("")
+        self._checksum_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+        chip_row.addWidget(self._main_chip_lbl)
+        chip_row.addSpacing(24)
+        chip_row.addWidget(self._boost_chip_lbl)
+        chip_row.addStretch()
+        chip_row.addWidget(self._checksum_lbl)
+        layout.addLayout(chip_row)
 
-        self._map_table = QTableWidget(0, 4)
-        self._map_table.setHorizontalHeaderLabels(["Map", "Address", "Size", "Confidence"])
+        # Map inventory table — double-click row to jump to that map
+        map_title_row = QHBoxLayout()
+        map_title = QLabel("MAP INVENTORY")
+        map_title.setStyleSheet(f"color:{FG_DIM};font-size:10px;letter-spacing:1px;")
+        hint = QLabel("double-click a row to open that map")
+        hint.setStyleSheet(f"color:{FG_DIM};font-size:10px;font-style:italic;")
+        map_title_row.addWidget(map_title)
+        map_title_row.addStretch()
+        map_title_row.addWidget(hint)
+        layout.addLayout(map_title_row)
+
+        self._map_table = QTableWidget(0, 5)
+        self._map_table.setHorizontalHeaderLabels(
+            ["Map", "Address", "Size", "Unit", "Confidence"])
         self._map_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._map_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self._map_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._map_table.setAlternatingRowColors(True)
+        self._map_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._map_table.setStyleSheet(
-            f"alternate-background-color: {BG}; background: {BG2};")
+            f"alternate-background-color:{BG};background:{BG2};"
+            f"QTableWidget::item:selected{{background:{ACCENT}20;}}")
+        self._map_table.verticalHeader().setVisible(False)
+        self._map_table.setFixedHeight(320)
         layout.addWidget(self._map_table)
+
+        # Tuning note / warning area
+        self._tuning_note = QLabel("")
+        self._tuning_note.setStyleSheet(
+            f"color:{AMBER};font-size:10px;padding:4px 8px;"
+            f"background:{BG2};border-left:2px solid {AMBER};")
+        self._tuning_note.setWordWrap(True)
+        self._tuning_note.setVisible(False)
+        layout.addWidget(self._tuning_note)
 
         layout.addStretch()
 
+        # Signal for jump-to-map (emitted with map index in variant.main_maps)
+        self._jump_callback = None  # set by MainWindow
+        self._map_table.cellDoubleClicked.connect(self._on_row_jump)
+
+    def set_jump_callback(self, fn):
+        """Register a callback fn(map_index) called when user double-clicks a map row."""
+        self._jump_callback = fn
+
+    def _on_row_jump(self, row, col):
+        if self._jump_callback and row < len(self._maps_for_jump):
+            self._jump_callback(self._maps_for_jump[row])
+
     def update(self, det: DetectionResult | None, boost_det: DetectionResult | None = None):
+        self._maps_for_jump = []   # list of int: main_maps index for each table row
+
         if det is None:
             self._title.setText("No ROM loaded")
             self._detail.setText("")
             self._info.setText("")
             self._map_table.setRowCount(0)
+            self._main_chip_lbl.setText("Main chip: —")
+            self._boost_chip_lbl.setText("Boost chip: —")
+            self._checksum_lbl.setText("")
+            self._tuning_note.setVisible(False)
             return
 
         v = det.variant
@@ -314,30 +368,84 @@ class OverviewTab(QWidget):
             notes = v.notes or ""
             engine_str = ", ".join(v.engine_codes)
             pn_str = ", ".join(v.ecu_pns[:3])
+            bosch_pn = v.bosch_pns[0] if v.bosch_pns else "—"
             self._info.setText(
-                f"Engine codes: {engine_str}  •  ECU PNs: {pn_str}\n{notes}"
+                f"Engine: {engine_str}  •  ECU PN: {pn_str}  •  Bosch PN: {bosch_pn}"
             )
         else:
             self._info.setText("\n".join(det.warnings))
 
-        # Map inventory
-        maps = v.all_maps if v else []
-        self._map_table.setRowCount(len(maps))
-        for row, m in enumerate(maps):
+        # Chip info row
+        eprom_type = "27C512 (64KB)" if det.crc32 else "27C256 (32KB)"
+        self._main_chip_lbl.setText(
+            f"Main chip: {det.variant.ecu_pns[0] if v and v.ecu_pns else '—'}  "
+            f"•  {eprom_type}  •  WH 0x8000–0xFFFF")
+        if boost_det and boost_det.variant:
+            self._boost_chip_lbl.setText(
+                f"Boost chip: {boost_det.variant.software_id}  •  build 0x{boost_det.build_number:04X}")
+            self._boost_chip_lbl.setStyleSheet(f"color:{GREEN};font-size:11px;")
+        else:
+            self._boost_chip_lbl.setText("Boost chip: not loaded")
+            self._boost_chip_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+
+        # Checksum state
+        sw_id = v.software_id if v else ""
+        CHECKSUM_VARIANTS = {"551AA_0202","551C","551B","551B_D02","551AA","551A","404","404V8"}
+        if sw_id in CHECKSUM_VARIANTS:
+            self._checksum_lbl.setText("PRJmod checksum: applied on save")
+        else:
+            self._checksum_lbl.setText("Stock Bosch ID string (no computed checksum)")
+
+        # Map inventory — 5 columns, track jump indices for main_maps only
+        all_maps = v.all_maps if v else []
+        main_map_set = set(id(m) for m in (v.main_maps if v else []))
+        self._map_table.setRowCount(len(all_maps))
+
+        for row, m in enumerate(all_maps):
             conf_str = m.confidence
             conf_col = (GREEN if conf_str == "CONFIRMED"
                         else AMBER if conf_str == "PROVISIONAL"
                         else RED)
+            chip_tag = "boost" if m.chip == "boost" else "main"
             items = [
                 QTableWidgetItem(m.name),
-                QTableWidgetItem(f"0x{m.main_addr:04X}"),
+                QTableWidgetItem(f"WH 0x{m.main_addr:04X}"),
                 QTableWidgetItem(f"{m.rows}×{m.cols}"),
+                QTableWidgetItem(m.unit or "raw"),
                 QTableWidgetItem(conf_str),
             ]
-            items[3].setForeground(QBrush(QColor(conf_col)))
-            for col, item in enumerate(items):
-                item.setFlags(Qt.ItemIsEnabled)
-                self._map_table.setItem(row, col, item)
+            items[4].setForeground(QBrush(QColor(conf_col)))
+            # Dim boost-chip rows slightly
+            if chip_tag == "boost":
+                for it in items:
+                    it.setForeground(QBrush(QColor(FG_DIM)))
+                items[4].setForeground(QBrush(QColor(conf_col)))
+            for col_i, item in enumerate(items):
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                self._map_table.setItem(row, col_i, item)
+
+            # Track main_maps index for jump
+            if id(m) in main_map_set:
+                try:
+                    jump_idx = list(v.main_maps).index(m)
+                except ValueError:
+                    jump_idx = -1
+            else:
+                jump_idx = -1
+            self._maps_for_jump.append(jump_idx)
+
+        # Tuning note for unconfirmed / stock variants
+        notes_txt = []
+        if sw_id not in CHECKSUM_VARIANTS:
+            notes_txt.append("This is a stock Bosch ROM. Map addresses confirmed from direct chip reads.")
+        unconfirmed = [m.name for m in all_maps if m.confidence == "UNCONFIRMED" and m.rows > 1]
+        if unconfirmed:
+            notes_txt.append(f"UNCONFIRMED maps (do not write): {', '.join(unconfirmed[:4])}")
+        if notes_txt:
+            self._tuning_note.setText("  ·  ".join(notes_txt))
+            self._tuning_note.setVisible(True)
+        else:
+            self._tuning_note.setVisible(False)
 
 
 # ── Map editor table ──────────────────────────────────────────────────────────
@@ -670,6 +778,14 @@ class MainChipTab(QWidget):
         self._desc_lbl.setWordWrap(True)
         layout.addWidget(self._desc_lbl)
 
+        # SD mode / VE table notice bar
+        self._sd_bar = QLabel("")
+        self._sd_bar.setStyleSheet(
+            f"color:{AMBER};font-size:10px;padding:4px 8px;"
+            f"background:#2a1f00;border-left:3px solid {AMBER};border-radius:2px;")
+        self._sd_bar.setVisible(False)
+        layout.addWidget(self._sd_bar)
+
         # Map table
         self._table = MapTable()
         layout.addWidget(self._table)
@@ -707,6 +823,29 @@ class MainChipTab(QWidget):
         if self._maps:
             self._map_combo.setCurrentIndex(0)
             self._on_map_selected(0)
+
+        # SD VE detection notice (551AA_0202 only)
+        sw = getattr(variant, "software_id", "")
+        if sw == "551AA_0202":
+            from urrom.hw_patches import _analyse_sd_ve
+            sd_result = _analyse_sd_ve(bytes(rom))
+            if sd_result and "POPULATED" in sd_result.detail:
+                self._sd_bar.setText(
+                    f"⚡  SD mode active — VE table populated at WH 0x2074. "
+                    f"Select 'VE Table' to edit.  MAP sensor: {sd_result.status}")
+                self._sd_bar.setVisible(True)
+            elif sd_result:
+                self._sd_bar.setText(
+                    f"ℹ  SD mode NOT active — VE table is blank (MAF-based tune). "
+                    f"Detected: {sd_result.status}")
+                self._sd_bar.setStyleSheet(
+                    f"color:{FG_DIM};font-size:10px;padding:4px 8px;"
+                    f"background:{BG2};border-left:3px solid {FG_DIM};border-radius:2px;")
+                self._sd_bar.setVisible(True)
+            else:
+                self._sd_bar.setVisible(False)
+        else:
+            self._sd_bar.setVisible(False)
 
     def clear(self):
         self._variant = None
@@ -749,6 +888,33 @@ class MainChipTab(QWidget):
             f"font-size: 10px; padding: 2px 6px; border-radius: 3px; "
             f"color: {conf_colour}; background: {BG3}; border: 1px solid {conf_colour};")
         self._revert_btn.setEnabled(False)
+
+        # SD mode detection: show notice when viewing VE table or when VE table
+        # is active and user is editing fuel maps (warn they may be in SD mode)
+        v_id = v.software_id if v else ""
+        if v_id == "551AA_0202":
+            from urrom.hw_patches import SD_VE_TABLE_OFFSET, SD_VE_TABLE_SIZE, _is_real_ve_table
+            ve_bytes = bytes(self._rom[SD_VE_TABLE_OFFSET: SD_VE_TABLE_OFFSET + SD_VE_TABLE_SIZE])
+            sd_active = _is_real_ve_table(ve_bytes)
+            if m.main_addr == SD_VE_TABLE_OFFSET:
+                if sd_active:
+                    self._sd_bar.setText(
+                        "⚡ Speed-density VE table — active (non-blank values detected). "
+                        "Edit this table to change VE targets. MAF fuel maps ignored in SD mode.")
+                else:
+                    self._sd_bar.setText(
+                        "ℹ VE table is blank (all 0x02). This ROM uses MAF-based fuelling. "
+                        "Populate this table to enable speed-density mode.")
+                self._sd_bar.setVisible(True)
+            elif sd_active and m.map_type == "fuel":
+                self._sd_bar.setText(
+                    "⚠ SD mode active — VE table is populated. "
+                    "Fuel P/T map may not be used. Check VE Table tab.")
+                self._sd_bar.setVisible(True)
+            else:
+                self._sd_bar.setVisible(False)
+        else:
+            self._sd_bar.setVisible(False)
 
     def _on_revert(self):
         self._table.revert()
@@ -1342,6 +1508,10 @@ class CompareTab(QWidget):
         except OSError as e:
             QMessageBox.critical(self, "Error", str(e))
             return
+        if Path(path).suffix.lower() == ".034":
+            from urrom.descramble import descramble_034, is_valid_034
+            if is_valid_034(raw):
+                raw = descramble_034(raw)
         wh, _ = normalize_rom(raw)
         self._rom_b = wh
         self._status.setText(f"ROM B: {Path(path).name}  ({len(wh):,} bytes)")
@@ -1399,12 +1569,21 @@ class CompareTab(QWidget):
                     bg_a = _heat(a_raw, vmin, vmax)
                     bg_b = _heat(b_raw, vmin, vmax) if raw_b else bg_a
 
-                if delta > 0:
-                    bg_d, fg_d, d_text = QColor("#1a3a1a"), QColor(GREEN), f"+{delta}"
-                elif delta < 0:
-                    bg_d, fg_d, d_text = QColor("#3a1a1a"), QColor(RED),   str(delta)
+                if delta != 0 and decode:
+                    # Show delta in decoded units (°BTDC, AFR, etc.)
+                    d_decoded = decode(b_raw) - decode(a_raw)
+                    d_text = f"+{d_decoded:.2f}" if d_decoded > 0 else f"{d_decoded:.2f}"
+                elif delta != 0:
+                    d_text = f"+{delta}" if delta > 0 else str(delta)
                 else:
-                    bg_d, fg_d, d_text = QColor(BG2),       QColor(FG_DIM), "\u2014"
+                    d_text = "\u2014"
+
+                if delta > 0:
+                    bg_d, fg_d = QColor("#1a3a1a"), QColor(GREEN)
+                elif delta < 0:
+                    bg_d, fg_d = QColor("#3a1a1a"), QColor(RED)
+                else:
+                    bg_d, fg_d = QColor(BG2),       QColor(FG_DIM)
 
                 def _mk(text, bg, fg=None, bold=False):
                     it = QTableWidgetItem(text)
@@ -1423,8 +1602,29 @@ class CompareTab(QWidget):
         total = nrows * ncols
         if raw_b:
             pct = 100 * changed_count / total
+            # Compute max/min decoded delta for headline stat
+            if decode:
+                deltas_decoded = [
+                    decode(raw_b[r][c]) - decode(raw_a[r][c])
+                    for r in range(nrows) for c in range(ncols)
+                    if raw_b[r][c] != raw_a[r][c]
+                ]
+                if deltas_decoded:
+                    d_max = max(deltas_decoded)
+                    d_min = min(deltas_decoded)
+                    range_str = (f"  |  max Δ {d_max:+.2f}  min Δ {d_min:+.2f}  {m.unit}")
+                else:
+                    range_str = ""
+            else:
+                raw_deltas = [raw_b[r][c] - raw_a[r][c]
+                              for r in range(nrows) for c in range(ncols)
+                              if raw_b[r][c] != raw_a[r][c]]
+                if raw_deltas:
+                    range_str = f"  |  max Δ {max(raw_deltas):+d}  min Δ {min(raw_deltas):+d}  raw"
+                else:
+                    range_str = ""
             self._summary.setText(
-                f"{changed_count} of {total} cells changed  ({pct:.0f}%)  \u2014  {m.name}")
+                f"{m.name}  \u2014  {changed_count}/{total} cells changed  ({pct:.0f}%){range_str}")
         else:
             self._summary.setText(f"Load ROM B to see delta  \u2014  {m.name}")
 
@@ -1532,6 +1732,14 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._compare_tab,   "Compare")
         self._tabs.addTab(self._hardware_tab,  "Hardware")
         root.addWidget(self._tabs)
+
+        # Wire Overview double-click → jump to map in Main Chip Maps tab
+        def _jump_to_map(main_map_idx: int):
+            if main_map_idx < 0:
+                return
+            self._tabs.setCurrentWidget(self._main_chip_tab)
+            self._main_chip_tab._map_combo.setCurrentIndex(main_map_idx)
+        self._overview_tab.set_jump_callback(_jump_to_map)
 
         # Status bar
         self._status = QStatusBar()
@@ -1729,7 +1937,7 @@ class MainWindow(QMainWindow):
         self._main_lbl.setText(fname)
         self._main_lbl.setStyleSheet(f"color: {FG}; font-size: 11px;")
         self._info_strip.update(det)
-        self._overview_tab.update(det)
+        self._overview_tab.update(det, self._boost_det if hasattr(self, "_boost_det") else None)
         self._hardware_tab.update(bytes(wh), det.variant.name if det.variant else "")
         self._save_btn.setEnabled(True)
 
@@ -1775,31 +1983,43 @@ class MainWindow(QMainWindow):
             return
         self._load_boost(Path(path))
 
-    def _load_boost(self, path: Path):
-        if self._det is None or self._det.variant is None:
-            QMessageBox.warning(self, "No main chip",
-                                "Load the main chip ROM first.")
-            return
-        try:
-            raw = path.read_bytes()
-        except OSError as e:
-            QMessageBox.critical(self, "Error", f"Cannot read file:\n{e}")
-            return
+     def _load_boost(self, path: Path):
+         if self._det is None or self._det.variant is None:
+             QMessageBox.warning(self, "No main chip",
+                                 "Load the main chip ROM first.")
+             return
+         try:
+             raw = path.read_bytes()
+         except OSError as e:
+             QMessageBox.critical(self, "Error", f"Cannot read file:\n{e}")
+             return
 
-        # Boost chip working half: first 8KB (0x0000-0x1FFF)
-        if len(raw) >= 0x2000:
-            boost_wh = bytearray(raw[:0x2000])
-        else:
-            boost_wh = bytearray(raw)
+         # Normalise: accept 8KB, 16KB, 32KB, or 64KB doubled boost chips.
+         # 551x boost chips are 32KB (27C256); 3B/551A are 8KB (27C64).
+         if len(raw) == 65536:
+             boost_raw = bytearray(raw[0x8000:])  # doubled — take upper half
+         elif len(raw) == 32768:
+             boost_raw = bytearray(raw)
+         elif len(raw) <= 8192:
+             boost_raw = bytearray(raw)
+         else:
+             boost_raw = bytearray(raw[:32768])
 
-        self._boost_path = path
-        self._boost_rom  = boost_wh
-        self._boost_lbl.setText(path.name)
-        self._boost_lbl.setStyleSheet(f"color: {FG}; font-size: 11px;")
+         boost_det = detect_rom(bytes(boost_raw))
+         self._boost_det  = boost_det
+         self._boost_path = path
+         self._boost_rom  = boost_raw
+         self._boost_lbl.setText(path.name)
+         self._boost_lbl.setStyleSheet(f"color: {FG}; font-size: 11px;")
 
-        self._boost_tab.load(boost_wh, self._det.variant)
-        self._hardware_tab.set_boost(bytes(raw), path.name)
-        self._update_status(f"Boost chip loaded: {path.name}")
+         self._boost_tab.load(boost_raw, self._det.variant)
+         self._hardware_tab.set_boost(bytes(raw), path.name)
+         self._overview_tab.update(self._det, boost_det)
+
+         bld = boost_det.build_number if boost_det else 0
+         crc = boost_det.crc32 if boost_det else 0
+         self._update_status(
+             f"Boost chip: {path.name}  CRC32 0x{crc:08X}  build 0x{bld:04X}")
 
     def _on_save(self):
         if self._main_rom is None:
