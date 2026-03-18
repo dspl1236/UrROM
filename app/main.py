@@ -241,13 +241,22 @@ class InfoStrip(QFrame):
         self._build_lbl.setText(f"build 0x{det.build_number:04X}")
         self._build_lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
 
-        # Checksum
-        if det.checksum_ok:
-            self._cs_lbl.setText("✓ checksum")
-            self._cs_lbl.setStyleSheet(f"color: {GREEN}; font-size: 11px;")
+        # Checksum — distinguish computed/stored for prjmod, stock ID string for Bosch
+        from urrom.ecu_profiles import verify_checksum, compute_checksum, read_stored_checksum
+        CHECKSUM_VARIANTS = {"551AA_0202","551C","551B","551B_D02","551AA","551A","404","404V8"}
+        sw = det.variant.software_id if det.variant else ""
+        if sw in CHECKSUM_VARIANTS:
+            # PRJmod / tuned: has a computed checksum
+            if det.checksum_ok:
+                self._cs_lbl.setText("✓ checksum OK")
+                self._cs_lbl.setStyleSheet(f"color: {GREEN}; font-size: 11px;")
+            else:
+                self._cs_lbl.setText("✗ checksum BAD")
+                self._cs_lbl.setStyleSheet(f"color: {RED}; font-size: 11px;")
         else:
-            self._cs_lbl.setText("⚠ checksum unverified")
-            self._cs_lbl.setStyleSheet(f"color: {AMBER}; font-size: 11px;")
+            # Stock Bosch: ASCII part number at 0x3FFA, not a computed checksum
+            self._cs_lbl.setText("ID string (stock)")
+            self._cs_lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
 
         # Boost chip pairing requirement
         from urrom.ecu_profiles import get_boost_pairing, KNOWN_CRCS
@@ -619,8 +628,9 @@ class MapTable(QTableWidget):
         self._rom: bytearray | None = None
         self._original_raw: list[list[int]] = []
         self._current_raw:  list[list[int]] = []
-        self._undo_stack: list[list[list[int]]] = []   # max 30 states
-        self._redo_stack: list[list[list[int]]] = []
+        self._undo_stack:   list[list[list[int]]] = []   # max 30 states
+        self._redo_stack:   list[list[list[int]]] = []
+        self._annotations:  dict[tuple[int,int], str] = {}  # (raw_r, col) → note
         self._rpm_axis:  list = []
         self._load_axis: list = []
         self._is_ign = False
@@ -715,15 +725,21 @@ class MapTable(QTableWidget):
                     item.setData(Qt.UserRole, None)
                 item.setData(Qt.UserRole + 1, (r, c))  # store logical row,col
 
-                # Tooltip: show raw byte + decoded value
+                # Tooltip: show raw byte + decoded value + annotation
+                ann = self._annotations.get((r, c), "")
+                tip_parts = []
                 if decode:
                     decoded_val = decode(item_raw)
                     dec_str = (f"{decoded_val:.2f}" if isinstance(decoded_val, float)
                                else str(decoded_val))
-                    item.setToolTip(
-                        f"raw: {item_raw}  decoded: {dec_str} {self._map_def.unit or ''}")
+                    tip_parts.append(f"raw: {item_raw}  decoded: {dec_str} {self._map_def.unit or ''}")
                 else:
-                    item.setToolTip(f"raw: {item_raw}")
+                    tip_parts.append(f"raw: {item_raw}")
+                if ann:
+                    tip_parts.append(f"📝 {ann}")
+                    # Add asterisk to annotated cells
+                    item.setText(item.text() + " *")
+                item.setToolTip("\n".join(tip_parts))
                 self.setItem(disp_r, c, item)
 
         self._loading = False
@@ -896,6 +912,9 @@ class MapTable(QTableWidget):
         nudge_lbl.setEnabled(False)
         menu.addAction(nudge_lbl)
         menu.addSeparator()
+        a_annotate = QAction("Add note to cell…", self)
+        a_annotate.setEnabled(len(self._selected_cells()) == 1)
+        menu.addAction(a_annotate)
         a_undo = QAction(f"Undo  Ctrl+Z  ({len(self._undo_stack)} available)", self)
         a_undo.setEnabled(bool(self._undo_stack))
         a_redo = QAction(f"Redo  Ctrl+Y  ({len(self._redo_stack)} available)", self)
@@ -939,6 +958,7 @@ class MapTable(QTableWidget):
                 0, -127, 127)
             if ok: self._offset_selection(val)
         elif act == a_copyall: self._copy_all_cells()
+        elif act == a_annotate: self._annotate_cell()
         elif act == a_undo:   self.undo()
         elif act == a_redo:   self.redo()
 
@@ -1163,6 +1183,28 @@ class MapTable(QTableWidget):
                 self._current_raw[raw_r][c] = max(0, min(255, self._current_raw[raw_r][c] + offset))
         self._redraw()
         self.itemChanged.emit(QTableWidgetItem())
+
+    def _annotate_cell(self):
+        """Add or edit a text note for the selected cell."""
+        from PyQt5.QtWidgets import QInputDialog
+        cells = self._selected_cells()
+        if len(cells) != 1:
+            return
+        disp_r, c = cells[0]
+        raw_r = self._disp_to_raw(disp_r)
+        key = (raw_r, c)
+        existing = self._annotations.get(key, "")
+        note, ok = QInputDialog.getText(
+            self, "Cell note",
+            f"Note for cell [{raw_r},{c}] (leave blank to clear):",
+            text=existing)
+        if not ok:
+            return
+        if note.strip():
+            self._annotations[key] = note.strip()
+        elif key in self._annotations:
+            del self._annotations[key]
+        self._redraw()
 
     def set_status_callback(self, fn):
         """Register fn(msg) to push hover info to the main window status bar."""
@@ -2253,6 +2295,13 @@ class CompareTab(QWidget):
         self._clear_tables()
         self._summary.setText("")
 
+    def set_rom_b_direct(self, wh: bytes, label: str = "stock"):
+        """Load ROM B programmatically without a file dialog."""
+        self._rom_b = wh
+        self._status.setText(f"ROM B: {label}  ({len(wh):,} bytes)  [auto-loaded]")
+        self._export_btn.setEnabled(True)
+        self._refresh()
+
     def _on_load_b(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Load ROM B for comparison", "",
@@ -2583,6 +2632,9 @@ class MainWindow(QMainWindow):
         save_act = QAction("Save ROM…", self)
         save_act.setShortcut("Ctrl+S")
         save_act.triggered.connect(self._on_save)
+        find_act = QAction("Find in maps… Ctrl+F", self)
+        find_act.setShortcut("Ctrl+F")
+        find_act.triggered.connect(self._on_find_in_maps)
         file_menu.addAction(save_act)
 
         file_menu.addSeparator()
@@ -2902,6 +2954,162 @@ class MainWindow(QMainWindow):
         self._update_status(f"Saved → {Path(path).name}  ({len(out_bytes):,} bytes){note_str}")
 
     # ── KWPBridge overlay ──────────────────────────────────────────────────────
+
+    def _on_compare_to_stock(self):
+        """Auto-load the matching stock ROM from roms/ and open Compare tab."""
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            QMessageBox.information(self, "Compare to stock", "Load a ROM first.")
+            return
+        import sys as _sys
+        sw_id = self._det.variant.software_id
+        # Map software IDs to bundled stock ROM files
+        # Stock baseline ROMs bundled with UrROM
+        # 034EFI prjmod tunes (551AA_0202) compare against the prjmod stock rip chip
+        # which is itself a prjmod ROM, so deltas show only the tune changes
+        STOCK_ROMS = {
+            "551B":       "roms/aby_fuel-ign_551aa.bin",
+            "551C":       "roms/adu_fuel-ign_551c.bin",
+            "551AA":      "roms/aan_fuel-ign_551aa.bin",
+            "551A":       "roms/aan_fuel-ign_551a.bin",
+            "551AA_0202": "roms/aan_fuel-ign_551aa.bin",
+            "551B_D02":   "roms/aby_fuel-ign_551aa.bin",
+            "404":        "roms/3b_fuel-ign_404aa.bin",
+        }
+        # Find the app base directory
+        app_base = Path(__file__).parent.parent
+        stock_rel = STOCK_ROMS.get(sw_id)
+        if not stock_rel:
+            QMessageBox.information(self, "Compare to stock",
+                f"No bundled stock ROM for variant {sw_id}.\n"
+                "Use File → Load ROM then Compare tab to compare manually.")
+            return
+        stock_path = app_base / stock_rel
+        if not stock_path.exists():
+            # Try relative to cwd
+            stock_path = Path(stock_rel)
+        if not stock_path.exists():
+            QMessageBox.warning(self, "Stock ROM not found",
+                f"Could not find: {stock_rel}\n"
+                "Ensure you're running from the UrROM directory.")
+            return
+        try:
+            stock_raw = stock_path.read_bytes()
+        except OSError as e:
+            QMessageBox.critical(self, "Error", str(e))
+            return
+        from urrom.ecu_profiles import normalize_rom
+        stock_wh, _ = normalize_rom(stock_raw)
+        self._compare_tab.set_rom_b_direct(bytes(stock_wh), stock_path.name)
+        self._tabs.setCurrentWidget(self._compare_tab)
+        self._update_status(f"Comparing to stock: {stock_path.name}")
+
+    def _on_find_in_maps(self):
+        """Search all confirmed maps for cells matching a value condition."""
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            QMessageBox.information(self, "Find in maps", "Load a ROM first.")
+            return
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                      QLabel, QComboBox, QDoubleSpinBox,
+                                      QDialogButtonBox, QTableWidget,
+                                      QTableWidgetItem, QHeaderView)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Find in maps")
+        dlg.setMinimumWidth(560)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(8)
+
+        # Query row
+        q_row = QHBoxLayout()
+        q_row.addWidget(QLabel("Find cells where decoded value"))
+        op_cb = QComboBox()
+        op_cb.addItems([">", "≥", "<", "≤", "=", "≠"])
+        op_cb.setFixedWidth(50)
+        val_sb = QDoubleSpinBox()
+        val_sb.setRange(-999, 9999)
+        val_sb.setDecimals(2)
+        val_sb.setValue(0.0)
+        val_sb.setFixedWidth(90)
+        for w in (op_cb, val_sb):
+            w.setStyleSheet(f"background:{BG3};color:{FG};border:1px solid {BORDER};border-radius:3px;")
+        q_row.addWidget(op_cb)
+        q_row.addWidget(val_sb)
+        q_row.addStretch()
+        lay.addLayout(q_row)
+
+        # Results table
+        results_tbl = QTableWidget(0, 4)
+        results_tbl.setHorizontalHeaderLabels(["Map", "Row", "Col", "Value"])
+        results_tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        results_tbl.setEditTriggers(QTableWidget.NoEditTriggers)
+        results_tbl.setStyleSheet(f"background:{BG2};color:{FG};gridline-color:{BORDER};")
+        results_tbl.setAlternatingRowColors(True)
+        results_tbl.setStyleSheet(
+            f"QTableWidget{{background:{BG2};color:{FG};gridline-color:{BORDER};}}"
+            f"QTableWidget::item:alternate{{background:{BG};}}") 
+        lay.addWidget(results_tbl)
+
+        status_lbl = QLabel("")
+        status_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+        lay.addWidget(status_lbl)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        search_btn = btns.addButton("Search", QDialogButtonBox.ActionRole)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        def _run_search():
+            op  = op_cb.currentText()
+            thr = val_sb.value()
+            ops = {">": lambda v, t: v > t, "≥": lambda v, t: v >= t,
+                   "<": lambda v, t: v < t,  "≤": lambda v, t: v <= t,
+                   "=": lambda v, t: abs(v - t) < 0.5, "≠": lambda v, t: abs(v - t) >= 0.5}
+            cmp_fn = ops[op]
+            from urrom.ecu_profiles import read_map
+            v = self._det.variant
+            hits = []
+            for m in (v.main_maps or []):
+                if m.rows <= 1 or m.confidence == "UNCONFIRMED":
+                    continue
+                raw_data = read_map(bytes(self._main_rom), m)
+                decode = m.decode
+                for r in range(m.rows):
+                    for c in range(m.cols):
+                        rv = raw_data[r][c]
+                        dv = decode(rv) if decode else float(rv)
+                        if dv is not None and cmp_fn(float(dv), thr):
+                            hits.append((m.name, r, c, dv, m))
+            results_tbl.setRowCount(len(hits))
+            for row_i, (name, r, c, dv, m) in enumerate(hits[:500]):
+                fmt = f"{dv:.2f} {m.unit}" if isinstance(dv, float) else str(dv)
+                for col_i, text in enumerate([name, str(r), str(c), fmt]):
+                    it = QTableWidgetItem(text)
+                    it.setData(Qt.UserRole, (m, r, c))
+                    results_tbl.setItem(row_i, col_i, it)
+            over = f"  (showing first 500)" if len(hits) > 500 else ""
+            status_lbl.setText(f"{len(hits)} cells match  {op} {thr}{over}")
+
+        def _on_result_click(row, col):
+            it = results_tbl.item(row, 0)
+            if not it: return
+            m, r, c = it.data(Qt.UserRole)
+            # Jump to that map
+            try:
+                map_idx = next(i for i,mm in enumerate(self._main_chip_tab._maps) if mm is m)
+                self._tabs.setCurrentWidget(self._main_chip_tab)
+                self._main_chip_tab._map_combo.setCurrentIndex(map_idx)
+                # Scroll to cell in table
+                disp_r = m.rows - 1 - r
+                self._main_chip_tab._table.scrollToItem(
+                    self._main_chip_tab._table.item(disp_r, c))
+                self._main_chip_tab._table.setCurrentCell(disp_r, c)
+            except StopIteration:
+                pass
+
+        search_btn.clicked.connect(_run_search)
+        results_tbl.cellDoubleClicked.connect(_on_result_click)
+        _run_search()
+        dlg.exec_()
 
     def _on_export_map_html(self):
         """Export the currently displayed map as a standalone HTML file."""
