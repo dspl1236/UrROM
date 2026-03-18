@@ -472,6 +472,8 @@ class MapTable(QTableWidget):
 
         self.setItemDelegate(ChangedCellDelegate(self))
         self.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.AnyKeyPressed)
+        self.setMouseTracking(True)
+        self._status_callback = None   # set by MainChipTab to push msgs to status bar
         self.itemChanged.connect(self._on_cell_changed)
         self._loading = False
 
@@ -518,7 +520,8 @@ class MapTable(QTableWidget):
         orig  = self._original_raw
         nrows = self._map_def.rows
         ncols = self._map_def.cols
-        decode = self._map_def.decode
+        # _display_decode can be overridden by the "Decoded/Raw" toggle
+        decode = getattr(self, "_display_decode", self._map_def.decode)
 
         # Pre-compute global min/max for consistent heat scale
         all_vals = [raw[r][c] for r in range(nrows) for c in range(ncols)]
@@ -556,6 +559,15 @@ class MapTable(QTableWidget):
                     item.setData(Qt.UserRole, None)
                 item.setData(Qt.UserRole + 1, (r, c))  # store logical row,col
 
+                # Tooltip: show raw byte + decoded value
+                if decode:
+                    decoded_val = decode(item_raw)
+                    dec_str = (f"{decoded_val:.2f}" if isinstance(decoded_val, float)
+                               else str(decoded_val))
+                    item.setToolTip(
+                        f"raw: {item_raw}  decoded: {dec_str} {self._map_def.unit or ''}")
+                else:
+                    item.setToolTip(f"raw: {item_raw}")
                 self.setItem(disp_r, c, item)
 
         self._loading = False
@@ -925,6 +937,31 @@ class MapTable(QTableWidget):
         self._redraw()
         self.itemChanged.emit(QTableWidgetItem())
 
+    def set_status_callback(self, fn):
+        """Register fn(msg) to push hover info to the main window status bar."""
+        self._status_callback = fn
+
+    def mouseMoveEvent(self, event):
+        item = self.itemAt(event.pos())
+        if item and self._map_def and self._status_callback:
+            rc = item.data(Qt.UserRole + 1)
+            if rc:
+                r_log, c_log = rc
+                raw = self._current_raw[r_log][c_log]
+                decode = self._map_def.decode
+                unit   = self._map_def.unit or ""
+                if decode:
+                    dec = decode(raw)
+                    dec_s = f"{dec:.2f}" if isinstance(dec, float) else str(dec)
+                    msg = f"Cell [{r_log},{c_log}]  raw={raw}  {dec_s} {unit}"
+                else:
+                    msg = f"Cell [{r_log},{c_log}]  raw={raw}"
+                orig = self._original_raw[r_log][c_log] if self._original_raw else raw
+                if raw != orig:
+                    msg += f"  (was {orig})"
+                self._status_callback(msg)
+        super().mouseMoveEvent(event)
+
     # ── Live overlay (KWPBridge) ──────────────────────────────────────────────
 
     def attach_kwp(self):
@@ -1069,6 +1106,18 @@ class MainChipTab(QWidget):
 
         toolbar.addStretch()
 
+        self._decode_btn = QPushButton("Decoded ▾")
+        self._decode_btn.setCheckable(True)
+        self._decode_btn.setChecked(True)
+        self._decode_btn.setFixedWidth(90)
+        self._decode_btn.setStyleSheet(
+            f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:0 8px;font-size:10px;}}"
+            f"QPushButton:checked{{background:{ACCENT}30;border-color:{ACCENT};}}"
+            f"QPushButton:hover{{border-color:{ACCENT};}}")
+        self._decode_btn.clicked.connect(self._on_toggle_decode)
+        toolbar.addWidget(self._decode_btn)
+
         self._revert_btn = QPushButton("Revert changes")
         self._revert_btn.setEnabled(False)
         self._revert_btn.clicked.connect(self._on_revert)
@@ -1151,6 +1200,11 @@ class MainChipTab(QWidget):
         else:
             self._sd_bar.setVisible(False)
 
+    def set_status_fn(self, fn):
+        """Register the status-bar push function from MainWindow."""
+        self._status_fn = fn
+        self._table.set_status_callback(fn)
+
     def clear(self):
         self._variant = None
         self._rom = None
@@ -1179,6 +1233,9 @@ class MainChipTab(QWidget):
         except TypeError:
             pass
         self._table.itemChanged.connect(lambda _: self.on_table_changed())
+        # Wire hover → status via callback set by MainWindow
+        if hasattr(self, "_status_fn"):
+            self._table.set_status_callback(self._status_fn)
         self._desc_lbl.setText(m.description)
         self._addr_lbl.setText(
             f"Address: 0x{m.main_addr:04X}  (working half offset)")
@@ -1219,6 +1276,24 @@ class MainChipTab(QWidget):
                 self._sd_bar.setVisible(False)
         else:
             self._sd_bar.setVisible(False)
+
+    def _on_toggle_decode(self):
+        """Toggle between showing decoded values (°BTDC, AFR) and raw bytes."""
+        decoded = self._decode_btn.isChecked()
+        self._decode_btn.setText("Decoded ▾" if decoded else "Raw ▾")
+        if not self._maps:
+            return
+        idx = self._map_combo.currentIndex()
+        if 0 <= idx < len(self._maps):
+            m = self._maps[idx]
+            # Temporarily override decode fn based on toggle
+            if decoded:
+                # Restore normal decode
+                self._table._display_decode = m.decode
+            else:
+                # Show raw bytes
+                self._table._display_decode = None
+            self._table._redraw()
 
     def _on_revert(self):
         self._table.revert()
@@ -1773,6 +1848,20 @@ class CompareTab(QWidget):
         self._summary.setStyleSheet(f"color: {FG_DIM}; font-size: 10px;")
         layout.addWidget(self._summary)
 
+        # Export row
+        exp_row = QHBoxLayout()
+        exp_row.addStretch()
+        self._export_btn = QPushButton("Export diff report…")
+        self._export_btn.setEnabled(False)
+        self._export_btn.setFixedHeight(24)
+        self._export_btn.setStyleSheet(
+            f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:0 10px;font-size:10px;}}"
+            f"QPushButton:hover{{border-color:{ACCENT};}}")
+        self._export_btn.clicked.connect(self._on_export_diff)
+        exp_row.addWidget(self._export_btn)
+        layout.addLayout(exp_row)
+
     def set_rom_a(self, rom, variant):
         self._rom_a   = rom
         self._variant = variant
@@ -1904,6 +1993,7 @@ class CompareTab(QWidget):
                 self._table_b.setItem(disp_r, c, _mk(b_disp, bg_b))
 
         total = nrows * ncols
+        self._export_btn.setEnabled(bool(self._rom_b))
         if raw_b:
             pct = 100 * changed_count / total
             # Compute max/min decoded delta for headline stat
@@ -1931,6 +2021,53 @@ class CompareTab(QWidget):
                 f"{m.name}  \u2014  {changed_count}/{total} cells changed  ({pct:.0f}%){range_str}")
         else:
             self._summary.setText(f"Load ROM B to see delta  \u2014  {m.name}")
+
+    def _on_export_diff(self):
+        """Export a text diff report for all changed maps."""
+        if self._rom_a is None or self._rom_b is None or not self._maps:
+            return
+        from urrom.ecu_profiles import read_map
+        lines = [
+            f"UrROM diff report",
+            f"Variant: {self._variant.name if self._variant else '?'}",
+            f"{'=' * 60}",
+            "",
+        ]
+        total_changed = 0
+        for m in self._maps:
+            if m.rows <= 1:
+                continue
+            raw_a = read_map(self._rom_a, m)
+            raw_b = read_map(self._rom_b, m)
+            decode = m.decode
+            changed = [(r, c, raw_a[r][c], raw_b[r][c])
+                       for r in range(m.rows) for c in range(m.cols)
+                       if raw_a[r][c] != raw_b[r][c]]
+            if not changed:
+                continue
+            total_changed += len(changed)
+            lines.append(f"{m.name}  WH 0x{m.main_addr:04X}  ({len(changed)} cells changed)")
+            for r, c, va, vb in changed[:32]:  # cap at 32 cells per map
+                if decode:
+                    da = decode(va); db = decode(vb)
+                    lines.append(f"  [{r:2d},{c:2d}]  {da:+.2f} → {db:+.2f} {m.unit}  "
+                                 f"(raw {va} → {vb})")
+                else:
+                    lines.append(f"  [{r:2d},{c:2d}]  {va} → {vb}")
+            if len(changed) > 32:
+                lines.append(f"  ... and {len(changed)-32} more cells")
+            lines.append("")
+        lines.append(f"{'=' * 60}")
+        lines.append(f"Total: {total_changed} cells changed across {sum(1 for m in self._maps if m.rows>1)} maps")
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export diff report", "diff_report.txt",
+            "Text files (*.txt);;All files (*.*)")
+        if not path:
+            return
+        Path(path).write_text("\n".join(lines))
+        QMessageBox.information(self, "Exported",
+                                f"Diff report saved to {Path(path).name}")
 
     def _clear_tables(self):
         for tbl in (self._table_a, self._table_d, self._table_b):
@@ -2044,6 +2181,9 @@ class MainWindow(QMainWindow):
             self._tabs.setCurrentWidget(self._main_chip_tab)
             self._main_chip_tab._map_combo.setCurrentIndex(main_map_idx)
         self._overview_tab.set_jump_callback(_jump_to_map)
+
+        # Wire hover status bar for map table
+        self._main_chip_tab.set_status_fn(self._update_status)
 
         # Status bar
         self._status = QStatusBar()
@@ -2414,24 +2554,14 @@ class MainWindow(QMainWindow):
         new_maps = [m for m in maps if m.main_addr not in existing_addrs]
         dup_count = len(maps) - len(new_maps)
 
-        msg = (f"XDF: {result.title or Path(path).name}
-"
-               f"Author: {result.author or '—'}
-"
-               f"Found {len(maps)} maps, {dup_count} already known.
-
-"
-               f"Add {len(new_maps)} new PROVISIONAL maps to {v.name}?
-
-"
-               f"These will be available in Map editor for this session only.
-"
-               f"To persist them, edit ecu_profiles.py.")
-        reply = QMessageBox.question(self, "Import XDF", msg,
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply != QMessageBox.Yes:
-            return
-
+        msg = (
+            f"XDF: {result.title or Path(path).name}\n"
+            f"Author: {result.author or chr(8212)}\n"
+            f"Found {len(maps)} maps, {dup_count} already known.\n\n"
+            f"Add {len(new_maps)} new PROVISIONAL maps to {v.name}?\n\n"
+            "These will be available in Map editor for this session only.\n"
+            "To persist them, edit ecu_profiles.py."
+        )
         # Inject into variant (session only — not persisted)
         v.main_maps = v.main_maps + new_maps
 
@@ -2526,67 +2656,6 @@ class MainWindow(QMainWindow):
         event.accept()
 
     # ── KWPBridge live overlay ────────────────────────────────────────────────
-
-    def _on_import_xdf(self):
-        """Import a TunerPro XDF v1.50 file to add map entries to current variant."""
-        if self._det is None or self._det.variant is None:
-            QMessageBox.information(self, "Import XDF",
-                "Load a ROM first, then import an XDF to add its map addresses.")
-            return
-
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import XDF", "",
-            "TunerPro XDF (*.xdf *.XDF);;All files (*.*)")
-        if not path:
-            return
-
-        try:
-            from urrom.xdf_import import parse_xdf, xdf_to_mapdefs
-            result = parse_xdf(path)
-            maps   = xdf_to_mapdefs(result, filter_min_cells=4)
-        except Exception as e:
-            QMessageBox.critical(self, "XDF Import Error", str(e))
-            return
-
-        if not maps:
-            QMessageBox.information(self, "XDF Import",
-                "No usable maps found in this XDF file.")
-            return
-
-        v = self._det.variant
-        existing_addrs = {m.main_addr for m in v.main_maps + v.boost_maps}
-        new_maps = [m for m in maps if m.main_addr not in existing_addrs]
-        dup_count = len(maps) - len(new_maps)
-
-        msg = (f"XDF: {result.title or Path(path).name}
-"
-               f"Author: {result.author or '—'}
-"
-               f"Found {len(maps)} maps, {dup_count} already known.
-
-"
-               f"Add {len(new_maps)} new PROVISIONAL maps to {v.name}?
-
-"
-               f"These will be available in Map editor for this session only.
-"
-               f"To persist them, edit ecu_profiles.py.")
-        reply = QMessageBox.question(self, "Import XDF", msg,
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply != QMessageBox.Yes:
-            return
-
-        # Inject into variant (session only — not persisted)
-        v.main_maps = v.main_maps + new_maps
-
-        # Reload tabs
-        if self._main_rom is not None:
-            self._main_chip_tab.load(self._main_rom, v)
-            self._compare_tab.set_rom_a(bytes(self._main_rom), v)
-            self._overview_tab.update(self._det, self._boost_det if hasattr(self, "_boost_det") else None)
-
-        self._update_status(
-            f"XDF imported: {len(new_maps)} maps added from {Path(path).name}")
 
     def _on_kwp_connected(self, ecu_pn: str):
         self._kwp_matched = self._kwp_monitor.is_matched()
