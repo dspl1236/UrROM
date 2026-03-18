@@ -458,17 +458,28 @@ _MAPS_BOOST_551 = [
 # ── Variant registry ──────────────────────────────────────────────────────────
 
 VARIANT_551C = ROMVariant(
-    name                = "ADU — RS2 Avant / UrS6 (551C)",
+    name                = "ADU — RS2 Avant (551C)",
     software_id         = "551C",
     engine_codes        = ["ADU"],
-    ecu_pns             = ["8A0907551C", "8A0907551B", "8A0907551A"],
-    bosch_pns           = ["0261203543", "0261203544"],
+    ecu_pns             = ["8A0907551C"],
+    bosch_pns           = ["0261203543"],
     dual_eprom          = True,
     working_half_offset = 0x8000,
     main_maps           = _MAPS_551C_MAIN,
     boost_maps          = _MAPS_BOOST_551,
-    notes               = "RS2 Avant. 300kPa MAP sensor hardware. "
-                          "Best-documented M2.3.2 — XDF verified.",
+    notes               = (
+        "ADU — Audi RS2 Avant 2.2L 20v turbo. "
+        "ID string: '8A0907551C  2,2l R5 MOTR.RHV RS2D01PMC 0261203543 1267358668'. "
+        "ECU PN 8A0907551C. Bosch ECU PN 0261203543. ROM PN 1267358668. "
+        "Firmware build 0x0274, cal tag 0x7F02, reset LJMP 0x1329. "
+        "Boost chip: 32KB (27C256), build 0x0202. "
+        "FIRMWARE SIBLING OF ABY 551B: identical build, trigger (D01), reset vector. "
+        "Zero code diff vs ABY — all 4172 differing WH bytes are calibration (>= 0x2000). "
+        "RS2 runs richer fuel calibration and different ignition advance vs ABY S2. "
+        "300kPa MAP sensor hardware mod required (R201 swap). "
+        "NOTE: A community RS2.xdf is a GM ECM file (16KB, BLM/TCC/IAC) — "
+        "NOT for the Bosch M2.3 ADU chip. Map addresses from _MAPS_551C_MAIN apply."
+    ),
 )
 
 # AAN existed in two distinct hardware generations differentiated by trigger system.
@@ -1586,7 +1597,9 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0xBF11DB48: ("551aa",      "AAN fuel/ign, build 0x0812 (lower 32KB working half, truncated read)"),
     0xF6E33043: ("551b_boost", "Stock — ABY boost chip, 32KB, 895907551B, build 0x0202 (direct read)"),
     0x4A3CB7DC: ("551b_boost", "ABY boost chip WH core 16KB, 895907551B, build 0x0202"),
-    0x4378E077: ("551C",      "Stock — ADU RS2 (adu_fuel-ign_551c.bin)"),
+    0x4378E077: ("551C",      "Stock — ADU/RS2 fuel/ign WH, 8A0907551C, ROM PN 1267358668 (direct read)"),
+    0x1529520A: ("551C",      "Stock — ADU/RS2 fuel/ign full 64KB, 8A0907551C"),
+    0x4EE87833: ("551c_boost","Stock — ADU/RS2 boost chip 32KB, 8A0907551C, build 0x0202 (direct read)"),
     0xA98CB481: ("551B",       "Stock — ABY fuel/ign WH, 895907551B, D01+HS trigger, ROM PN 1267358375"),
     0x97D26DD1: ("551B",       "Stock — ABY fuel/ign full 64KB, 895907551B"),
     0x0AE3CACD: ("404",       "Stock — 3B 200 20vT (stock fuel.BIN)"),
