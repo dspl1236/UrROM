@@ -1,4 +1,4 @@
-# UrROM  v0.6.0
+# UrROM  v0.7.0
 
 Open-source ROM editor for **Bosch Motronic M2.3 / M2.3.2** — the ECU family
 used in Audi's 5-cylinder 2.2 20v turbo and V8 engines.

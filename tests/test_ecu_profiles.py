@@ -1327,3 +1327,127 @@ class TestTuningChecks:
         assert issues[0].severity == 'error'
         assert issues[1].severity == 'warning'
         assert issues[2].severity == 'info'
+
+
+# ── Session log ────────────────────────────────────────────────────────────────
+
+class TestSessionLog:
+
+    def test_record_cell_edit(self):
+        from urrom.session_log import SessionLog
+        from urrom.ecu_profiles import MapDef
+        log = SessionLog("test.bin", "551B")
+        m = MapDef("Fuel", "desc", 0x2E17, 16, 16, map_type="fuel")
+        log.record(m, 5, 3, 100, 110)
+        assert log.count == 1
+        assert "Fuel" in log.changed_maps
+
+    def test_skip_unchanged(self):
+        from urrom.session_log import SessionLog
+        from urrom.ecu_profiles import MapDef
+        log = SessionLog()
+        m = MapDef("Ign", "", 0x30AC, 16, 16, map_type="ign")
+        log.record(m, 0, 0, 50, 50)  # no change
+        assert log.count == 0
+
+    def test_to_text_output(self):
+        from urrom.session_log import SessionLog
+        from urrom.ecu_profiles import MapDef
+        log = SessionLog("test.bin", "551B")
+        m = MapDef("Fuel", "", 0x2E17, 16, 16, map_type="fuel")
+        log.record(m, 3, 4, 128, 140)
+        text = log.to_text()
+        assert "Fuel" in text
+        assert "test.bin" in text
+        assert "551B" in text
+
+    def test_to_html_output(self):
+        from urrom.session_log import SessionLog
+        from urrom.ecu_profiles import MapDef
+        log = SessionLog("test.bin", "551B")
+        m = MapDef("Fuel", "", 0x2E17, 16, 16, map_type="fuel")
+        log.record(m, 1, 2, 100, 120)
+        html = log.to_html()
+        assert "<!DOCTYPE html>" in html
+        assert "Fuel" in html
+
+    def test_clear(self):
+        from urrom.session_log import SessionLog
+        from urrom.ecu_profiles import MapDef
+        log = SessionLog()
+        m = MapDef("Fuel", "", 0, 16, 16)
+        log.record(m, 0, 0, 1, 2)
+        assert log.count == 1
+        log.clear()
+        assert log.count == 0
+
+
+# ── Data log ───────────────────────────────────────────────────────────────────
+
+class TestDataLog:
+
+    def test_parse_generic_csv(self, tmp_path):
+        from urrom.datalog import load_log
+        csv_file = tmp_path / "log.csv"
+        csv_file.write_text(
+            "Time_s,RPM,Load,AFR\n"
+            "0.0,800,20,14.7\n"
+            "0.1,1200,40,13.5\n"
+            "0.2,2000,80,12.5\n"
+        )
+        log = load_log(csv_file)
+        assert len(log.rows) == 3
+        assert log.rows[0].rpm == pytest.approx(800)
+        assert log.rows[1].rpm == pytest.approx(1200)
+
+    def test_ms_timestamp_converted(self, tmp_path):
+        from urrom.datalog import load_log
+        csv_file = tmp_path / "log.csv"
+        # Use realistic ms timestamps (>10000 triggers ms detection)
+        csv_file.write_text(
+            "time_ms,RPM\n10000,1000\n10100,2000\n10200,3000\n"
+        )
+        log = load_log(csv_file)
+        # 10100 - 10000 = 100ms → 0.1s
+        assert log.rows[1].time_s == pytest.approx(0.1, abs=0.01)
+
+    def test_duration(self, tmp_path):
+        from urrom.datalog import load_log
+        csv_file = tmp_path / "log.csv"
+        csv_file.write_text("Time_s,RPM\n0.0,1000\n5.0,3000\n")
+        log = load_log(csv_file)
+        assert log.duration_s == pytest.approx(5.0)
+
+    def test_compute_coverage_basic(self, tmp_path):
+        import sys; sys.path.insert(0, '.')
+        from pathlib import Path
+        import pytest
+        from urrom.datalog import load_log, compute_coverage
+        from urrom.ecu_profiles import normalize_rom, detect_rom
+
+        aby_path = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        if not aby_path.exists():
+            pytest.skip("ABY ROM not available")
+
+        wh, _ = normalize_rom(aby_path.read_bytes())
+        det = detect_rom(bytes(wh))
+        v = det.variant
+        m = next(mm for mm in v.main_maps if mm.map_type == 'ign' and mm.rows > 1)
+
+        csv_file = tmp_path / "log.csv"
+        csv_file.write_text("Time_s,RPM,Load\n0.0,1000,10\n0.1,2000,20\n0.2,3000,30\n")
+        log = load_log(csv_file)
+        hits = compute_coverage(log, m, v, bytes(wh))
+        assert len(hits) > 0
+
+    def test_coverage_stats(self, tmp_path):
+        from urrom.datalog import coverage_stats
+        from urrom.ecu_profiles import MapDef
+        m = MapDef("Ign", "", 0x30AC, 8, 8)  # 64 cells
+        hits = {(0, 0): 10, (1, 1): 3, (2, 2): 1}
+        stats = coverage_stats(hits, m)
+        assert stats['total_cells'] == 64
+        assert stats['hit_cells'] == 3
+        assert stats['max_hits'] == 10
+        assert len(stats['unvisited']) == 61
+        assert len(stats['sparse_cells']) == 2   # count < 5

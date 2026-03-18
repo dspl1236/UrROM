@@ -667,6 +667,7 @@ class MapTable(QTableWidget):
         self._undo_stack:   list[list[list[int]]] = []   # max 30 states
         self._redo_stack:   list[list[list[int]]] = []
         self._annotations:  dict[tuple[int,int], str] = {}  # (raw_r, col) → note
+        self._log_fn = None   # fn(map_def, r, c, old_raw, new_raw) for session log
         self._rpm_axis:  list = []
         self._load_axis: list = []
         self._is_ign = False
@@ -800,7 +801,11 @@ class MapTable(QTableWidget):
         else:
             raw_byte = max(0, min(255, int(round(val))))
 
+        old_byte = self._current_raw[r_log][c_log]
         self._current_raw[r_log][c_log] = raw_byte
+        # Record to session log if registered
+        if self._log_fn and old_byte != raw_byte:
+            self._log_fn(self._map_def, r_log, c_log, old_byte, raw_byte)
 
         # Update colour/changed marker
         self._loading = True
@@ -3059,14 +3064,10 @@ class MainWindow(QMainWindow):
         # Wire hover status bar for map table
         self._main_chip_tab.set_status_fn(self._update_status)
 
-        # Wire session log recording
-        def _log_edits(map_def, old_grid, new_grid):
-            for r in range(map_def.rows):
-                for c in range(map_def.cols):
-                    if old_grid[r][c] != new_grid[r][c]:
-                        self._session_log.record(
-                            map_def, r, c, old_grid[r][c], new_grid[r][c])
-        self._main_chip_tab.set_session_log_fn(_log_edits)
+        # Wire session log — per-cell recording via MapTable._log_fn
+        def _log_cell(map_def, r, c, old_raw, new_raw):
+            self._session_log.record(map_def, r, c, old_raw, new_raw)
+        self._main_chip_tab.set_session_log_fn(_log_cell)
         self._main_chip_tab.set_title_fn(lambda name: self._update_title(name))
 
         # Status bar
@@ -3088,7 +3089,10 @@ class MainWindow(QMainWindow):
         tools_menu = mb.addMenu("Tools")
         fpr_act = QAction("Fuel pressure calculator…", self)
         fpr_act.triggered.connect(self._on_fpr_calculator)
+        log_act = QAction("Overlay data log on map…", self)
+        log_act.triggered.connect(self._on_overlay_datalog)
         tools_menu.addAction(fpr_act)
+        tools_menu.addAction(log_act)
         help_menu = mb.addMenu("Help")
         shortcuts_act = QAction("Keyboard shortcuts…", self)
         shortcuts_act.triggered.connect(self._on_show_shortcuts)
@@ -3155,7 +3159,10 @@ class MainWindow(QMainWindow):
         tools_menu = mb.addMenu("Tools")
         fpr_act = QAction("Fuel pressure calculator…", self)
         fpr_act.triggered.connect(self._on_fpr_calculator)
+        log_act = QAction("Overlay data log on map…", self)
+        log_act.triggered.connect(self._on_overlay_datalog)
         tools_menu.addAction(fpr_act)
+        tools_menu.addAction(log_act)
         help_menu = mb.addMenu("Help")
         about_act = QAction("About UrROM", self)
         about_act.triggered.connect(self._on_about)
@@ -4068,6 +4075,113 @@ class MainWindow(QMainWindow):
         lay.addWidget(btns)
         dlg.exec_()
 
+    def _on_overlay_datalog(self):
+        """Load a CSV data log and overlay cell coverage on the current map."""
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            QMessageBox.information(self, "Data log overlay", "Load a ROM first.")
+            return
+        tab = self._main_chip_tab
+        if not tab._maps or tab._map_combo.currentIndex() < 0:
+            QMessageBox.information(self, "Data log overlay",
+                "Select a map first (Main Chip Maps tab).")
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load data log CSV", "",
+            "CSV files (*.csv *.CSV *.txt);;All files (*.*)")
+        if not path:
+            return
+
+        try:
+            from urrom.datalog import load_log, compute_coverage, coverage_stats
+            log = load_log(Path(path))
+        except Exception as e:
+            QMessageBox.critical(self, "Error loading log", str(e))
+            return
+
+        if not log.rows:
+            QMessageBox.warning(self, "Data log", "No data rows parsed from log.")
+            return
+
+        m = tab._maps[tab._map_combo.currentIndex()]
+        v = self._det.variant
+        hits = compute_coverage(log, m, v, bytes(self._main_rom))
+        stats = coverage_stats(hits, m)
+
+        if not hits:
+            QMessageBox.information(self, "Data log overlay",
+                "No matching data points found.\n"
+                "Check that the log contains RPM data in the expected column name.")
+            return
+
+        # Show summary dialog and apply overlay
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Data log coverage — {m.name}")
+        dlg.setMinimumWidth(420)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+
+        pct = stats['pct_covered']
+        n_zero = len(stats['unvisited'])
+        rpm_lo, rpm_hi = log.rpm_range
+
+        summary_parts = [
+            f"Log: {Path(path).name}  ({log.duration_s:.1f}s)",
+            f"Format: {log.format}  |  {len(log.rows)} rows",
+            f"RPM range: {log.rpm_range[0]:.0f} - {log.rpm_range[1]:.0f}",
+            "",
+            f"Map coverage: {pct:.0f}%  ({stats['hit_cells']}/{stats['total_cells']} cells)",
+            f"Never visited: {n_zero} cells  |  Max hits: {stats['max_hits']}",
+            f"Under-sampled (<5 hits): {len(stats['sparse_cells'])} cells",
+        ]
+        summary = QLabel("\n".join(summary_parts))
+        summary.setStyleSheet(
+            f"background:{BG2};padding:12px;border-radius:4px;font-size:11px;")
+        summary.setWordWrap(True)
+        lay.addWidget(summary)
+
+        if n_zero > 0:
+            warn = QLabel(
+                f"⚠ {n_zero} cells were never driven — those map regions "
+                "may need more data logging.")
+            warn.setStyleSheet(f"color:{AMBER};font-size:10px;margin-top:4px;")
+            warn.setWordWrap(True)
+            lay.addWidget(warn)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText("Apply overlay to map")
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        def _apply_overlay():
+            # Apply hit-count overlay to the MapTable as cell annotations
+            tbl = tab._table
+            if not tbl._map_def:
+                return
+            max_h = stats['max_hits'] or 1
+            for (raw_r, c), count in hits.items():
+                # Annotate — bright for high coverage, dim for low
+                intensity = count / max_h
+                if intensity >= 0.5:
+                    note = f"✓ {count} hits"
+                elif intensity >= 0.1:
+                    note = f"~ {count} hits"
+                else:
+                    note = f"⚠ {count} hit{'s' if count!=1 else ''}"
+                tbl._annotations[(raw_r, c)] = note
+            for (raw_r, c) in stats['unvisited']:
+                tbl._annotations[(raw_r, c)] = "✗ never logged"
+            tbl._redraw()
+            self._tabs.setCurrentWidget(self._main_chip_tab)
+            self._update_status(
+                f"Log overlay applied: {pct:.0f}% coverage — "
+                f"{n_zero} unvisited cells — hover cells for hit count")
+            dlg.accept()
+
+        btns.accepted.connect(_apply_overlay)
+        dlg.exec_()
+
     def _on_fpr_calculator(self):
         """Standalone fuel pressure / injector sizing calculator."""
         from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
@@ -4237,6 +4351,103 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"{WINDOW_TITLE}  —  {self._main_path.name}{dirty}{map_ctx}")
         else:
             self.setWindowTitle(WINDOW_TITLE)
+
+    def _on_overlay_datalog(self):
+        """Load a CSV data log and overlay cell coverage on the current map."""
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            QMessageBox.information(self, "Data log overlay", "Load a ROM first.")
+            return
+        tab = self._main_chip_tab
+        if not tab._maps or tab._map_combo.currentIndex() < 0:
+            QMessageBox.information(self, "Data log overlay",
+                "Select a map first (Main Chip Maps tab).")
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load data log CSV", "",
+            "CSV files (*.csv *.CSV *.txt);;All files (*.*)")
+        if not path:
+            return
+
+        try:
+            from urrom.datalog import load_log, compute_coverage, coverage_stats
+            log = load_log(Path(path))
+        except Exception as e:
+            QMessageBox.critical(self, "Error loading log", str(e))
+            return
+
+        if not log.rows:
+            QMessageBox.warning(self, "Data log", "No data rows parsed from log.")
+            return
+
+        m = tab._maps[tab._map_combo.currentIndex()]
+        v = self._det.variant
+        hits = compute_coverage(log, m, v, bytes(self._main_rom))
+        stats = coverage_stats(hits, m)
+
+        if not hits:
+            QMessageBox.information(self, "Data log overlay",
+                "No matching data points found.\n"
+                "Check that the log contains RPM data in the expected column name.")
+            return
+
+        # Show summary dialog and apply overlay
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Data log coverage — {m.name}")
+        dlg.setMinimumWidth(420)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+
+        pct = stats['pct_covered']
+        n_zero = len(stats['unvisited'])
+        rpm_lo, rpm_hi = log.rpm_range
+
+        summary.setStyleSheet(
+            f"background:{BG2};padding:12px;border-radius:4px;font-size:11px;")
+        summary.setWordWrap(True)
+        lay.addWidget(summary)
+
+        if n_zero > 0:
+            warn = QLabel(
+                f"⚠ {n_zero} cells were never driven — those map regions "
+                "may need more data logging.")
+            warn.setStyleSheet(f"color:{AMBER};font-size:10px;margin-top:4px;")
+            warn.setWordWrap(True)
+            lay.addWidget(warn)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText("Apply overlay to map")
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        def _apply_overlay():
+            # Apply hit-count overlay to the MapTable as cell annotations
+            tbl = tab._table
+            if not tbl._map_def:
+                return
+            max_h = stats['max_hits'] or 1
+            for (raw_r, c), count in hits.items():
+                # Annotate — bright for high coverage, dim for low
+                intensity = count / max_h
+                if intensity >= 0.5:
+                    note = f"✓ {count} hits"
+                elif intensity >= 0.1:
+                    note = f"~ {count} hits"
+                else:
+                    note = f"⚠ {count} hit{'s' if count!=1 else ''}"
+                tbl._annotations[(raw_r, c)] = note
+            for (raw_r, c) in stats['unvisited']:
+                tbl._annotations[(raw_r, c)] = "✗ never logged"
+            tbl._redraw()
+            self._tabs.setCurrentWidget(self._main_chip_tab)
+            self._update_status(
+                f"Log overlay applied: {pct:.0f}% coverage — "
+                f"{n_zero} unvisited cells — hover cells for hit count")
+            dlg.accept()
+
+        btns.accepted.connect(_apply_overlay)
+        dlg.exec_()
 
     def _on_fpr_calculator(self):
         """Standalone fuel pressure / injector sizing calculator."""

@@ -689,3 +689,58 @@ These two files use a different encoding (not standard 034 scramble, non-standar
 
 ### Invalid Files (non-standard format)
 - `893906266D - CQ Big MAF 91Oct R1` (2× copies): 54903 bytes, not standard 034 scramble
+
+---
+
+## 551A / 551AA / 551B / 551C — Trigger System RE (2026-03)
+
+### Confirmed trigger system differences
+
+| Variant | Part Number | Trigger | Build | Calibration |
+|---------|-------------|---------|-------|-------------|
+| 551A    | 4A0907551A  | Distributor (D02) | 0x0202 | Factory-blank (0x02) |
+| 551AA   | 4A0907551AA | Cam + Hall sensor (D03+HS) | 0x0812 | Factory-blank (0x02) |
+| 551B    | 895907551B  | Cam + Hall sensor (D01+HS) | varies | REAL calibration confirmed |
+| 551C    | 8A0907551C  | Cam + Hall sensor (RS2 mods) | varies | REAL calibration confirmed |
+
+### Firmware code island analysis (working half, 0x0000-0x2CFF)
+
+| Variant | Code bytes | Reset vector | INT0 ISR | Notes |
+|---------|-----------|--------------|----------|-------|
+| 551A    | 6,376     | 0x0000→0x0400 | - | Distributor trigger |
+| 551AA   | 10,292    | 0x0000→0x1297 | 0x0003→0x0438 | Cam trigger, reference tooth handling |
+| 551B    | 2,594     | - | - | Cam trigger similar to 551AA |
+
+551AA has ~60% more firmware code than 551A — the cam+Hall sensor trigger requires
+significantly more code for reference tooth detection and phase synchronisation.
+
+### Map layout: IDENTICAL across all stock variants
+
+All four variants (551A, 551AA, 551B, 551C) share the **same calibration map addresses**:
+- Fuel map: WH 0x2E17 (16×16)
+- Ign maps 1-7: WH 0x30AC, 0x3263, 0x3387, 0x3598, 0x36BC, 0x380D, 0x3931
+
+The trigger system change is purely in firmware code (0x0000-0x2CFF).
+This confirms PRJmod/034EFI can use one XDF for all stock variants.
+
+### PRJmod 551AA_0202 uses COMPLETELY DIFFERENT firmware and map addresses
+
+**Stock chips (551A/AA/B/C):**
+- Fuel map: WH 0x2E17  
+- Code: LJMP-fill with islands throughout 0x0000-0x2CFF
+
+**PRJmod chips (551AA_0202, 034EFI tunes):**
+- Fuel map: WH 0x0E13 (completely different location)
+- Code: Different firmware, maps occupy 0x0000-0x2CFF entirely
+
+**DO NOT cross-load stock and PRJmod ROMs.** UrROM detects this via CRC32 and sets the correct variant automatically.
+
+### Factory-erased calibration (551A and 551AA)
+
+Both the 551A and 551AA chips in this collection have **blank (0x02) calibration areas**.
+This is consistent with:
+- The chips being used as PRJmod firmware base ROMs (vwnut8392 M232-Firmware project)
+- Factory-erased state before tuning was applied
+- The "034EFI Stock Rip Chip" (0x956BFC9C) is a **reconstructed** stock tune, not a direct chip read
+
+The **only confirmed direct chip read with real stock calibration** is the ABY 551B chip (0xA98CB481).
