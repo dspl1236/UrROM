@@ -256,7 +256,26 @@ _MAPS_551C_MAIN = [
            notes="Mirror of 0x3D05. Do not write unless 3D05 is confirmed."),
 
     # End-of-calibration RPM table (replaces mis-labelled "Rev Limit")
-    MapDef("End-of-Cal RPM table",
+    MapDef("Idle Ign map A (3D05)",
+           "Low-RPM ignition map. ABY: values 13–22°BTDC at ~2320 RPM axis. "
+           "Possible idle/off-idle ignition trim. Identical mirror at WH 0x3E65. "
+           "PROVISIONAL — function not confirmed from disassembly.",
+           main_addr=0x3D05, rows=16, cols=16,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="PROVISIONAL",
+           notes="Mirror map at 0x3E65. Investigate before writing."),
+
+    MapDef("Idle Ign map B (3E65)",
+           "Low-RPM ignition map (mirror of 0x3D05). "
+           "ABY direct chip read: identical values to 3D05. PROVISIONAL.",
+           main_addr=0x3E65, rows=16, cols=16,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="PROVISIONAL",
+           notes="Mirror of 0x3D05. Do not write unless 3D05 is confirmed."),
+
+        MapDef("End-of-Cal RPM table",
            "32-byte RPM-encoded table at end of working half (WH 0x3FE0–0x3FFF). "
            "ABY direct chip read: values span 1000–8000 RPM (raw × 40). "
            "Pattern suggests tiered RPM thresholds — possibly ignition cut "

@@ -609,3 +609,157 @@ class TestDecodeFunctions:
         # Fuel map uses raw = val directly for most values
         for val in range(10, 200, 20):
             assert fuel_decode(val) == pytest.approx(float(val))
+
+
+# ── MapTable editing operations (headless) ─────────────────────────────────────
+
+class TestMapTableEditing:
+    """
+    Test MapTable bulk-edit operations without a QApplication.
+    We call the internal data-manipulation methods directly on a minimal stub.
+    """
+
+    def _make_table(self, rows=4, cols=4):
+        """Minimal stub that replicates MapTable data layer without Qt widgets."""
+        import copy as _copy
+        import types
+
+        stub = types.SimpleNamespace()
+        stub._map_def     = types.SimpleNamespace(rows=rows, cols=cols, map_type="raw")
+        stub._current_raw = [[r * cols + c + 10 for c in range(cols)] for r in range(rows)]
+        stub._original_raw= _copy.deepcopy(stub._current_raw)
+        stub._undo_stack  = []
+        stub._redo_stack  = []
+
+        # Bind the real methods from the class — works because they only touch stub attrs
+        from app.main import MapTable
+        for name in ("_push_undo", "undo", "redo", "_disp_to_raw",
+                     "_scale_selection", "_interpolate_rows", "_interpolate_cols",
+                     "_fill_selection", "_invert_selection", "_smooth_selection"):
+            setattr(stub, name, MapTable.__dict__[name].__get__(stub, type(stub)))
+
+        # Minimal stubs for Qt calls used inside editing ops
+        stub._redraw = lambda: None
+        stub.itemChanged = types.SimpleNamespace(emit=lambda *a: None)
+        stub._selected_cells = lambda: []   # overridden per-test
+
+        return stub
+
+    # ── undo / redo ──────────────────────────────────────────────────────────
+
+    def test_undo_restores_previous_state(self):
+        t = self._make_table()
+        original = [row[:] for row in t._current_raw]
+        t._push_undo()
+        t._current_raw[0][0] = 99
+        t.undo()
+        assert t._current_raw[0][0] == original[0][0]
+
+    def test_redo_reapplies_state(self):
+        t = self._make_table()
+        t._push_undo()
+        t._current_raw[1][1] = 42
+        after_edit = t._current_raw[1][1]
+        t.undo()
+        assert t._current_raw[1][1] != after_edit
+        t.redo()
+        assert t._current_raw[1][1] == after_edit
+
+    def test_undo_stack_limit_30(self):
+        t = self._make_table()
+        for _ in range(40):
+            t._push_undo()
+        assert len(t._undo_stack) <= 30
+
+    def test_new_edit_clears_redo(self):
+        t = self._make_table()
+        t._push_undo()
+        t._current_raw[0][0] = 77
+        t.undo()
+        # Make a new edit — redo stack must clear
+        t._push_undo()
+        t._current_raw[0][0] = 55
+        assert len(t._redo_stack) == 0
+
+    # ── scale ────────────────────────────────────────────────────────────────
+
+    def test_scale_multiplies_values(self):
+        t = self._make_table()
+        # Select row 0 all cols
+        t._selected_cells = lambda: [(0, c) for c in range(4)]
+        original_row = t._current_raw[3][:]  # display row 0 = raw row 3 (inverted)
+        t._scale_selection(2.0)
+        for c in range(4):
+            assert t._current_raw[3][c] == min(255, original_row[c] * 2)
+
+    def test_scale_clamps_to_255(self):
+        t = self._make_table()
+        t._current_raw[3] = [200, 200, 200, 200]
+        t._selected_cells = lambda: [(0, c) for c in range(4)]
+        t._scale_selection(2.0)
+        assert all(v == 255 for v in t._current_raw[3])
+
+    def test_scale_pushes_undo(self):
+        t = self._make_table()
+        t._selected_cells = lambda: [(0, 0)]
+        t._scale_selection(1.5)
+        assert len(t._undo_stack) == 1
+
+    # ── interpolate rows ─────────────────────────────────────────────────────
+
+    def test_interpolate_rows_linear(self):
+        t = self._make_table(rows=4, cols=6)
+        # Set first and last col of raw row 0
+        t._current_raw[0][0] = 10
+        t._current_raw[0][5] = 60
+        # display row 3 = raw row 0
+        t._selected_cells = lambda: [(3, c) for c in range(6)]
+        t._interpolate_rows()
+        row = t._current_raw[0]
+        # Values should be ~10, 20, 30, 40, 50, 60
+        assert row[0] == 10
+        assert row[5] == 60
+        assert row[2] == pytest.approx(30, abs=1)
+        assert row[3] == pytest.approx(40, abs=1)
+
+    # ── interpolate columns ──────────────────────────────────────────────────
+
+    def test_interpolate_cols_linear(self):
+        t = self._make_table(rows=6, cols=4)
+        # Set display row 0 = raw row 5, display row 5 = raw row 0
+        t._current_raw[5][0] = 0    # display row 0
+        t._current_raw[0][0] = 50   # display row 5
+        t._selected_cells = lambda: [(r, 0) for r in range(6)]
+        t._interpolate_cols()
+        # Midpoint display row 2 = raw row 3: expect ~20
+        assert t._current_raw[3][0] == pytest.approx(20, abs=2)
+
+    # ── fill ─────────────────────────────────────────────────────────────────
+
+    def test_fill_sets_all_selected(self):
+        t = self._make_table()
+        t._selected_cells = lambda: [(r, c) for r in range(4) for c in range(4)]
+        t._fill_selection(128)
+        for r in range(4):
+            assert all(v == 128 for v in t._current_raw[r])
+
+    # ── invert ───────────────────────────────────────────────────────────────
+
+    def test_invert_255_minus_x(self):
+        t = self._make_table()
+        t._current_raw[0][0] = 100
+        t._selected_cells = lambda: [(3, 0)]   # display row 3 = raw row 0
+        t._invert_selection()
+        assert t._current_raw[0][0] == 155
+
+    # ── smooth ───────────────────────────────────────────────────────────────
+
+    def test_smooth_averages_neighbours(self):
+        t = self._make_table(rows=4, cols=5)
+        t._current_raw[0] = [0, 0, 100, 0, 0]
+        t._selected_cells = lambda: [(3, c) for c in range(5)]  # raw row 0
+        t._smooth_selection()
+        # Middle value (100) should pull toward neighbours
+        assert t._current_raw[0][2] < 100
+        # Neighbours should pull up
+        assert t._current_raw[0][1] > 0 or t._current_raw[0][3] > 0

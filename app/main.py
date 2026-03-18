@@ -463,6 +463,8 @@ class MapTable(QTableWidget):
         self._rom: bytearray | None = None
         self._original_raw: list[list[int]] = []
         self._current_raw:  list[list[int]] = []
+        self._undo_stack: list[list[list[int]]] = []   # max 30 states
+        self._redo_stack: list[list[list[int]]] = []
         self._rpm_axis:  list = []
         self._load_axis: list = []
         self._is_ign = False
@@ -613,13 +615,303 @@ class MapTable(QTableWidget):
             return False
         return self._original_raw != self._current_raw
 
-    def revert(self):
-        self._current_raw = copy.deepcopy(self._original_raw)
-        self._redraw()
-
     def accept_current_as_baseline(self):
         self._original_raw = copy.deepcopy(self._current_raw)
         self._redraw()
+
+    # ── Undo / redo ───────────────────────────────────────────────────────────
+
+    def _push_undo(self):
+        """Snapshot current state onto undo stack before a bulk edit."""
+        self._undo_stack.append(copy.deepcopy(self._current_raw))
+        if len(self._undo_stack) > 30:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()
+
+    def undo(self):
+        if not self._undo_stack:
+            return
+        self._redo_stack.append(copy.deepcopy(self._current_raw))
+        self._current_raw = self._undo_stack.pop()
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
+    def redo(self):
+        if not self._redo_stack:
+            return
+        self._undo_stack.append(copy.deepcopy(self._current_raw))
+        self._current_raw = self._redo_stack.pop()
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
+    def revert(self):
+        self._push_undo()
+        self._current_raw = copy.deepcopy(self._original_raw)
+        self._redraw()
+
+    # ── Editing tools ─────────────────────────────────────────────────────────
+
+    def keyPressEvent(self, event):
+        """Ctrl+C/V/A/Z/Y, Del."""
+        from PyQt5.QtCore import Qt
+        mod = event.modifiers()
+        key = event.key()
+        if mod == Qt.ControlModifier:
+            if key == Qt.Key_C:   self._copy_selection(); return
+            if key == Qt.Key_V:   self._paste_selection(); return
+            if key == Qt.Key_A:   self.selectAll(); return
+            if key == Qt.Key_Z:   self.undo(); return
+            if key == Qt.Key_Y:   self.redo(); return
+        if mod == (Qt.ControlModifier | Qt.ShiftModifier):
+            if key == Qt.Key_Z:   self.redo(); return
+        if key in (Qt.Key_Delete, Qt.Key_Backspace):
+            self._delete_selection(); return
+        super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event):
+        """Right-click context menu: copy, paste, scale, interpolate."""
+        from PyQt5.QtWidgets import QMenu, QAction, QInputDialog
+        if self._map_def is None:
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu{{background:{BG2};color:{FG};border:1px solid {BORDER};}}"
+            f"QMenu::item:selected{{background:{BG3};}}"
+            f"QMenu::item{{padding:4px 20px;}}")
+
+        sel = self.selectedRanges()
+        has_sel = bool(sel)
+
+        a_copy  = QAction("Copy  Ctrl+C",  self); a_copy.setEnabled(has_sel)
+        a_paste = QAction("Paste  Ctrl+V", self)
+        a_del   = QAction("Clear selection  Del", self); a_del.setEnabled(has_sel)
+        menu.addAction(a_copy)
+        menu.addAction(a_paste)
+        menu.addAction(a_del)
+        menu.addSeparator()
+
+        a_scale = QAction("Scale selection…", self); a_scale.setEnabled(has_sel)
+        a_interp  = QAction("Interpolate rows",    self); a_interp.setEnabled(has_sel)
+        a_interpc = QAction("Interpolate columns", self); a_interpc.setEnabled(has_sel)
+        a_smooth = QAction("Smooth (3-point)", self); a_smooth.setEnabled(has_sel)
+        menu.addAction(a_scale)
+        menu.addAction(a_interp)
+        menu.addAction(a_interpc)
+        menu.addAction(a_smooth)
+        menu.addSeparator()
+
+        a_fill = QAction("Fill with value…", self); a_fill.setEnabled(has_sel)
+        a_invert = QAction("Invert selection (255-x)", self); a_invert.setEnabled(has_sel)
+        menu.addAction(a_fill)
+        menu.addAction(a_invert)
+        menu.addSeparator()
+        a_undo = QAction(f"Undo  Ctrl+Z  ({len(self._undo_stack)} available)", self)
+        a_undo.setEnabled(bool(self._undo_stack))
+        a_redo = QAction(f"Redo  Ctrl+Y  ({len(self._redo_stack)} available)", self)
+        a_redo.setEnabled(bool(self._redo_stack))
+        menu.addAction(a_undo)
+        menu.addAction(a_redo)
+
+        act = menu.exec_(event.globalPos())
+        if act == a_copy:    self._copy_selection()
+        elif act == a_paste: self._paste_selection()
+        elif act == a_del:   self._delete_selection()
+        elif act == a_scale:
+            factor, ok = QInputDialog.getDouble(
+                self, "Scale selection", "Multiply all selected values by:", 1.0, 0.1, 10.0, 3)
+            if ok: self._scale_selection(factor)
+        elif act == a_interp:  self._interpolate_rows()
+        elif act == a_interpc: self._interpolate_cols()
+        elif act == a_smooth: self._smooth_selection()
+        elif act == a_fill:
+            val, ok = QInputDialog.getInt(
+                self, "Fill with value", "Set all selected cells to (0–255):", 128, 0, 255)
+            if ok: self._fill_selection(val)
+        elif act == a_invert: self._invert_selection()
+        elif act == a_undo:   self.undo()
+        elif act == a_redo:   self.redo()
+
+    def _selected_cells(self) -> list[tuple[int,int]]:
+        """Return list of (display_row, col) for current selection."""
+        cells = []
+        for rng in self.selectedRanges():
+            for r in range(rng.topRow(), rng.bottomRow()+1):
+                for c in range(rng.leftColumn(), rng.rightColumn()+1):
+                    cells.append((r, c))
+        return cells
+
+    def _disp_to_raw(self, disp_row: int) -> int:
+        """Convert display row (inverted) back to raw data row index."""
+        if self._map_def is None:
+            return disp_row
+        return self._map_def.rows - 1 - disp_row
+
+    def _copy_selection(self):
+        """Copy selected cells as TSV to clipboard."""
+        from PyQt5.QtWidgets import QApplication
+        cells = self._selected_cells()
+        if not cells: return
+        rows_used = sorted(set(r for r,c in cells))
+        cols_used = sorted(set(c for r,c in cells))
+        grid = {}
+        for r,c in cells:
+            it = self.item(r, c)
+            grid[(r,c)] = it.text() if it else "0"
+        lines = []
+        for r in rows_used:
+            row_vals = [grid.get((r,c), "") for c in cols_used]
+            lines.append("	".join(row_vals))
+        QApplication.clipboard().setText("\n".join(lines))
+        self._clipboard_shape = (len(rows_used), len(cols_used))
+
+    def _paste_selection(self):
+        """Paste TSV clipboard data starting at top-left of current selection."""
+        self._push_undo()
+        from PyQt5.QtWidgets import QApplication
+        text = QApplication.clipboard().text()
+        if not text.strip(): return
+        rows_text = text.strip().split("\n")
+        sel = self.selectedRanges()
+        if not sel: return
+        top_r = min(rng.topRow() for rng in sel)
+        left_c = min(rng.leftColumn() for rng in sel)
+        self.blockSignals(True)
+        for dr, line in enumerate(rows_text):
+            vals = line.split("	")
+            for dc, val_str in enumerate(vals):
+                r = top_r + dr
+                c = left_c + dc
+                if r >= self.rowCount() or c >= self.columnCount():
+                    continue
+                try:
+                    raw_val = int(float(val_str.strip()))
+                    raw_r = self._disp_to_raw(r)
+                    self._current_raw[raw_r][c] = max(0, min(255, raw_val))
+                except (ValueError, IndexError):
+                    pass
+        self.blockSignals(False)
+        self._redraw()
+        self.itemChanged.emit(self.item(top_r, left_c) or QTableWidgetItem())
+
+    def _delete_selection(self):
+        self._push_undo()
+        """Set selected cells to 128 (neutral/stock value)."""
+        self._fill_selection(128)
+
+    def _fill_selection(self, value: int):
+        self._push_undo()
+        cells = self._selected_cells()
+        if not cells: return
+        for disp_r, c in cells:
+            raw_r = self._disp_to_raw(disp_r)
+            if 0 <= raw_r < len(self._current_raw) and 0 <= c < len(self._current_raw[raw_r]):
+                self._current_raw[raw_r][c] = max(0, min(255, value))
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
+    def _scale_selection(self, factor: float):
+        cells = self._selected_cells()
+        if not cells: return
+        self._push_undo()
+        for disp_r, c in cells:
+            raw_r = self._disp_to_raw(disp_r)
+            if 0 <= raw_r < len(self._current_raw) and 0 <= c < len(self._current_raw[raw_r]):
+                new_val = round(self._current_raw[raw_r][c] * factor)
+                self._current_raw[raw_r][c] = max(0, min(255, new_val))
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
+    def _smooth_selection(self):
+        """3-point running average across selected cells in each row."""
+        cells = self._selected_cells()
+        if not cells: return
+        self._push_undo()
+        by_row: dict[int, list[int]] = {}
+        for disp_r, c in cells:
+            by_row.setdefault(disp_r, []).append(c)
+        for disp_r, cols in by_row.items():
+            raw_r = self._disp_to_raw(disp_r)
+            if not (0 <= raw_r < len(self._current_raw)):
+                continue
+            cols_sorted = sorted(cols)
+            row_data = list(self._current_raw[raw_r])
+            new_vals = {}
+            for i, c in enumerate(cols_sorted):
+                neighbours = [row_data[cc] for cc in cols_sorted
+                              if abs(cc - c) <= 1 and 0 <= cc < len(row_data)]
+                new_vals[c] = round(sum(neighbours) / len(neighbours))
+            for c, v in new_vals.items():
+                self._current_raw[raw_r][c] = max(0, min(255, v))
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
+    def _interpolate_rows(self):
+        """Linear interpolate between first and last selected column in each row."""
+        cells = self._selected_cells()
+        if not cells: return
+        self._push_undo()
+        by_row: dict[int, list[int]] = {}
+        for disp_r, c in cells:
+            by_row.setdefault(disp_r, []).append(c)
+        for disp_r, cols in by_row.items():
+            raw_r = self._disp_to_raw(disp_r)
+            if not (0 <= raw_r < len(self._current_raw)):
+                continue
+            cols_sorted = sorted(cols)
+            if len(cols_sorted) < 2:
+                continue
+            c_start = cols_sorted[0]
+            c_end   = cols_sorted[-1]
+            v_start = self._current_raw[raw_r][c_start]
+            v_end   = self._current_raw[raw_r][c_end]
+            span    = c_end - c_start
+            for c in cols_sorted:
+                t = (c - c_start) / span
+                interp = round(v_start + (v_end - v_start) * t)
+                self._current_raw[raw_r][c] = max(0, min(255, interp))
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
+    def _interpolate_cols(self):
+        """Linear interpolate between first and last selected row in each column."""
+        cells = self._selected_cells()
+        if not cells: return
+        self._push_undo()
+        by_col: dict[int, list[int]] = {}
+        for disp_r, c in cells:
+            by_col.setdefault(c, []).append(disp_r)
+        for c, disp_rows in by_col.items():
+            rows_sorted = sorted(disp_rows)
+            if len(rows_sorted) < 2:
+                continue
+            r_start = rows_sorted[0]
+            r_end   = rows_sorted[-1]
+            raw_start = self._disp_to_raw(r_start)
+            raw_end   = self._disp_to_raw(r_end)
+            v_start = self._current_raw[raw_start][c] if 0 <= raw_start < len(self._current_raw) else 0
+            v_end   = self._current_raw[raw_end][c]   if 0 <= raw_end   < len(self._current_raw) else 0
+            span = r_end - r_start
+            for disp_r in rows_sorted:
+                raw_r = self._disp_to_raw(disp_r)
+                if not (0 <= raw_r < len(self._current_raw)):
+                    continue
+                t = (disp_r - r_start) / span
+                interp = round(v_start + (v_end - v_start) * t)
+                self._current_raw[raw_r][c] = max(0, min(255, interp))
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
+    def _invert_selection(self):
+        """Invert selected cells: 255 - x."""
+        cells = self._selected_cells()
+        if not cells: return
+        self._push_undo()
+        for disp_r, c in cells:
+            raw_r = self._disp_to_raw(disp_r)
+            if 0 <= raw_r < len(self._current_raw) and 0 <= c < len(self._current_raw[raw_r]):
+                self._current_raw[raw_r][c] = 255 - self._current_raw[raw_r][c]
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
 
     # ── Live overlay (KWPBridge) ──────────────────────────────────────────────
 
@@ -1003,20 +1295,20 @@ class BoostTab(QWidget):
         self._map_combo.setCurrentIndex(0)
         self._on_map_selected(0)
 
-     def _on_map_selected(self, idx: int):
-         if not self._maps or self._boost_rom is None:
+    def _on_map_selected(self, idx: int):
+        if not self._maps or self._boost_rom is None:
              return
-         if idx < 0 or idx >= len(self._maps):
+        if idx < 0 or idx >= len(self._maps):
              return
-         m = self._maps[idx]
-         # Pass axis labels — boost chip has no embedded descriptor so use
-         # sequential indices; displayed as column/row numbers.
-         from urrom.ecu_profiles import get_axes
-         rpm_axis, load_axis = get_axes(bytes(self._boost_rom), m, self._variant)
-         self._table.load(self._boost_rom, m, rpm_axis, load_axis)
-         self._table.setVisible(True)
-         self._note.setVisible(False)
-         self._status.setText(
+        m = self._maps[idx]
+        # Pass axis labels — boost chip has no embedded descriptor so use
+        # sequential indices; displayed as column/row numbers.
+        from urrom.ecu_profiles import get_axes
+        rpm_axis, load_axis = get_axes(bytes(self._boost_rom), m, self._variant)
+        self._table.load(self._boost_rom, m, rpm_axis, load_axis)
+        self._table.setVisible(True)
+        self._note.setVisible(False)
+        self._status.setText(
              f"Boost chip  —  {m.name}  [{m.rows}×{m.cols}  {m.confidence}]")
     def clear(self):
         self._boost_rom = None
@@ -1983,42 +2275,42 @@ class MainWindow(QMainWindow):
             return
         self._load_boost(Path(path))
 
-     def _load_boost(self, path: Path):
-         if self._det is None or self._det.variant is None:
+    def _load_boost(self, path: Path):
+        if self._det is None or self._det.variant is None:
              QMessageBox.warning(self, "No main chip",
                                  "Load the main chip ROM first.")
              return
-         try:
+        try:
              raw = path.read_bytes()
-         except OSError as e:
+        except OSError as e:
              QMessageBox.critical(self, "Error", f"Cannot read file:\n{e}")
              return
 
-         # Normalise: accept 8KB, 16KB, 32KB, or 64KB doubled boost chips.
-         # 551x boost chips are 32KB (27C256); 3B/551A are 8KB (27C64).
-         if len(raw) == 65536:
+        # Normalise: accept 8KB, 16KB, 32KB, or 64KB doubled boost chips.
+        # 551x boost chips are 32KB (27C256); 3B/551A are 8KB (27C64).
+        if len(raw) == 65536:
              boost_raw = bytearray(raw[0x8000:])  # doubled — take upper half
-         elif len(raw) == 32768:
+        elif len(raw) == 32768:
              boost_raw = bytearray(raw)
-         elif len(raw) <= 8192:
+        elif len(raw) <= 8192:
              boost_raw = bytearray(raw)
-         else:
+        else:
              boost_raw = bytearray(raw[:32768])
 
-         boost_det = detect_rom(bytes(boost_raw))
-         self._boost_det  = boost_det
-         self._boost_path = path
-         self._boost_rom  = boost_raw
-         self._boost_lbl.setText(path.name)
-         self._boost_lbl.setStyleSheet(f"color: {FG}; font-size: 11px;")
+        boost_det = detect_rom(bytes(boost_raw))
+        self._boost_det  = boost_det
+        self._boost_path = path
+        self._boost_rom  = boost_raw
+        self._boost_lbl.setText(path.name)
+        self._boost_lbl.setStyleSheet(f"color: {FG}; font-size: 11px;")
 
-         self._boost_tab.load(boost_raw, self._det.variant)
-         self._hardware_tab.set_boost(bytes(raw), path.name)
-         self._overview_tab.update(self._det, boost_det)
+        self._boost_tab.load(boost_raw, self._det.variant)
+        self._hardware_tab.set_boost(bytes(raw), path.name)
+        self._overview_tab.update(self._det, boost_det)
 
-         bld = boost_det.build_number if boost_det else 0
-         crc = boost_det.crc32 if boost_det else 0
-         self._update_status(
+        bld = boost_det.build_number if boost_det else 0
+        crc = boost_det.crc32 if boost_det else 0
+        self._update_status(
              f"Boost chip: {path.name}  CRC32 0x{crc:08X}  build 0x{bld:04X}")
 
     def _on_save(self):
