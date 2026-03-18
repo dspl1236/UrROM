@@ -201,3 +201,91 @@ Known 551-series map addresses (from prior UrROM sessions with XDF data):
    distributor/cam-pulley variant selection at boot
 5. Investigate `0xA021` (551 only) vs absence in 3B — likely the
    cam-pulley position latch register on the SAB80C535
+
+---
+
+## 8. ADU / RS2 — 551C Variant
+
+### Identity
+
+```
+ID string @ WH 0x7F00:
+  'To8A0907551C  2,2l R5 MOTR.RHV RS2D01PMC 0261203543 1267358668'
+
+  ECU PN:       8A0907551C  (8A0 prefix = RS2 Avant)
+  Engine:       2,2l R5
+  Descriptor:   MOTR.RHV RS2  (explicit RS2 callout vs ABY's plain MOTR.RHV)
+  Trigger:      D01PMC  (cam-referenced, same D01 as ABY, no 'HS' flag)
+  Bosch ECU PN: 0261203543  (vs ABY's 0261203643 — suffix 43 vs 43)
+  ROM PN:       1267358668
+  Firmware build: 0x4533 (@ WH 0x3FFE)
+  Cal tag:      0xA252 (@ WH 0x7FFE)
+  Reset vector: LJMP 0x1329
+```
+
+| File | CRC32 | Notes |
+|---|---|---|
+| `adu_fuel-ign_551c.bin` (WH) | `0x4378E077` | Direct chip read |
+| `adu_fuel-ign_551c.bin` (full 64KB) | `0x1529520A` | |
+| `adu_boost_551c.bin` (32KB) | `0x4EE87833` | Boost chip direct read |
+
+### Firmware Relationship to ABY 551B
+
+ADU and ABY are **calibration-only siblings** — identical firmware, different cal tables:
+
+| | ADU 551C | ABY 551B |
+|---|---|---|
+| Firmware build | `0x4533` | `0x0274` |
+| Reset vector | LJMP 0x1329 | LJMP 0x1329 (identical) |
+| WH diff vs ABY | 4172 bytes (12.7%) | — |
+| Diff location | All clusters ≥ WH 0x2377 (calibration zone) | — |
+| Code identity | Zero code diffs | — |
+| Trigger | D01 (no HS flag) | HS D01 |
+
+Build number differs (`0x4533` vs `0x0274`) despite zero code changes — Bosch used a
+separate build sequence for the RS2 calibration branch.
+
+The 'HS' flag present in ABY but absent in ADU is cosmetic (both use the same
+physical trigger system). The RS2 descriptor field explicitly includes 'RS2'.
+
+### RS2.xdf — Confirmed as Valid Bosch M2.3 XDF
+
+`RS2.xdf` (165KB, 113 TABLE entries) is a TunerPro XDF for the ADU chip.
+**Not a GM ECM file** — previous UrROM notes were incorrect on this point.
+
+XDF address space: `BinSize=0x4000` (16KB working half).
+XDF addresses are offset by `+0x8000` from WH base:
+- XDF `0xAE17` → WH `0x2E17` (fuel map)
+- XDF `0xB0AC` → WH `0x30AC` (ign map 1)
+
+**Confirmed map addresses and decode formulas (verified against direct chip read):**
+
+| Map | XDF addr | WH addr | Formula | Verified |
+|---|---|---|---|---|
+| Fuel RPM×LOAD | 0xAE17 | 0x2E17 | `X×0.0078125` (stoich=1.000) | ✓ |
+| Ign PT map 1 | 0xB0AC | 0x30AC | `X×0.6491−8.2186 °BTDC` | ✓ 23.6° at PT |
+| Ign PT map 2 | 0xB263 | 0x3263 | same formula | ✓ |
+| Ign PT map 3 | 0xB387 | 0x3387 | same formula | ✓ |
+| Ign PT map 4 | 0xB598 | 0x3598 | same formula | ✓ |
+| Ign PT map 5 | 0xB6BC | 0x36BC | same formula | ✓ |
+| Ign PT map 6 | 0xB80D | 0x380D | same formula | ✓ |
+| Ign PT map 7 | 0xB931 | 0x3931 | same formula | ✓ |
+
+These WH addresses are **identical to ABY 551B** — confirming shared memory layout.
+Full XDF contains 113 TABLE entries including additional fuel tables (different sizes/axes),
+smaller ign RPM×LOAD maps, lambda timing, and 1D correction tables.
+
+### XDF Checksum Entry
+`DataStart=0x08, DataEnd=0x3FFF, StoreAddr=0x06, CalcMethod=0x0`
+
+This is the PRJmod/TunerPro checksum scheme for **tuned ROMs**.
+Stock ADU chips do not carry a computed checksum at WH[0x0006] — that location
+contains live code/data. The `To` prefix visible at WH[0x7F00] is the leading
+ASCII characters of the ECU PN (`To8A0907551C...`), not a checksum value.
+
+### Boost Chip
+- Size: 32KB (27C256), build `0x0202` at `0x1FFE`
+- Architecture: same as ABY/AAN — 8KB MCU code (0x0000–0x1FFF) + 24KB cal tables
+- 4150/32768 bytes differ vs ABY boost (12.7%), 68 clusters
+- Many clusters appear mirrored (same diff pattern at +0x4000 offset, confirming
+  the boost chip is a doubled/mirrored 27C256 image)

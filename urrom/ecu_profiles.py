@@ -477,8 +477,16 @@ VARIANT_551C = ROMVariant(
         "Zero code diff vs ABY — all 4172 differing WH bytes are calibration (>= 0x2000). "
         "RS2 runs richer fuel calibration and different ignition advance vs ABY S2. "
         "300kPa MAP sensor hardware mod required (R201 swap). "
-        "NOTE: A community RS2.xdf is a GM ECM file (16KB, BLM/TCC/IAC) — "
-        "NOT for the Bosch M2.3 ADU chip. Map addresses from _MAPS_551C_MAIN apply."
+        "XDF: RS2.xdf is a TunerPro XDF for the ADU chip (not a GM ECM file). "
+        "BinSize=0x4000 (16KB WH). XDF addresses are WH+0x8000-based (i.e. 0xAE17=WH 0x2E17). "
+        "XDF confirms: fuel@0xAE17(WH 0x2E17), ign PT@0xB0AC(WH 0x30AC), "
+        "ign PT 2-7@0xB263/0xB387/0xB598/0xB6BC/0xB80D/0xB931 (WH 0x3263-0x3931). "
+        "XDF decode formulas verified against direct chip read: "
+        "fuel=X×0.0078125 (1/128, stoich ref=1.000), ign=X×0.6491−8.2186 °BTDC. "
+        "ADU stock ign map 1 row0: 23.6°BTDC at PT — RS2 advance confirmed. "
+        "XDF checksum: DataStart=0x08 DataEnd=0x3FFF StoreAddr=0x06 — "
+        "this is the PRJmod/TunerPro checksum scheme for tuned ROMs, "
+        "stock chips carry code/data at WH[0x0006], not a computed checksum."
     ),
 )
 
