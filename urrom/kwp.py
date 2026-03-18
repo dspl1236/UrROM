@@ -302,3 +302,203 @@ def live_summary(lv: "LiveValues") -> str:
     if lv.timing  is not None: parts.append(f"{lv.timing:.1f}° ign")
     if lv.map_kpa is not None: parts.append(f"{lv.map_kpa:.0f} kPa")
     return "  ·  ".join(parts)
+
+
+# ── DashboardWindow ───────────────────────────────────────────────────────────
+
+class DashboardWindow:
+    """
+    Floating live-data dashboard for UrROM / M2.3.2.
+
+    Shows the values most relevant while editing M2.3.2 maps:
+    RPM, ECT, load %, lambda, ignition, MAP kPa, N75 duty, IAT.
+    Wires directly to a KWPMonitor — works with real ECU or mock.
+    """
+
+    _C_BG     = "#0d1117"
+    _C_PANEL  = "#131920"
+    _C_BORDER = "#1a2332"
+    _C_TEXT   = "#c9d1d9"
+    _C_DIM    = "#6e7681"
+    _C_GREEN  = "#2dff6e"
+    _C_AMBER  = "#ffaa00"
+    _C_RED    = "#ff4444"
+    _C_BLUE   = "#4488ff"
+    _C_PURPLE = "#aa66ff"
+
+    def __init__(self, monitor, parent=None):
+        from PyQt5.QtWidgets import (
+            QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+            QLabel, QFrame, QProgressBar,
+        )
+        from PyQt5.QtCore import Qt
+
+        self._monitor = monitor
+        self._win = QWidget(parent, Qt.Window)
+        self._win.setWindowTitle("Live ECU — UrROM / M2.3.2")
+        self._win.setMinimumSize(640, 380)
+        self._win.setStyleSheet(
+            f"background:{self._C_BG}; color:{self._C_TEXT};"
+        )
+
+        root = QVBoxLayout(self._win)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        # Status bar
+        sr = QHBoxLayout()
+        self._lbl_status = QLabel("● Waiting for data…")
+        self._lbl_status.setStyleSheet(
+            f"color:{self._C_DIM}; font-size:10px; letter-spacing:1px;"
+        )
+        self._lbl_scenario = QLabel("")
+        self._lbl_scenario.setStyleSheet(
+            f"color:{self._C_PURPLE}; font-size:10px; font-style:italic;"
+        )
+        sr.addWidget(self._lbl_status)
+        sr.addStretch()
+        sr.addWidget(self._lbl_scenario)
+        root.addLayout(sr)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color:{self._C_BORDER};"); root.addWidget(sep)
+
+        # 2 × 4 gauge grid — M2.3.2 has more channels than 7A
+        grid = QGridLayout(); grid.setSpacing(8); root.addLayout(grid)
+        self._gauges = {}
+
+        # (key, label, unit, min, max, warn_lo, warn_hi, crit_hi, row, col)
+        specs = [
+            ("rpm",     "RPM",      "",    400, 7500, None,  6800, 7200, 0, 0),
+            ("ect",     "ECT",      "°C",  -10,  120,   60,   105,  115, 0, 1),
+            ("load",    "LOAD",     "%",     0,  100, None,    90,   98, 0, 2),
+            ("lambda",  "LAMBDA",   "λ",  0.70, 1.30, None,  None, None, 0, 3),
+            ("timing",  "TIMING",   "°",    -5,   50, None,  None, None, 1, 0),
+            ("map_kpa", "MAP",      "kPa",  20,  300, None,  None, None, 1, 1),
+            ("n75_dc",  "N75",      "% DC",  0,  100, None,    95, None, 1, 2),
+            ("iat",     "IAT",      "°C",  -20,   60, None,    50,   55, 1, 3),
+        ]
+
+        for key, label, unit, vmin, vmax, wl, wh, ch, row, col in specs:
+            panel = self._make_panel(key, label, unit, vmin, vmax, wl, wh, ch)
+            grid.addWidget(panel, row, col)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet(f"color:{self._C_BORDER};"); root.addWidget(sep2)
+
+        self._lbl_strip = QLabel("")
+        self._lbl_strip.setStyleSheet(
+            f"color:{self._C_DIM}; font-size:10px; font-family:Consolas;"
+        )
+        root.addWidget(self._lbl_strip)
+
+        monitor.live_data.connect(self._on_live)
+        monitor.disconnected.connect(self._on_disconnect)
+        monitor.connected.connect(self._on_connect)
+
+    def _make_panel(self, key, label, unit, vmin, vmax, wl, wh, ch):
+        from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QProgressBar
+        from PyQt5.QtCore import Qt
+
+        panel = QWidget()
+        panel.setStyleSheet(
+            f"background:{self._C_PANEL}; border:1px solid {self._C_BORDER}; border-radius:4px;"
+        )
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(8, 6, 8, 6); lay.setSpacing(2)
+
+        ln = QLabel(label)
+        ln.setStyleSheet(f"color:{self._C_DIM}; font-size:9px; letter-spacing:2px; border:none;")
+        lv = QLabel("—"); lv.setAlignment(Qt.AlignCenter)
+        lv.setStyleSheet(f"color:{self._C_TEXT}; font-size:24px; font-weight:bold; border:none;")
+        lu = QLabel(unit); lu.setAlignment(Qt.AlignCenter)
+        lu.setStyleSheet(f"color:{self._C_DIM}; font-size:10px; border:none;")
+        bar = QProgressBar()
+        bar.setRange(int(vmin * 10), int(vmax * 10))
+        bar.setValue(int(vmin * 10)); bar.setTextVisible(False); bar.setFixedHeight(4)
+        bar.setStyleSheet(
+            f"QProgressBar{{background:{self._C_BG}; border-radius:2px; border:none;}}"
+            f"QProgressBar::chunk{{background:{self._C_GREEN}; border-radius:2px;}}"
+        )
+
+        lay.addWidget(ln); lay.addWidget(lv); lay.addWidget(lu); lay.addWidget(bar)
+        self._gauges[key] = dict(lv=lv, bar=bar, unit=unit, vmin=vmin, vmax=vmax,
+                                  wl=wl, wh=wh, ch=ch)
+        return panel
+
+    def _colour(self, key, val):
+        if val is None: return self._C_DIM
+        g = self._gauges[key]
+        if g["ch"] is not None and val >= g["ch"]: return self._C_RED
+        if g["wh"] is not None and val >= g["wh"]: return self._C_AMBER
+        if g["wl"] is not None and val <= g["wl"]: return self._C_AMBER
+        if key == "lambda":
+            lv_col = self._C_GREEN if 0.97 <= val <= 1.03 else \
+                     self._C_AMBER if abs(val - 1.0) <= 0.12 else self._C_RED
+            return lv_col
+        return self._C_GREEN
+
+    def _update(self, key, val):
+        if key not in self._gauges: return
+        g = self._gauges[key]; col = self._colour(key, val)
+        if val is None:
+            g["lv"].setText("—")
+            g["lv"].setStyleSheet(f"color:{self._C_DIM}; font-size:24px; font-weight:bold; border:none;")
+            return
+        u = g["unit"]
+        txt = f"{val:.3f}" if u == "λ" else f"{val:.1f}" if u in ("°C","°","V","% DC") else f"{val:.0f}"
+        g["lv"].setText(txt)
+        g["lv"].setStyleSheet(f"color:{col}; font-size:24px; font-weight:bold; border:none;")
+        clamped = max(g["vmin"], min(g["vmax"], val))
+        g["bar"].setValue(int(clamped * 10))
+        g["bar"].setStyleSheet(
+            f"QProgressBar{{background:{self._C_BG}; border-radius:2px; border:none;}}"
+            f"QProgressBar::chunk{{background:{col}; border-radius:2px;}}"
+        )
+
+    def _on_live(self, lv):
+        self._update("rpm",     lv.rpm)
+        self._update("ect",     lv.ect)
+        self._update("lambda",  lv.lambda_)
+        self._update("timing",  lv.timing)
+        self._update("map_kpa", lv.map_kpa)
+        self._update("n75_dc",  lv.n75_dc)
+        self._update("iat",     lv.iat)
+        if lv.load is not None:
+            load_pct = (lv.load / 255.0) * 100.0
+            self._update("load", load_pct)
+        else:
+            self._update("load", None)
+        parts = []
+        if lv.rpm     is not None: parts.append(f"{lv.rpm:.0f} RPM")
+        if lv.ect     is not None: parts.append(f"{lv.ect:.0f}°C")
+        if lv.lambda_ is not None: parts.append(f"λ {lv.lambda_:.3f}")
+        if lv.timing  is not None: parts.append(f"{lv.timing:.1f}°")
+        if lv.map_kpa is not None: parts.append(f"{lv.map_kpa:.0f} kPa")
+        self._lbl_strip.setText("  ·  ".join(parts))
+        self._lbl_status.setText(f"● Live  ·  {lv.ecu_pn or '—'}")
+        self._lbl_status.setStyleSheet(f"color:{self._C_GREEN}; font-size:10px; letter-spacing:1px;")
+
+    def _on_connect(self, ecu_pn):
+        self._lbl_status.setText(f"● Connected  ·  {ecu_pn}")
+        self._lbl_status.setStyleSheet(f"color:{self._C_GREEN}; font-size:10px; letter-spacing:1px;")
+
+    def _on_disconnect(self):
+        self._lbl_status.setText("● Disconnected")
+        self._lbl_status.setStyleSheet(f"color:{self._C_RED}; font-size:10px; letter-spacing:1px;")
+        self._lbl_strip.setText("")
+        for k in self._gauges: self._update(k, None)
+
+    def show(self):
+        self._win.show(); self._win.raise_(); self._win.activateWindow()
+
+    def hide(self): self._win.hide()
+    def is_visible(self): return self._win.isVisible()
+
+    def close(self):
+        try:
+            self._monitor.live_data.disconnect(self._on_live)
+            self._monitor.disconnected.disconnect(self._on_disconnect)
+            self._monitor.connected.disconnect(self._on_connect)
+        except Exception: pass
+        self._win.close()
