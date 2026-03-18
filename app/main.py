@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from urrom.version import APP_VERSION, APP_NAME, WINDOW_TITLE
 from urrom.ecu_profiles import (
     normalize_rom, detect_rom, read_map, read_map_decoded,
+    CHIP_REQUIREMENTS,
     write_map, apply_checksum, DetectionResult, ROMVariant, MapDef,
     fuel_encode, ign_encode, ign_encode_3b,
     get_axes,
@@ -447,6 +448,31 @@ class OverviewTab(QWidget):
         else:
             self._tuning_note.setVisible(False)
 
+        # Hardware requirements from CHIP_REQUIREMENTS lookup
+        crc = det.crc32 if det else None
+        req = CHIP_REQUIREMENTS.get(crc, {}) if crc else {}
+        if req:
+            parts = []
+            if req.get("boost_chip"):
+                parts.append("⚡ BOOST CHIP — must pair with matching fuel chip")
+            if req.get("map_kpa"):
+                parts.append(f"MAP sensor: {req['map_kpa']} kPa required (swap from stock 200 kPa)")
+            if req.get("injector_cc"):
+                parts.append(f"Injectors: {req['injector_cc']} cc")
+            if req.get("fpr_bar"):
+                parts.append(f"FPR: {req['fpr_bar']:.1f} BAR")
+            if req.get("turbo"):
+                parts.append(f"Turbo: {req['turbo']}")
+            notes_detail = req.get("notes", "")
+            hw_text = "  ·  ".join(parts)
+            if notes_detail:
+                hw_text += f"\n{notes_detail}"
+            self._tuning_note.setText(hw_text)
+            self._tuning_note.setStyleSheet(
+                f"color:{AMBER};font-size:10px;padding:4px 8px;"
+                f"background:#2a1a00;border-left:3px solid {AMBER};border-radius:2px;")
+            self._tuning_note.setVisible(True)
+
 
 # ── Map editor table ──────────────────────────────────────────────────────────
 
@@ -664,7 +690,7 @@ class MapTable(QTableWidget):
     # ── Editing tools ─────────────────────────────────────────────────────────
 
     def keyPressEvent(self, event):
-        """Ctrl+C/V/A/Z/Y, Del."""
+        """Ctrl+C/V/A/Z/Y, Del, arrows (+/-1), Enter (commit+advance)."""
         from PyQt5.QtCore import Qt
         mod = event.modifiers()
         key = event.key()
@@ -678,6 +704,19 @@ class MapTable(QTableWidget):
             if key == Qt.Key_Z:   self.redo(); return
         if key in (Qt.Key_Delete, Qt.Key_Backspace):
             self._delete_selection(); return
+        # Arrow keys without modifier: increment/decrement selected cells
+        if mod == Qt.NoModifier and key in (Qt.Key_Plus, Qt.Key_Equal):
+            self._nudge_selection(+1); return
+        if mod == Qt.NoModifier and key == Qt.Key_Minus:
+            self._nudge_selection(-1); return
+        if mod == Qt.ShiftModifier and key == Qt.Key_Plus:
+            self._nudge_selection(+5); return
+        if mod == Qt.ShiftModifier and key == Qt.Key_Minus:
+            self._nudge_selection(-5); return
+        if mod == Qt.ControlModifier and key == Qt.Key_Plus:
+            self._nudge_selection(+10); return
+        if mod == Qt.ControlModifier and key == Qt.Key_Minus:
+            self._nudge_selection(-10); return
         super().keyPressEvent(event)
 
     def contextMenuEvent(self, event):
@@ -714,8 +753,18 @@ class MapTable(QTableWidget):
 
         a_fill = QAction("Fill with value…", self); a_fill.setEnabled(has_sel)
         a_invert = QAction("Invert selection (255-x)", self); a_invert.setEnabled(has_sel)
+        a_offset = QAction("Add/subtract offset…", self); a_offset.setEnabled(has_sel)
+        a_copyall = QAction("Copy whole map (all cells)", self)
+        a_copyall.setEnabled(self._map_def is not None)
         menu.addAction(a_fill)
         menu.addAction(a_invert)
+        menu.addAction(a_offset)
+        menu.addSeparator()
+        menu.addAction(a_copyall)
+        # Nudge hint
+        nudge_lbl = QAction("  ±1/5/10:  +/- / Shift+/- / Ctrl+-", self)
+        nudge_lbl.setEnabled(False)
+        menu.addAction(nudge_lbl)
         menu.addSeparator()
         a_undo = QAction(f"Undo  Ctrl+Z  ({len(self._undo_stack)} available)", self)
         a_undo.setEnabled(bool(self._undo_stack))
@@ -752,6 +801,14 @@ class MapTable(QTableWidget):
                 self, "Fill with value", "Set all selected cells to (0–255):", 128, 0, 255)
             if ok: self._fill_selection(val)
         elif act == a_invert: self._invert_selection()
+        elif act == a_offset:
+            val, ok = QInputDialog.getInt(
+                self, "Add/subtract offset",
+                "Add this raw value to all selected cells (-127 to +127):\n"
+                "(positive = richer/more advance, negative = leaner/less advance)",
+                0, -127, 127)
+            if ok: self._offset_selection(val)
+        elif act == a_copyall: self._copy_all_cells()
         elif act == a_undo:   self.undo()
         elif act == a_redo:   self.redo()
 
@@ -934,6 +991,46 @@ class MapTable(QTableWidget):
             raw_r = self._disp_to_raw(disp_r)
             if 0 <= raw_r < len(self._current_raw) and 0 <= c < len(self._current_raw[raw_r]):
                 self._current_raw[raw_r][c] = 255 - self._current_raw[raw_r][c]
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
+    def _nudge_selection(self, delta: int):
+        """Increment/decrement all selected cells by delta (+1/-1/+5/-5/+10/-10)."""
+        cells = self._selected_cells()
+        if not cells: return
+        self._push_undo()
+        for disp_r, c in cells:
+            raw_r = self._disp_to_raw(disp_r)
+            if 0 <= raw_r < len(self._current_raw) and 0 <= c < len(self._current_raw[raw_r]):
+                self._current_raw[raw_r][c] = max(0, min(255, self._current_raw[raw_r][c] + delta))
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
+    def _copy_all_cells(self):
+        """Copy entire map as TSV to clipboard (for paste into another map or spreadsheet)."""
+        from PyQt5.QtWidgets import QApplication
+        if not self._current_raw: return
+        lines = []
+        for r in reversed(range(len(self._current_raw))):
+            row = self._current_raw[r]
+            decode = self._map_def.decode if self._map_def else None
+            if decode:
+                lines.append("	".join(f"{decode(v):.2f}" if isinstance(decode(v), float)
+                                       else str(decode(v)) for v in row))
+            else:
+                lines.append("	".join(str(v) for v in row))
+        QApplication.clipboard().setText("\n".join(lines))
+        self._clipboard_shape = (len(self._current_raw), len(self._current_raw[0]))
+
+    def _offset_selection(self, offset: int):
+        """Add a fixed raw byte offset to all selected cells."""
+        cells = self._selected_cells()
+        if not cells: return
+        self._push_undo()
+        for disp_r, c in cells:
+            raw_r = self._disp_to_raw(disp_r)
+            if 0 <= raw_r < len(self._current_raw) and 0 <= c < len(self._current_raw[raw_r]):
+                self._current_raw[raw_r][c] = max(0, min(255, self._current_raw[raw_r][c] + offset))
         self._redraw()
         self.itemChanged.emit(QTableWidgetItem())
 

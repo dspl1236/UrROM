@@ -1791,6 +1791,100 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     # vwnut8392/M232-Firmware
     0x9DD68BD3: ("551AA_0202", "PRJmod AAN D03PMC (vwnut8392/M232-Firmware TMS27C512)"),
     # 0xF7432BB5 = 551A stock D02 — listed above in direct-read section
+
+    # ── 034EFI additional fuel chips (from 034_Files.zip, 2026-03) ────────────
+    # GT3071 Stage 1 R9 440cc Siemens — paired with GT3071 boost chip below
+    0xB9F0FD51: ("551AA_0202", "034EFI GT3071 Stage 1 R9 440cc Siemens fuel chip"),
+
+    # ── 034EFI custom boost chips (build 0x0054, NOT stock 0x0202) ────────────
+    # These use a custom 034EFI firmware (build 0x0054) that requires:
+    #   - 3.0 BAR (300 kPa) MAP sensor swap (stock is 200 kPa)
+    #   - Paired fuel chip from the same GT package (matching turbo spec)
+    # Diffs between 2871 and 3071 boost chips cluster at 0x2480 (N75 wastegate
+    # duty cycle table) — confirms turbo-specific boost profiles.
+    0x69156B3A: ("551AA_0202_boost", "034EFI boost chip — GT2871 Stage 1 (build 0x0054, 300kPa MAP required)"),
+    0x39DC67DA: ("551AA_0202_boost", "034EFI boost chip — GT3071 Stage 1 26-23psi (build 0x0054, 300kPa MAP required)"),
+
+    # ── 034EFI Hitachi-based ECUs (7A 20v, AAH 12v V6) ───────────────────────
+    # These are DIFFERENT ECU families from M2.3.2 — Hitachi 893906266x.
+    # They use the .034 scramble format but have completely different architecture.
+    # The 7A files belong to the 7A 20v Tuner / HachiRom project.
+    # Detection fallback classifies them as 404/551AA — overridden by CRC here.
+    # 7A NA Big MAF R2 — 893906266B (early 2-connector ECU)
+    0x84B0504E: ("7A_NA",     "034EFI 7A NA Big MAF 91Oct R2 (893906266B, early ECU)"),
+    # 7A Stage 1 R1 — 893906266B (early 2-connector ECU)
+    0xC075767F: ("7A_Stage1", "034EFI 7A Stage 1 91Oct R1 (893906266B, early ECU)"),
+    # 7A Turbo Stage 2 550cc R1 — 893906266D (late 4-connector ECU)
+    0xA01C4EDA: ("7A_Turbo",  "034EFI 7A Turbo Stage 2 550cc 91 R1 (893906266D, late ECU)"),
+    # 7A Turbo Kit Stage 1 R2 — 893906266B (early ECU, stock T3/T4 turbo kit)
+    0x55177DDB: ("7A_Turbo",  "034EFI 7A Turbo Kit Stage 1 R2 (893906266B, early ECU)"),
+    # AAH/AKH 12v V6 Stage 1+ — MMS-200 ECU (8A0 906 266A)
+    # Requires: MMS-200 ECU (not MMS-300+), big bore MAF (078 133 471A)
+    0x4818FA0B: ("AAH",       "034EFI AAH/AKH 12v V6 Stage 1+ R1 (MMS-200 ECU 8A0906266A, big bore MAF req)"),
+}
+
+# ── Hardware requirements per chip CRC ───────────────────────────────────────
+# Maps WH CRC → (sensor_kpa, injector_cc, fpr_bar, notes)
+# Used by Overview and Hardware tabs to surface install requirements.
+CHIP_REQUIREMENTS: dict[int, dict] = {
+    # 034EFI AAN/ABY/ADU tunes — all require MAP swap + matched injectors
+    0x956BFC9C: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": None,
+                 "turbo": "K24 (stock)",  "notes": "Stock Rip Chip — 034EFI base, no hardware mods needed beyond 300kPa MAP"},
+    0xA47011AB: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": 5.0,
+                 "turbo": "K24 (stock)",  "notes": "Stage 1 — requires 300kPa MAP, 5.0 BAR FPR, stock MAF"},
+    0x16FD8953: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": 5.0,
+                 "turbo": "K24 (stock)",  "notes": "Stage 1 variant — requires 300kPa MAP, 5.0 BAR FPR, stock MAF"},
+    0x9A8A6B4E: {"map_kpa": 300, "injector_cc": 550,   "fpr_bar": 4.0,
+                 "turbo": "GT28RS",       "notes": "GT28RS Stage 1 — 7000rpm, 285whp, 550cc injectors + 300kPa MAP + 4.0 BAR FPR"},
+    0x6F3AE675: {"map_kpa": 300, "injector_cc": 440,   "fpr_bar": 4.0,
+                 "turbo": "GT3071",       "notes": "GT3071 R8 — 42lb green tops, 7200rpm, 346whp"},
+    0x07DA1752: {"map_kpa": 300, "injector_cc": 550,   "fpr_bar": 4.0,
+                 "turbo": "GT3071",       "notes": "GT3071 R9.1 — 550cc 91Oct, 7200rpm, 346whp, 300kPa MAP required"},
+    0x2EB58546: {"map_kpa": 300, "injector_cc": 550,   "fpr_bar": 4.0,
+                 "turbo": "GT2871",       "notes": "GT2871 R9.1 — 550cc EV14, 7200rpm, 330whp, 300kPa MAP required"},
+    0xA77BB88E: {"map_kpa": 300, "injector_cc": 440,   "fpr_bar": 4.0,
+                 "turbo": "GT2871 AAN",   "notes": "GT2871 R9 — AAN spec, 440cc Siemens, 300kPa MAP required"},
+    0xB9F0FD51: {"map_kpa": 300, "injector_cc": 440,   "fpr_bar": 4.0,
+                 "turbo": "GT3071",       "notes": "GT3071 R9 — 440cc Siemens, 300kPa MAP required"},
+    # 034EFI boost chips — always paired with matching fuel chip
+    0x69156B3A: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": None,
+                 "turbo": "GT2871",
+                 "boost_chip": True,
+                 "paired_fuel_crc": None,  # paired with GT2871 fuel chips
+                 "notes": "BOOST CHIP — GT2871 Stage 1. MUST use with matched fuel chip. "
+                          "034EFI custom firmware build 0x0054 (not stock 0x0202). "
+                          "26psi overboost, 22psi to redline, 7200rpm. 330whp. "
+                          "3.0 BAR MAP sensor REQUIRED (300kPa). Stock MAF."},
+    0x39DC67DA: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": None,
+                 "turbo": "GT3071",
+                 "boost_chip": True,
+                 "paired_fuel_crc": None,
+                 "notes": "BOOST CHIP — GT3071 Stage 1. MUST use with matched fuel chip. "
+                          "034EFI custom firmware build 0x0054 (not stock 0x0202). "
+                          "26psi overboost, 23psi to redline, 7200rpm. 346whp. "
+                          "3.0 BAR MAP sensor REQUIRED (300kPa). Stock MAF."},
+    # 7A Hitachi chips
+    0x84B0504E: {"map_kpa": None, "injector_cc": None,  "fpr_bar": None,
+                 "turbo": "NA",
+                 "notes": "7A NA Big MAF — 034EFI billet MAF housing + stock element, "
+                          "893906266B (2-connector ECU). No turbo."},
+    0xC075767F: {"map_kpa": None, "injector_cc": None,  "fpr_bar": None,
+                 "turbo": "NA",
+                 "notes": "7A Stage 1 — direct upgrade, stock components, 893906266B"},
+    0xA01C4EDA: {"map_kpa": None, "injector_cc": 550,   "fpr_bar": None,
+                 "turbo": "T3/T4",
+                 "notes": "7A Turbo Stage 2 550cc — 893906266D (4-connector ECU), "
+                          "034EFI T3/T4 turbo kit, big MAF, 9.5:1 head gasket"},
+    0x55177DDB: {"map_kpa": None, "injector_cc": None,  "fpr_bar": None,
+                 "turbo": "T3/T4",
+                 "notes": "7A Turbo Kit Stage 1 — 893906266B (2-connector ECU), "
+                          "034EFI T3/T4 turbo kit, big MAF housing"},
+    # AAH
+    0x4818FA0B: {"map_kpa": None, "injector_cc": None,  "fpr_bar": None,
+                 "turbo": "NA",
+                 "notes": "AAH/AKH 12v V6 Stage 1+ — MMS-200 ECU required (8A0906266A). "
+                          "Big bore MAF required (Audi 078 133 471A). "
+                          "MMS-300+ ECUs CANNOT be chipped — must retrofit MMS-200."},
 }
 
 # Build number ranges for MEDIUM confidence detection (fallback when CRC unknown)

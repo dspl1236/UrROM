@@ -858,3 +858,175 @@ class TestXDFImport:
         # All addresses should be WH offsets (< 0x8000)
         for m in maps:
             assert m.main_addr < 0x8000, f"{m.name} addr 0x{m.main_addr:04X} not WH"
+
+
+# ── KNOWN_CRCS fingerprint tests ───────────────────────────────────────────────
+
+class TestKnownCRCsFingerprinting:
+    """Verify all .034 files fingerprint correctly against KNOWN_CRCS."""
+
+    BASE = "/home/claude/034_files/034 Files"
+
+    def _skip_if_missing(self):
+        import pytest
+        from pathlib import Path
+        if not Path(self.BASE).exists():
+            pytest.skip("034_files not available")
+
+    def _crc_of(self, rel: str) -> int:
+        import zlib
+        from pathlib import Path
+        from urrom.descramble import descramble_034, is_valid_034
+        from urrom.ecu_profiles import normalize_rom
+        p = Path(self.BASE) / rel
+        raw = p.read_bytes()
+        assert is_valid_034(raw), f"{p.name} not valid .034"
+        dec = descramble_034(raw)
+        # Detect boost chip
+        if bytes(dec[:3]) == b'\xc2\xaf\x00':
+            return zlib.crc32(dec[:0x8000]) & 0xFFFFFFFF
+        wh, _ = normalize_rom(dec)
+        return zlib.crc32(bytes(wh)) & 0xFFFFFFFF
+
+    def test_stock_ripchip_known(self):
+        self._skip_if_missing()
+        crc = self._crc_of("551AA/K24/034 - 4A0907551AA - Stock RipChip.034")
+        assert crc == 0x956BFC9C
+
+    def test_gt2871_fuel_known(self):
+        self._skip_if_missing()
+        crc = self._crc_of(
+            "551AA/GT2871/034 - 4A0907551AA - (Audi S4 (034 2871 Stage 1 R9.1 550cc EV14)).034")
+        assert crc == 0x2EB58546
+
+    def test_gt3071_r9_440cc_new(self):
+        self._skip_if_missing()
+        crc = self._crc_of(
+            "551AA/GT3071/034 - 4A0907551AA - (Audi S4 (034 3071 R9 440cc Siemens).034")
+        assert crc == 0xB9F0FD51
+        from urrom.ecu_profiles import KNOWN_CRCS
+        assert crc in KNOWN_CRCS
+        assert "GT3071" in KNOWN_CRCS[crc][1]
+
+    def test_gt2871_boost_chip_new(self):
+        self._skip_if_missing()
+        crc = self._crc_of(
+            "551AA/GT2871/034 - (Audi S4 Boost Chip (034 2871 Stage 1)).034")
+        assert crc == 0x69156B3A
+        from urrom.ecu_profiles import KNOWN_CRCS, CHIP_REQUIREMENTS
+        assert crc in KNOWN_CRCS
+        assert crc in CHIP_REQUIREMENTS
+        req = CHIP_REQUIREMENTS[crc]
+        assert req["boost_chip"] is True
+        assert req["map_kpa"] == 300
+
+    def test_gt3071_boost_chip_new(self):
+        self._skip_if_missing()
+        crc = self._crc_of(
+            "551AA/GT3071/034 - (Audi S4 Boost Chip (034 3071 Stage 1 26-23psi)).034")
+        assert crc == 0x39DC67DA
+        from urrom.ecu_profiles import CHIP_REQUIREMENTS
+        req = CHIP_REQUIREMENTS[crc]
+        assert req["boost_chip"] is True
+        assert "GT3071" in req["notes"]
+
+    def test_7a_na_bigmaf_new(self):
+        self._skip_if_missing()
+        crc = self._crc_of(
+            "Hitachi Based/7A/034 - 893906266B  - (Audi CQ (NA Big MAF 91Oct R2) .034")
+        assert crc == 0x84B0504E
+        from urrom.ecu_profiles import KNOWN_CRCS
+        sw_id, label = KNOWN_CRCS[crc]
+        assert sw_id == "7A_NA"
+        assert "266B" in label
+
+    def test_aah_stage1_new(self):
+        self._skip_if_missing()
+        crc = self._crc_of("Hitachi Based/AAH/AAH Stage 1+ R1 (2).034")
+        assert crc == 0x4818FA0B
+        from urrom.ecu_profiles import KNOWN_CRCS, CHIP_REQUIREMENTS
+        sw_id, label = KNOWN_CRCS[crc]
+        assert sw_id == "AAH"
+        assert "MMS-200" in CHIP_REQUIREMENTS[crc]["notes"]
+
+    def test_boost_chips_differ_at_n75(self):
+        """GT2871 and GT3071 boost chips differ at N75 table (0x2480) — confirms turbo-specific tuning."""
+        self._skip_if_missing()
+        import zlib
+        from pathlib import Path
+        from urrom.descramble import descramble_034
+        b2 = Path(self.BASE) / "551AA/GT2871/034 - (Audi S4 Boost Chip (034 2871 Stage 1)).034"
+        b3 = Path(self.BASE) / "551AA/GT3071/034 - (Audi S4 Boost Chip (034 3071 Stage 1 26-23psi)).034"
+        wh_2 = descramble_034(b2.read_bytes())[:0x8000]
+        wh_3 = descramble_034(b3.read_bytes())[:0x8000]
+        assert wh_2 != wh_3, "Boost chips should differ"
+        # N75 table at 0x2480 should differ
+        assert wh_2[0x2480] != wh_3[0x2480], "N75 table at 0x2480 should differ between turbo specs"
+
+
+# ── MapTable nudge / offset tests ─────────────────────────────────────────────
+
+class TestMapTableNudgeOffset:
+    """Test arrow-key nudge and offset operations."""
+
+    def _make_table(self, rows=4, cols=4):
+        import copy, types
+        stub = types.SimpleNamespace()
+        stub._map_def = types.SimpleNamespace(rows=rows, cols=cols, map_type="raw",
+                                               decode=None, unit="raw")
+        stub._current_raw = [[50 for _ in range(cols)] for _ in range(rows)]
+        stub._original_raw = copy.deepcopy(stub._current_raw)
+        stub._undo_stack = []; stub._redo_stack = []
+        from app.main import MapTable
+        for name in ("_push_undo", "_disp_to_raw", "_nudge_selection",
+                     "_offset_selection", "_selected_cells"):
+            setattr(stub, name, MapTable.__dict__[name].__get__(stub, type(stub)))
+        stub._redraw = lambda: None
+        import types as _t
+        stub.itemChanged = _t.SimpleNamespace(emit=lambda *a: None)
+        stub._selected_cells = lambda: [(0, c) for c in range(cols)]  # select display row 0
+        return stub
+
+    def test_nudge_plus1(self):
+        t = self._make_table()
+        raw_row = t._map_def.rows - 1  # display row 0 = raw row 3
+        original = t._current_raw[raw_row][0]
+        t._nudge_selection(+1)
+        assert t._current_raw[raw_row][0] == original + 1
+
+    def test_nudge_minus5(self):
+        t = self._make_table()
+        raw_row = t._map_def.rows - 1
+        t._nudge_selection(-5)
+        assert t._current_raw[raw_row][0] == 45
+
+    def test_nudge_clamps_at_255(self):
+        t = self._make_table()
+        raw_row = t._map_def.rows - 1
+        t._current_raw[raw_row] = [255] * 4
+        t._nudge_selection(+10)
+        assert all(v == 255 for v in t._current_raw[raw_row])
+
+    def test_nudge_clamps_at_0(self):
+        t = self._make_table()
+        raw_row = t._map_def.rows - 1
+        t._current_raw[raw_row] = [2] * 4
+        t._nudge_selection(-10)
+        assert all(v == 0 for v in t._current_raw[raw_row])
+
+    def test_offset_positive(self):
+        t = self._make_table()
+        raw_row = t._map_def.rows - 1
+        t._offset_selection(+15)
+        assert t._current_raw[raw_row][0] == 65
+
+    def test_offset_negative(self):
+        t = self._make_table()
+        raw_row = t._map_def.rows - 1
+        t._offset_selection(-20)
+        assert t._current_raw[raw_row][0] == 30
+
+    def test_nudge_pushes_undo(self):
+        t = self._make_table()
+        t._nudge_selection(+1)
+        assert len(t._undo_stack) == 1
