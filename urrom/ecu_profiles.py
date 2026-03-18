@@ -1414,18 +1414,56 @@ VARIANT_551AA_0202 = ROMVariant(
 )
 
 VARIANT_404 = ROMVariant(
-    name                = "3B / RR — 200 20vT / UrQ RR / S2 early (404)",
+    name                = "3B / RR — 200 20vT / UrQ RR (404)",
     software_id         = "404",
     engine_codes        = ["3B", "RR"],
-    ecu_pns             = ["895907404BA", "443907404", "895907404"],
-    bosch_pns           = ["0261200451", "0261200484"],
+    # ECU assembly PNs:
+    #   447907404 AA — Type 44 / C3 body (Audi 200 20vT)       cal tag 0x029B
+    #   857907404 B  — Type 85 / B2 body (UrQuattro RR)         cal tag 0x0253
+    # The 447/857 prefix encodes the Audi body platform, not a hardware revision.
+    # Both variants use firmware build 0xF004 and share 81.8% of code bytes.
+    ecu_pns             = ["447907404AA", "857907404B",
+                           "895907404BA", "443907404", "895907404"],
+    bosch_pns           = ["0261200451",   # 3B / 447907404 AA
+                           "0261200453",   # RR / 857907404 B
+                           "0261200484"],  # earlier production
+    # Bosch ROM part numbers (embedded in fuel/ign chip ID string @ 0x7F00):
+    #   1267356462 — 3B fuel/ign chip  (B57741L / Intel 27C256 / ©1984)
+    #   1267356261 — RR fuel/ign chip
     dual_eprom          = True,
-    working_half_offset = 0,       # 32KB flat file, no offset
+    working_half_offset = 0,       # 32KB flat file, no offset needed
     main_maps           = _MAPS_3B_MAIN,
     boost_maps          = _MAPS_BOOST_551,
-    notes               = "Distributor ignition (not coil packs). "
-                          "Map addresses CONFIRMED from PRJ MapFinder output. "
-                          "Header-embedded format: addresses include 36-byte offset.",
+    notes               = (
+        "Distributor ignition (not coil packs). "
+        "Map addresses CONFIRMED from PRJ MapFinder output and verified "
+        "against direct chip reads (2026-03 RE session). "
+        # CPU
+        "CPU: Siemens BD26422 (DIP-40, Intel 8051 core, ©INTEL 90) — same "
+        "silicon family as AAN SAB80C535. BD26422 is Bosch's internal PN for "
+        "custom-labelled Siemens 8051 derivative. "
+        # Firmware
+        "Firmware build 0xF004 is shared between 3B-AA and RR-B variants. "
+        "Ign map 1 (0x7052) is byte-for-byte identical across both variants. "
+        "Fuel maps differ ~69% between variants (RR runs leaner mid-range). "
+        "Large code diff at 0x4893-0x5B23 (4753 bytes) — likely "
+        "distributor sequencing / platform-specific I/O. "
+        # Boost chip architecture
+        "BOOST CHIP ARCHITECTURE: The boost chip is NOT a data-only ROM. "
+        "It is executable 8051 code running on a second independent MCU on "
+        "the MAP sub-board. Starts with CLR EA (0xC2 0xAF) at 0x0000 — "
+        "inline startup, no LJMP redirect. Has its own interrupt handlers "
+        "(Timer0, Timer1, INT0, INT1, Serial) and calibration tables. "
+        "Boost chip build: 0x0254 (3B-AA) / 0x0255 (RR-B). "
+        # IPC
+        "IPC registers between fuel CPU and boost MCU: "
+        "0xA040 and 0xA080 (MOVX targets, 8+ refs each in fuel chip). "
+        # Hardware
+        "EPROM1 silicon: Intel 27C256 (©1984), Bosch label B57741L. "
+        "EPROM2 silicon: manufacturer unconfirmed (obscured on board). "
+        "EPROM2 retention: factory RTV silicone + wire-form spring clip. "
+        "Stock MAP sensor: Bosch 0 273 003 204, 200kPa."
+    ),
 )
 
 VARIANT_V8_ABH = ROMVariant(
@@ -1474,6 +1512,10 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0xA98CB481: ("551AA",     "Stock — ABY S2 Coupe (aby_fuel-ign_551aa.bin)"),
     0x0AE3CACD: ("404",       "Stock — 3B 200 20vT (stock fuel.BIN)"),
     0x9245FA10: ("404",       "Stock — 3B Audi S2 (0261200484 MapFinder bin)"),
+    # Direct chip reads — 2026-03 RE session (447907404AA and 857907404B)
+    0xFBE0A74A: ("404",       "Stock — RR fuel/ign, 857907404B,  ROM PN 1267356261 (direct read)"),
+    0xF50660DA: ("404_boost", "Stock — 3B boost chip, 447907404AA, build 0x0254 (direct read)"),
+    0xEA8D46DF: ("404_boost", "Stock — RR boost chip, 857907404B,  build 0x0255 (direct read)"),
     0x594F97FB: ("404V8",     "Stock — PT V8 3.6L"),
     0x750A9EB0: ("404V8",     "ABT tune — PT V8 3.6L"),
     # 034EFI Rip Chip / prjmod 0x0202 firmware (confirmed from .034 diff analysis)
