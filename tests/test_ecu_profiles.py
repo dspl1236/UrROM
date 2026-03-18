@@ -1147,3 +1147,88 @@ class TestBoostChipPairing:
             assert fuel_crc in KNOWN_CRCS, f"Fuel CRC 0x{fuel_crc:08X} not in KNOWN_CRCS"
             for bc in boost_crcs:
                 assert bc in KNOWN_CRCS, f"Boost CRC 0x{bc:08X} not in KNOWN_CRCS"
+
+
+# ── Map export ─────────────────────────────────────────────────────────────────
+
+class TestMapExport:
+
+    def _get_aby(self):
+        import pytest
+        from pathlib import Path
+        p = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        if not p.exists():
+            pytest.skip("ABY ROM not available")
+        return p.read_bytes()
+
+    def test_export_map_html_returns_string(self):
+        import sys; sys.path.insert(0, '.')
+        from pathlib import Path
+        from urrom.ecu_profiles import normalize_rom, detect_rom
+        from urrom.map_export import export_map_html
+        raw = self._get_aby()
+        wh, _ = normalize_rom(raw)
+        det = detect_rom(bytes(wh))
+        v = det.variant
+        m = next(mm for mm in v.main_maps if mm.map_type == "ign" and mm.rows == 16)
+        result = export_map_html(bytes(wh), m, v)
+        assert isinstance(result, str)
+        assert "<table" in result
+        assert "°BTDC" in result or m.name in result
+
+    def test_export_map_html_has_axis_labels(self):
+        from pathlib import Path
+        from urrom.ecu_profiles import normalize_rom, detect_rom
+        from urrom.map_export import export_map_html
+        raw = self._get_aby()
+        wh, _ = normalize_rom(raw)
+        det = detect_rom(bytes(wh))
+        v = det.variant
+        m = next(mm for mm in v.main_maps if mm.map_type == "fuel")
+        result = export_map_html(bytes(wh), m, v)
+        # Should have at least one numeric axis header
+        import re
+        axis_vals = re.findall(r'<th[^>]*>\d+</th>', result)
+        assert len(axis_vals) > 0, "No axis value cells found"
+
+    def test_export_full_rom_html(self):
+        from urrom.ecu_profiles import normalize_rom, detect_rom
+        from urrom.map_export import export_full_rom_html
+        raw = self._get_aby()
+        wh, _ = normalize_rom(raw)
+        det = detect_rom(bytes(wh))
+        result = export_full_rom_html(bytes(wh), det.variant, det)
+        assert "<!DOCTYPE html>" in result
+        assert det.variant.name in result
+        assert "<table" in result
+
+    def test_heat_colours_in_range(self):
+        from urrom.map_export import _lerp_hex, _ign_bg, _fuel_bg, _heat_bg
+        # All colour functions should return valid hex
+        import re
+        for val in [-5, 0, 15, 30, 45]:
+            c = _ign_bg(val)
+            assert re.fullmatch(r'#[0-9a-f]{6}', c), f"Bad ign colour: {c}"
+        for raw in [0, 64, 128, 192, 255]:
+            c = _fuel_bg(raw)
+            assert re.fullmatch(r'#[0-9a-f]{6}', c)
+        for raw in [0, 128, 255]:
+            c = _heat_bg(raw, 0, 255)
+            assert re.fullmatch(r'#[0-9a-f]{6}', c)
+
+    def test_no_xss_in_map_name(self):
+        """Map names with special chars should be HTML-escaped."""
+        from urrom.ecu_profiles import normalize_rom, detect_rom
+        from urrom.map_export import export_map_html
+        raw = self._get_aby()
+        wh, _ = normalize_rom(raw)
+        det = detect_rom(bytes(wh))
+        v = det.variant
+        m = v.main_maps[0]
+        # Inject a fake name with XSS payload
+        import copy
+        m2 = copy.copy(m)
+        object.__setattr__(m2, 'name', '<script>alert(1)</script>')
+        result = export_map_html(bytes(wh), m2, v)
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result

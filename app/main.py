@@ -1443,6 +1443,10 @@ class MainChipTab(QWidget):
         self._status_fn = fn
         self._table.set_status_callback(fn)
 
+    def set_title_fn(self, fn):
+        """Register fn(map_name) to update the main window title bar."""
+        self._title_fn = fn
+
     def _on_search_maps(self, text: str):
         """Filter map combo to entries matching search text (name or address)."""
         if not self._maps:
@@ -1500,6 +1504,8 @@ class MainChipTab(QWidget):
                 f"color:{conf_colour};background:{BG3};border:1px solid {conf_colour};")
             self._revert_btn.setEnabled(False)
             self._update_sd_bar(m)
+            if hasattr(self, "_title_fn"):
+                self._title_fn(m.name)
 
     def _update_sd_bar(self, m):
         """SD mode notice bar logic extracted for reuse."""
@@ -2541,6 +2547,7 @@ class MainWindow(QMainWindow):
 
         # Wire hover status bar for map table
         self._main_chip_tab.set_status_fn(self._update_status)
+        self._main_chip_tab.set_title_fn(lambda name: self._update_title(name))
 
         # Status bar
         self._status = QStatusBar()
@@ -2740,6 +2747,12 @@ class MainWindow(QMainWindow):
         self._info_strip.update(det)
         self._overview_tab.update(det, self._boost_det if hasattr(self, "_boost_det") else None)
         self._hardware_tab.update(bytes(wh), det.variant.name if det.variant else "")
+        # Wire LC/NLS scalar edits -> dirty flag + ROM write-back
+        def _on_scalar_changed(wh_off: int, raw: int):
+            if self._main_rom and wh_off < len(self._main_rom):
+                self._main_rom[wh_off] = raw
+                self._set_dirty()
+        self._hardware_tab.set_scalar_changed_callback(_on_scalar_changed)
         self._save_btn.setEnabled(True)
 
         if det.variant:
@@ -2890,6 +2903,55 @@ class MainWindow(QMainWindow):
 
     # ── KWPBridge overlay ──────────────────────────────────────────────────────
 
+    def _on_export_map_html(self):
+        """Export the currently displayed map as a standalone HTML file."""
+        if self._main_rom is None or self._det is None:
+            QMessageBox.information(self, "Export map", "Load a ROM first.")
+            return
+        tab = self._main_chip_tab
+        if not tab._maps or tab._map_combo.currentIndex() < 0:
+            return
+        m = tab._maps[tab._map_combo.currentIndex()]
+        v = self._det.variant
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export map as HTML",
+            f"{m.name.replace(' ', '_')}.html",
+            "HTML (*.html);;All files (*.*)")
+        if not path:
+            return
+        from urrom.map_export import export_map_html
+        html_str = export_map_html(
+            bytes(self._main_rom), m, v, include_header=True, include_raw=True)
+        # Wrap in a full page
+        full = (f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                f"<title>{m.name}</title>"
+                f"<style>body{{background:#0d1117;padding:16px;}}</style></head>"
+                f"<body>{html_str}</body></html>")
+        Path(path).write_text(full, encoding="utf-8")
+        self._update_status(f"Exported → {Path(path).name}")
+
+    def _on_export_rom_html(self):
+        """Export all confirmed maps as a single printable HTML reference."""
+        if self._main_rom is None or self._det is None:
+            QMessageBox.information(self, "Export ROM", "Load a ROM first.")
+            return
+        v = self._det.variant
+        if not v:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export ROM reference",
+            f"{v.software_id}_map_reference.html",
+            "HTML (*.html);;All files (*.*)")
+        if not path:
+            return
+        from urrom.map_export import export_full_rom_html
+        html_str = export_full_rom_html(bytes(self._main_rom), v, self._det)
+        Path(path).write_text(html_str, encoding="utf-8")
+        n = sum(1 for m in (v.main_maps or [])
+                if m.rows > 1 and m.cols > 1
+                and m.confidence in ("CONFIRMED", "PROVISIONAL"))
+        self._update_status(f"Exported {n} maps → {Path(path).name}")
+
     def _on_import_xdf(self):
         """Import a TunerPro XDF v1.50 file to add map entries to current variant."""
         if self._det is None or self._det.variant is None:
@@ -2998,6 +3060,16 @@ class MainWindow(QMainWindow):
 
     def _update_status(self, msg: str):
         self._status.showMessage(msg)
+
+    def _update_title(self, extra: str = ""):
+        """Update window title with ROM name and optional context."""
+        from urrom.version import WINDOW_TITLE
+        if self._main_path:
+            dirty = " ●" if self._unsaved else ""
+            map_ctx = f"  —  {extra}" if extra else ""
+            self.setWindowTitle(f"{WINDOW_TITLE}  —  {self._main_path.name}{dirty}{map_ctx}")
+        else:
+            self.setWindowTitle(WINDOW_TITLE)
 
     def _on_about(self):
         QMessageBox.about(
