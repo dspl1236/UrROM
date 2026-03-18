@@ -488,22 +488,50 @@ VARIANT_551C = ROMVariant(
 # at trigger system ISR code.
 
 VARIANT_551AA = ROMVariant(
-    name                = "AAN / ABY — UrS4 / UrS6 / S2 Coupe, cam trigger (551AA)",
+    name                = "AAN — UrS4 / UrS6, cam trigger (551AA / D03)",
     software_id         = "551AA",
-    engine_codes        = ["AAN", "ABY"],
-    ecu_pns             = ["4A0907551AA", "895907551A"],
-    bosch_pns           = ["0261203601", "0261203145", "0261200465"],
+    engine_codes        = ["AAN"],
+    ecu_pns             = ["4A0907551AA"],
+    bosch_pns           = ["0261200465"],
     dual_eprom          = True,
     working_half_offset = 0x8000,
-    main_maps           = _MAPS_551AA_MAIN,
+    main_maps           = _MAPS_551AA_MAIN,   # NOTE: uses ABY-confirmed addresses — AAN addresses unverified
     boost_maps          = _MAPS_BOOST_551,
     notes               = (
-        "Late AAN / ABY — cam pulley hall sensor trigger (HS D03 in ID string). "
-        "Boost chip is 32KB (27C256): 8KB executable MCU code + 24KB data tables. "
-        "Firmware build 0x0202. ROM PN 1267357391. "
-        "AAN (UrS4/UrS6 coil-on-plug) and ABY (S2 coupe) share this codebase. "
-        "Map addresses confirmed on ABY bin. "
-        "See VARIANT_551A for early distributor-trigger AAN (D02)."
+        "Late AAN — cam pulley hall sensor trigger (HS D03 in ID string). "
+        "ECU PN 4A0907551AA, Bosch ECU PN 0261200465, ROM PN 1267357391. "
+        "Firmware build 0x0812, cal tag 0x0202, reset LJMP 0x1297. "
+        "Boost chip: 32KB (27C256), 8KB MCU code + 24KB calibration tables. "
+        "IMPORTANT: Map addresses here are ABY-confirmed (fuel 0x2E17, ign 0x30AC+). "
+        "AAN map addresses from PRJ XDF differ (fuel@0x0E13, ign@0x125F) — "
+        "AAN-specific address verification pending against direct chip read. "
+        "See VARIANT_551B for ABY S2 Coupe (D01 trigger, addresses confirmed). "
+        "See VARIANT_551A for early distributor-trigger AAN (D02, 8KB boost)."
+    ),
+)
+
+VARIANT_551B = ROMVariant(
+    name                = "ABY — S2 Coupe, cam trigger (551B / D01)",
+    software_id         = "551B",
+    engine_codes        = ["ABY"],
+    ecu_pns             = ["895907551B"],
+    bosch_pns           = ["0261203643"],
+    dual_eprom          = True,
+    working_half_offset = 0x8000,
+    main_maps           = _MAPS_551AA_MAIN,   # addresses confirmed on ABY bin direct read
+    boost_maps          = _MAPS_BOOST_551,
+    notes               = (
+        "ABY — Audi S2 Coupe (Type 85 body), cam pulley hall sensor trigger. "
+        "ID string: '895907551B  2,2l R5 MOTR.RHV HS D01PMC 0261203643 1267358375'. "
+        "ECU PN 895907551B (Type 85 / B2 platform prefix, vs AAN's Type 44 prefix). "
+        "Bosch ECU PN 0261203643 (different from AAN's 0261200465). "
+        "ROM PN 1267358375. Firmware build 0x0274, cal tag 0x7F02, reset LJMP 0x1329. "
+        "Boost chip: 32KB (27C256), build 0x0202 — same architecture as AAN. "
+        "Map addresses CONFIRMED by direct chip read (2026-03 RE session): "
+        "fuel WH 0x2E17, ign WH 0x30AC / 0x3263 / 0x3387 / 0x3598 / 0x36BC / 0x380D / 0x3931. "
+        "D01 vs AAN D03: both cam-referenced; code difference may reflect "
+        "sensor connector or harness pinout between Type 85 and Type 44 bodies. "
+        "Working half similarity vs AAN 551AA: 57.1%% identical (42.9%% differ, 8 clusters). "
     ),
 )
 
@@ -1539,7 +1567,8 @@ VARIANT_V8_PT = ROMVariant(
 ALL_VARIANTS: list[ROMVariant] = [
     VARIANT_551C,
     VARIANT_551A,       # early AAN, distributor trigger (D02), 8KB boost chip
-    VARIANT_551AA,      # late AAN / ABY, cam trigger (D03+HS), 32KB boost chip
+    VARIANT_551AA,      # late AAN, cam trigger (D03+HS), 32KB boost chip
+    VARIANT_551B,       # ABY S2 Coupe, cam trigger (D01), 32KB boost chip
     VARIANT_551AA_0202,
     VARIANT_404,
     VARIANT_V8_ABH,
@@ -1555,10 +1584,11 @@ ALL_VARIANTS: list[ROMVariant] = [
 KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x0808B2E5: ("551a",       "ABY/early-AAN fuel/ign, build 0x0274 (lower 32KB working half)"),
     0xBF11DB48: ("551aa",      "AAN fuel/ign, build 0x0812 (lower 32KB working half, truncated read)"),
-    0xF6E33043: ("551a_boost", "ABY boost chip, 32KB mirrored, build 0x0202"),
-    0x4A3CB7DC: ("551a_boost", "ABY boost chip, 16KB working half core, build 0x0202"),
+    0xF6E33043: ("551b_boost", "Stock — ABY boost chip, 32KB, 895907551B, build 0x0202 (direct read)"),
+    0x4A3CB7DC: ("551b_boost", "ABY boost chip WH core 16KB, 895907551B, build 0x0202"),
     0x4378E077: ("551C",      "Stock — ADU RS2 (adu_fuel-ign_551c.bin)"),
-    0xA98CB481: ("551AA",     "Stock — ABY S2 Coupe (aby_fuel-ign_551aa.bin)"),
+    0xA98CB481: ("551B",       "Stock — ABY fuel/ign WH, 895907551B, D01+HS trigger, ROM PN 1267358375"),
+    0x97D26DD1: ("551B",       "Stock — ABY fuel/ign full 64KB, 895907551B"),
     0x0AE3CACD: ("404",       "Stock — 3B 200 20vT (stock fuel.BIN)"),
     0x9245FA10: ("404",       "Stock — 3B Audi S2 (0261200484 MapFinder bin)"),
     # AAN 551A/551AA direct chip reads — 2026-03 RE session
