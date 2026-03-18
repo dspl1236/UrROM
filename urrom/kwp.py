@@ -81,6 +81,7 @@ class LiveValues:
         self.n75_dc:   Optional[float] = None   # %DC
         self.vss:      Optional[float] = None   # km/h
         self.battery:  Optional[float] = None   # V
+        self.knock:    Optional[list]  = None   # [V × 5 cylinders] from group 5
         self.ecu_pn:   str = ""
 
         if not state or not state.get("connected"):
@@ -126,6 +127,13 @@ class LiveValues:
         g4 = _cells(4)
         if g4:
             self.vss = _v(g4, 3)
+
+        # Knock (5 cylinders) from group 5 — cells 1-5, each in Volts
+        g5 = _cells(5)
+        if g5:
+            vals = [_v(g5, i) for i in range(1, 6)]
+            if any(v is not None for v in vals):
+                self.knock = vals
 
     @property
     def valid(self) -> bool:
@@ -369,14 +377,16 @@ class DashboardWindow:
 
         # (key, label, unit, min, max, warn_lo, warn_hi, crit_hi, row, col)
         specs = [
-            ("rpm",     "RPM",      "",    400, 7500, None,  6800, 7200, 0, 0),
-            ("ect",     "ECT",      "°C",  -10,  120,   60,   105,  115, 0, 1),
-            ("load",    "LOAD",     "%",     0,  100, None,    90,   98, 0, 2),
-            ("lambda",  "LAMBDA",   "λ",  0.70, 1.30, None,  None, None, 0, 3),
-            ("timing",  "TIMING",   "°",    -5,   50, None,  None, None, 1, 0),
-            ("map_kpa", "MAP",      "kPa",  20,  300, None,  None, None, 1, 1),
-            ("n75_dc",  "N75",      "% DC",  0,  100, None,    95, None, 1, 2),
-            ("iat",     "IAT",      "°C",  -20,   60, None,    50,   55, 1, 3),
+            ("rpm",     "RPM",      "",     400, 7500, None,  6800, 7200, 0, 0),
+            ("ect",     "ECT",      "°C",   -10,  120,   60,   105,  115, 0, 1),
+            ("load",    "LOAD",     "",       0,  200, None,   160,  190, 0, 2),
+            ("lambda",  "LAMBDA",   "λ",   0.70, 1.30, None,  None, None, 0, 3),
+            ("timing",  "TIMING",   "°",     -5,   50, None,  None, None, 1, 0),
+            ("map_kpa", "MAP",      "kPa",   20,  300, None,  None, None, 1, 1),
+            ("n75_dc",  "N75",      "% DC",   0,  100, None,    95, None, 1, 2),
+            ("iat",     "IAT",      "°C",   -20,   60, None,    50,   55, 1, 3),
+            ("vss",     "SPEED",    "km/h",   0,  300, None,  None, None, 2, 0),
+            ("knock",   "KNOCK",    "V",    0.0,  3.0, None,   0.8,  1.8, 2, 1),
         ]
 
         for key, label, unit, vmin, vmax, wl, wh, ch, row, col in specs:
@@ -391,6 +401,9 @@ class DashboardWindow:
             f"color:{self._C_DIM}; font-size:10px; font-family:Consolas;"
         )
         root.addWidget(self._lbl_strip)
+        self._lbl_knock = QLabel("Knock  —")
+        self._lbl_knock.setStyleSheet(f"color:{self._C_DIM}; font-size:10px;")
+        root.addWidget(self._lbl_knock)
 
         monitor.live_data.connect(self._on_live)
         monitor.disconnected.connect(self._on_disconnect)
@@ -464,17 +477,29 @@ class DashboardWindow:
         self._update("map_kpa", lv.map_kpa)
         self._update("n75_dc",  lv.n75_dc)
         self._update("iat",     lv.iat)
-        if lv.load is not None:
-            load_pct = (lv.load / 255.0) * 100.0
-            self._update("load", load_pct)
+        self._update("vss",     lv.vss)
+        # Load: already decoded as float by LiveValues
+        self._update("load", lv.load)
+        # Knock: max of 5 channels — show worst cylinder
+        knock_vals = [v for v in (lv.knock or []) if v is not None]
+        knock_max = max(knock_vals) if knock_vals else None
+        self._update("knock", knock_max)
+        # Knock indicator label: show per-cylinder compact view
+        if knock_vals:
+            kstr = "  ".join(f"{v:.1f}" for v in knock_vals[:5])
+            self._lbl_knock.setText(f"Knock  {kstr}  V")
+            col = self._C_RED if knock_max and knock_max > 1.8 else                   self._C_AMBER if knock_max and knock_max > 0.8 else self._C_GREEN
+            self._lbl_knock.setStyleSheet(f"color:{col}; font-size:10px;")
         else:
-            self._update("load", None)
+            self._lbl_knock.setText("Knock  —")
+            self._lbl_knock.setStyleSheet(f"color:{self._C_DIM}; font-size:10px;")
         parts = []
         if lv.rpm     is not None: parts.append(f"{lv.rpm:.0f} RPM")
         if lv.ect     is not None: parts.append(f"{lv.ect:.0f}°C")
         if lv.lambda_ is not None: parts.append(f"λ {lv.lambda_:.3f}")
         if lv.timing  is not None: parts.append(f"{lv.timing:.1f}°")
         if lv.map_kpa is not None: parts.append(f"{lv.map_kpa:.0f} kPa")
+        if lv.vss     is not None: parts.append(f"{lv.vss:.0f} km/h")
         self._lbl_strip.setText("  ·  ".join(parts))
         self._lbl_status.setText(f"● Live  ·  {lv.ecu_pn or '—'}")
         self._lbl_status.setStyleSheet(f"color:{self._C_GREEN}; font-size:10px; letter-spacing:1px;")

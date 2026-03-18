@@ -821,6 +821,7 @@ class BoostTab(QWidget):
         self._maps = []
 
     def load(self, boost_rom: bytearray, variant):
+        self._variant = variant
         self._boost_rom = boost_rom
         self._maps = [m for m in variant.boost_maps if m.rows > 1]
         self._map_combo.blockSignals(True)
@@ -836,18 +837,21 @@ class BoostTab(QWidget):
         self._map_combo.setCurrentIndex(0)
         self._on_map_selected(0)
 
-    def _on_map_selected(self, idx: int):
-        if not self._maps or self._boost_rom is None:
-            return
-        if idx < 0 or idx >= len(self._maps):
-            return
-        m = self._maps[idx]
-        self._table.load(self._boost_rom, m)
-        self._table.setVisible(True)
-        self._note.setVisible(False)
-        self._status.setText(
-            f"Boost chip  —  {m.name}  [{m.rows}×{m.cols}  {m.confidence}]")
-
+     def _on_map_selected(self, idx: int):
+         if not self._maps or self._boost_rom is None:
+             return
+         if idx < 0 or idx >= len(self._maps):
+             return
+         m = self._maps[idx]
+         # Pass axis labels — boost chip has no embedded descriptor so use
+         # sequential indices; displayed as column/row numbers.
+         from urrom.ecu_profiles import get_axes
+         rpm_axis, load_axis = get_axes(bytes(self._boost_rom), m, self._variant)
+         self._table.load(self._boost_rom, m, rpm_axis, load_axis)
+         self._table.setVisible(True)
+         self._note.setVisible(False)
+         self._status.setText(
+             f"Boost chip  —  {m.name}  [{m.rows}×{m.cols}  {m.confidence}]")
     def clear(self):
         self._boost_rom = None
         self._maps = []
@@ -945,6 +949,63 @@ class HardwareTab(QWidget):
             f"background: {BG2}; border-left: 2px solid {BORDER}; border-radius: 2px;")
         note.setWordWrap(True)
         outer.addWidget(note)
+
+        # ── LC/NLS scalars panel ─────────────────────────────────────────
+        lc_hdr = QLabel("LC / NLS SCALARS  (prjmod 0x0202 firmware)")
+        lc_hdr.setStyleSheet(
+            f"color:{FG_DIM};font-size:10px;letter-spacing:1px;margin-top:8px;")
+        outer.addWidget(lc_hdr)
+
+        lc_card = QFrame()
+        lc_card.setStyleSheet(
+            f"QFrame{{background:{BG3};border:1px solid {BORDER};"
+            f"border-radius:4px;padding:2px;}}")
+        lc_grid = QVBoxLayout(lc_card)
+        lc_grid.setContentsMargins(12, 8, 12, 8)
+        lc_grid.setSpacing(4)
+
+        self._lc_rows: list[tuple] = []  # (name_lbl, val_lbl, raw_lbl)
+
+        LC_SCALARS = [
+            ("Hard RPM limit",        0x0617, lambda b: b * 40,   "RPM"),
+            ("LC speed threshold",    0x0620, lambda b: b * 2,    "km/h"),
+            ("LC ign retard RPM",     0x0625, lambda b: b * 40,   "RPM"),
+            ("LC ign angle (ATDC)",   0x062B, lambda b: b * 1,    "°"),
+            ("NLS min RPM",           0x063D, lambda b: b * 40,   "RPM"),
+            ("NLS ign angle (ATDC)",  0x0643, lambda b: b * 1,    "°"),
+            ("Spark cut knock RPM",   0x064C, lambda b: b * 40,   "RPM"),
+            ("LC ign cut RPM",        0x066E, lambda b: b * 40,   "RPM"),
+        ]
+
+        for name, wh_off, decode_fn, unit in LC_SCALARS:
+            row_w = QWidget()
+            row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(0, 0, 0, 0)
+            row_h.setSpacing(6)
+            n_lbl = QLabel(name)
+            n_lbl.setStyleSheet(f"color:{FG};font-size:11px;min-width:180px;")
+            v_lbl = QLabel("—")
+            v_lbl.setStyleSheet(f"color:{ACCENT};font-size:11px;font-weight:bold;")
+            r_lbl = QLabel("")
+            r_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+            addr_lbl = QLabel(f"WH 0x{wh_off:04X}")
+            addr_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+            row_h.addWidget(n_lbl)
+            row_h.addWidget(v_lbl)
+            row_h.addWidget(QLabel(unit))
+            row_h.addStretch()
+            row_h.addWidget(r_lbl)
+            row_h.addWidget(addr_lbl)
+            lc_grid.addWidget(row_w)
+            self._lc_rows.append((v_lbl, r_lbl, wh_off, decode_fn))
+
+        self._lc_inactive = QLabel(
+            "LC/NLS scalars require prjmod 0x0202 firmware (551AA_0202 variant).")
+        self._lc_inactive.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+        lc_grid.addWidget(self._lc_inactive)
+        outer.addWidget(lc_card)
+        self._lc_card = lc_card
+
 
         # State
         self._boost_bytes: bytes | None = None
@@ -1135,6 +1196,20 @@ class HardwareTab(QWidget):
             card = self._make_patch_card(r)
             self._patch_layout.insertWidget(insert_pos, card)
             insert_pos += 1
+
+        # ── Update LC/NLS scalars ─────────────────────────────────────────
+        is_0202 = (self._variant_name == "551AA_0202")
+        self._lc_inactive.setVisible(not is_0202)
+        for (v_lbl, r_lbl, wh_off, decode_fn) in self._lc_rows:
+            if is_0202 and self._wh and wh_off < len(self._wh):
+                raw = self._wh[wh_off]
+                decoded = decode_fn(raw)
+                v_lbl.setText(f"{decoded}")
+                r_lbl.setText(f"(raw 0x{raw:02X}={raw})")
+            else:
+                v_lbl.setText("—")
+                r_lbl.setText("")
+
 
     # ── Boost chip file open ──────────────────────────────────────────────
 
@@ -1730,38 +1805,41 @@ class MainWindow(QMainWindow):
         if self._main_rom is None:
             return
 
-        # Commit current map edits into the working half
         rom_out = bytearray(self._main_rom)
         rom_out = self._main_chip_tab.commit_to_rom(rom_out)
 
-        # Apply checksum for prjmod / 0x0202 firmware chips that require it.
-        # Stock Bosch chips store ASCII part-number text at 0x3FFA–0x3FFF instead
-        # of a computed checksum, so we only apply for variants that use prjmod.
         variant = self._det.variant if self._det else None
-        needs_checksum = (
-            variant is not None
-            and getattr(variant, 'software_id', '') in ('551AA_0202',)
-        )
+        sw_id = getattr(variant, "software_id", "") if variant else ""
+        CHECKSUM_VARIANTS = {"551AA_0202", "551C", "551B", "551B_D02",
+                             "551AA", "551A", "404", "404V8"}
+        needs_checksum = sw_id in CHECKSUM_VARIANTS
         if needs_checksum:
+            old_cs = bytes(rom_out[0x3FFA:0x3FFE])
             rom_out = apply_checksum(rom_out)
+            cs_changed = bytes(rom_out[0x3FFA:0x3FFE]) != old_cs
+        else:
+            cs_changed = False
 
-        # Build full 64KB file for 551x, or 32KB flat for 3B/V8
         if self._det and self._det.variant and self._det.variant.working_half_offset == 0x8000:
-            # 551x: pad to 64KB with lower mirror
             full = bytearray(MAIN_CHIP_PHYSICAL)
-            full[0x0000:0x8000] = rom_out  # lower half = copy of working half
-            full[0x8000:0x10000] = rom_out  # upper half = working half
+            full[0x0000:0x8000] = rom_out
+            full[0x8000:0x10000] = rom_out
             out_bytes = bytes(full)
         else:
-            # 3B/V8: flat 32KB
             out_bytes = bytes(rom_out)
 
-        default_name = self._main_path.stem + "_edited" + self._main_path.suffix
-        path, _ = QFileDialog.getSaveFileName(
+        stem   = self._main_path.stem
+        suffix = self._main_path.suffix.lower()
+        default_name = stem + "_edited" + (suffix if suffix in (".bin", ".034") else ".bin")
+        path, sel_filter = QFileDialog.getSaveFileName(
             self, "Save ROM", default_name,
-            "ROM files (*.bin *.BIN *.034);;All files (*.*)")
+            "Binary ROM (*.bin *.BIN);;034 Rip Chip (*.034);;All files (*.*)")
         if not path:
             return
+
+        if path.lower().endswith(".034") or "034" in sel_filter:
+            from urrom.descramble import scramble_034
+            out_bytes = bytes(scramble_034(out_bytes))
 
         try:
             Path(path).write_bytes(out_bytes)
@@ -1769,11 +1847,15 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Cannot save:\n{e}")
             return
 
-        cs_note = "  (checksum applied)" if needs_checksum else ""
+        notes = []
+        if cs_changed:     notes.append("checksum updated")
+        elif needs_checksum: notes.append("checksum ok")
+        if path.lower().endswith(".034"): notes.append(".034 scrambled")
+        note_str = f"  ({', '.join(notes)})" if notes else ""
         self._main_chip_tab._table.accept_current_as_baseline()
         self._unsaved = False
         self._clear_dirty()
-        self._update_status(f"Saved → {Path(path).name}  ({len(out_bytes):,} bytes){cs_note}")
+        self._update_status(f"Saved → {Path(path).name}  ({len(out_bytes):,} bytes){note_str}")
 
     # ── KWPBridge overlay ──────────────────────────────────────────────────────
 

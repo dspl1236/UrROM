@@ -140,7 +140,7 @@ class ROMVariant:
 
 MAIN_CHIP_PHYSICAL  = 0x10000   # 64KB physical (doubled) for 551x
 MAIN_CHIP_WORKING   = 0x8000    # 32KB working half
-BOOST_CHIP_WORKING  = 0x2000    # 8KB boost chip working half
+BOOST_CHIP_WORKING  = 0x8000    # 32KB boost chip (551AA/B/C); 8KB chips (3B/404) also fit within
 BOOST_CHIP_PHYSICAL = 0x8000    # 32KB boost chip physical
 
 # Working half layout (offsets within the 32KB working half)
@@ -432,25 +432,98 @@ _MAPS_V8_MAIN = [
 # Addresses relative to boost chip working half start.
 # Source: community research — still PROVISIONAL.
 
-_MAPS_BOOST_551 = [
-    MapDef("Boost Target",
-           "Boost pressure target vs RPM/load. "
-           "250kPa sensor (AAN/ABY): raw÷255×2.5=bar. "
-           "300kPa sensor (ADU/RS2 hardware mod): raw÷255×3.0=bar.",
-           main_addr=0x0200, rows=8, cols=8,
-           map_type="boost", unit="bar", chip="boost",
-           confidence="PROVISIONAL"),
+# Boost chip map addresses confirmed from vwnut8392 XDF (8D0907551B RS2 Boost.xdf, 2013)
+# and verified by direct binary inspection of ABY/AAN/ADU boost chips.
+# All 32KB boost chips (551AA / 551B / 551C) use the same addresses.
+# Each map has a mirror at address + 0x4000 (A15 state irrelevant — verified MATCH).
+# Axes are hardcoded in boost MCU code; not stored in data section.
+#   Approximate RPM axis (10 pts): 600,1000,1500,2000,2500,3000,4000,5000,6000,7200
+#   MAF/load axis (16 pts):        1–16 (relative load, MAF-derived)
+_BOOST_RPM_AXIS  = [600, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 7200]
+_BOOST_LOAD_AXIS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
 
-    MapDef("Knock Threshold",
-           "Knock sensor threshold vs RPM. Higher = less sensitive.",
-           main_addr=0x0400, rows=1, cols=16,
+_MAPS_BOOST_551 = [
+    MapDef("Boost Pressure Target",
+           "Boost target vs RPM (rows) × load (cols). "
+           "Decode: raw/255 × 250 = kPa (stock 250kPa sensor). "
+           "RS2/AAN→RS2 with 300kPa mod: raw/255 × 300 = kPa. "
+           "vwnut8392 XDF note: same values as 551AA S4/S6.",
+           main_addr=0x2520, rows=10, cols=16,
+           map_type="boost", unit="kPa", chip="boost",
+           confidence="CONFIRMED"),
+
+    MapDef("N75 Wastegate Duty Cycle",
+           "Wastegate solenoid duty cycle % vs RPM (rows) × load (cols). "
+           "Higher value = more boost. Decode: raw/255 × 100 = %. "
+           "vwnut8392 XDF note: same as 551AA S4/S6.",
+           main_addr=0x2480, rows=10, cols=16,
+           map_type="raw", unit="%", chip="boost",
+           confidence="CONFIRMED"),
+
+    MapDef("Boost Pressure Limit",
+           "Per-RPM absolute boost ceiling (8 RPM points). "
+           "Decode: raw/255 × 250 = kPa. Acts as hard overboost cut.",
+           main_addr=0x2A96, rows=8, cols=1,
+           map_type="boost", unit="kPa", chip="boost",
+           confidence="CONFIRMED"),
+
+    MapDef("Characteristic Map",
+           "Boost control characteristic map vs RPM × load. "
+           "Influences boost response shape (not a direct target).",
+           main_addr=0x264B, rows=8, cols=10,
+           map_type="raw", unit="raw", chip="boost",
+           confidence="CONFIRMED"),
+
+    MapDef("Correction Table (2218)",
+           "Boost correction vs RPM × load. "
+           "vwnut8392 XDF: MODIFIED in most RS2 tunes, traces constantly.",
+           main_addr=0x2218, rows=25, cols=8,
+           map_type="raw", unit="raw", chip="boost",
+           confidence="CONFIRMED"),
+
+    # Additional tables from vwnut8392 8D0907551B RS2 Boost.xdf (2013-02-17)
+    # These three appear in every tuned RS2/AAN boost chip — unknown function,
+    # but all "trace constantly" (live-updated by ECU during operation).
+    MapDef("Boost unknown A (2ACE)",
+           "Unknown 16×10 table. Traces constantly — likely boost correction. "
+           "Mirror at 0x6ACE.",
+           main_addr=0x2ACE, rows=10, cols=16,
            map_type="raw", unit="raw", chip="boost",
            confidence="PROVISIONAL"),
 
-    MapDef("N75 Duty Cycle",
-           "Wastegate frequency valve duty cycle vs RPM. Higher = more boost.",
-           main_addr=0x0300, rows=1, cols=16,
-           map_type="raw", unit="%", chip="boost",
+    MapDef("Boost unknown B (2B6E)",
+           "Unknown 16×10 table. May be related to boost/N75 correction. "
+           "Mirror at 0x6B6E.",
+           main_addr=0x2B6E, rows=10, cols=16,
+           map_type="raw", unit="raw", chip="boost",
+           confidence="PROVISIONAL"),
+
+    MapDef("Boost unknown C (2C0E)",
+           "Unknown 16×10 table. "
+           "Mirror at 0x6C0E.",
+           main_addr=0x2C0E, rows=10, cols=16,
+           map_type="raw", unit="raw", chip="boost",
+           confidence="PROVISIONAL"),
+
+    MapDef("Boost limit detail (2A8C)",
+           "Detailed boost limit 9×2. Supplements the 1D limit table at 0x2A96. "
+           "Mirror at 0x6A8C.",
+           main_addr=0x2A8C, rows=2, cols=9,
+           map_type="boost", unit="kPa", chip="boost",
+           confidence="PROVISIONAL"),
+]
+
+# 3B/RR boost chip (8KB, 27C64): different architecture, code-only chip
+# Data tables at 0x1650+ per direct RE session (March 2026)
+_BOOST_3B_RPM_AXIS  = [500, 1000, 1500, 2000, 2500, 3000, 4000, 5000]
+_BOOST_3B_LOAD_AXIS = [1, 2, 3, 4, 5, 6, 7, 8]
+
+_MAPS_BOOST_404 = [
+    MapDef("Boost Target",
+           "3B/RR boost target tables at 0x1650+ (direct RE session 2026). "
+           "Executable MCU code chip — tables in upper data region.",
+           main_addr=0x1650, rows=8, cols=8,
+           map_type="boost", unit="raw", chip="boost",
            confidence="PROVISIONAL"),
 ]
 
@@ -1549,7 +1622,7 @@ VARIANT_404 = ROMVariant(
     dual_eprom          = True,
     working_half_offset = 0,       # 32KB flat file, no offset needed
     main_maps           = _MAPS_3B_MAIN,
-    boost_maps          = _MAPS_BOOST_551,
+    boost_maps          = _MAPS_BOOST_404,
     notes               = (
         "Distributor ignition (not coil packs). "
         "Map addresses CONFIRMED from PRJ MapFinder output and verified "
@@ -1905,23 +1978,39 @@ def read_axes_from_header(rom: bytes, header_addr: int,
     """
     Read RPM and load axis values from a Bosch descriptor header block.
 
-    Layout: [type:1][count:1][axis_bytes×count] repeated for row then col axis.
-    Used by 3B/RR maps where the header immediately precedes the map data.
+    Real layout (confirmed from 3B, ABY, ADU direct chip reads 2026-03):
+        [0x3A] [rows × RPM bytes] [misc bytes] [0x3F] [cols × load bytes] [2 bytes]
 
-    Returns (rpm_axis, load_axis) as lists of integers.
-    If the header address is out of bounds, returns index lists [0..rows-1].
+    0x3A is the RPM axis type marker. 0x3F is the load axis type marker.
+    RPM bytes decoded as raw × 40 = RPM.
+    Load bytes returned raw (varies by firmware — display as-is or apply /2.56 for %).
+    Descriptor is always 36 bytes for 16×16 maps.
+    Used by 3B/RR/ABY/ADU maps where the header immediately precedes map data.
+
+    Returns (rpm_axis, load_axis). Falls back to sequential indices if parsing fails.
     """
-    end = header_addr + 2 + rows + 2 + cols
-    if end > len(rom) or header_addr < 0:
+    if header_addr < 0 or header_addr + 36 > len(rom):
         return list(range(rows)), list(range(cols))
 
-    row_count = rom[header_addr + 1]
-    row_raw   = list(rom[header_addr + 2: header_addr + 2 + row_count])
-    col_start = header_addr + 2 + row_count
-    col_count = rom[col_start + 1]
-    col_raw   = list(rom[col_start + 2: col_start + 2 + col_count])
+    desc = rom[header_addr: header_addr + 36]
+    rpm_raw: list[int] = []
+    load_raw: list[int] = []
 
-    return row_raw, col_raw
+    i = 0
+    while i < len(desc) - rows:
+        if desc[i] == 0x3A and not rpm_raw:
+            rpm_raw = list(desc[i + 1: i + 1 + rows])
+            i += 1 + rows
+            continue
+        if desc[i] == 0x3F and not load_raw:
+            load_raw = list(desc[i + 1: i + 1 + cols])
+            i += 1 + cols
+            continue
+        i += 1
+
+    rpm_axis  = [b * 40 for b in rpm_raw] if rpm_raw else list(range(rows))
+    load_axis = load_raw if load_raw else list(range(cols))
+    return rpm_axis, load_axis
 
 
 def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
@@ -1942,6 +2031,15 @@ def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
     """
     sw = variant.software_id if variant else ""
 
+    # Boost chip maps use hardcoded RPM × load axes
+    if map_def.chip == "boost":
+        if sw in ("404", "RR_B"):
+            return (_BOOST_3B_RPM_AXIS[:map_def.rows],
+                    _BOOST_3B_LOAD_AXIS[:map_def.cols])
+        else:  # 551AA/B/C — 10x16 boost maps
+            return (_BOOST_RPM_AXIS[:map_def.rows],
+                    _BOOST_LOAD_AXIS[:map_def.cols])
+
     if sw == "551AA_0202":
         row_addr, col_addr = _AXES_0202.get(map_def.main_addr, (None, None))
 
@@ -1959,11 +2057,19 @@ def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
         cols = _read_axis(col_addr, map_def.cols)
         return rows, cols
 
-    if sw in ("551C", "551AA"):
-        return list(_RPM_AXIS_551), list(_LOAD_AXIS_551)
+    if sw in ("551C", "551AA", "551B", "551B_D02", "551A"):
+        # These variants all use Bosch descriptor headers immediately before map data.
+        # Dynamic axes: values are runtime-updated by the ECU (last seen operating point).
+        # Fall back to known static axis if header parsing fails or map has no descriptor.
+        header_addr = map_def.main_addr - 36
+        rpm, load = read_axes_from_header(rom, header_addr, map_def.rows, map_def.cols)
+        # Validate: if rpm values are all identical or very low, fall back to static
+        if len(set(rpm)) <= 2 or max(rpm) < 200:
+            return list(_RPM_AXIS_551), list(_LOAD_AXIS_551)
+        return rpm, load
 
-    if sw in ("404", "404V8"):
-        # Header is at data_addr - 36 (descriptor + 2 axes of 16 bytes each + 2 type/count bytes each)
+    if sw in ("404", "404V8", "RR"):
+        # Header is at data_addr - 36
         header_addr = map_def.main_addr - 36
         return read_axes_from_header(rom, header_addr, map_def.rows, map_def.cols)
 

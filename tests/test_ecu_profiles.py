@@ -399,24 +399,23 @@ class TestGetAxes:
         assert load == _LOAD_AXIS_551
 
     def test_404_reads_from_header(self):
-        # Build a synthetic 32KB ROM with a Bosch descriptor at the expected address.
-        # Ign Map 1 has main_addr = 0x7052 + 36 = 0x7076.
-        # Header is at 0x7076 - 36 = 0x7052.
+        # Descriptor format confirmed from 3B/ABY/ADU direct chip reads (2026-03):
+        # [0x3A][16 RPM raw bytes][misc byte(s)][0x3F][16 load raw bytes][2 bytes]
+        # RPM raw decoded ×40 = RPM; load bytes returned as-is.
         ign_map = next(m for m in VARIANT_404.main_maps if m.map_type == "ign")
         header_addr = ign_map.main_addr - 36
         rom = bytearray(FLAT_32K)
-        # Write a minimal descriptor: [type 0x3A][count 16][16 rpm bytes][type 0x3F][count 16][16 load bytes]
-        rpm_vals  = list(range(10, 26))   # 10-25
-        load_vals = list(range(20, 36))   # 20-35
-        rom[header_addr]     = 0x3A
-        rom[header_addr + 1] = 16
-        rom[header_addr + 2: header_addr + 18] = bytes(rpm_vals)
-        rom[header_addr + 18] = 0x3F
-        rom[header_addr + 19] = 16
-        rom[header_addr + 20: header_addr + 36] = bytes(load_vals)
+        rpm_raw   = list(range(10, 26))   # 10-25 raw → 400-1000 RPM after ×40
+        load_vals = list(range(20, 36))   # 20-35 raw load
+        rom[header_addr]                      = 0x3A
+        rom[header_addr + 1: header_addr + 17] = bytes(rpm_raw)
+        rom[header_addr + 17]                  = 0x51  # misc byte between axes
+        rom[header_addr + 18]                  = 0x3F
+        rom[header_addr + 19: header_addr + 35] = bytes(load_vals)
         rpm_out, load_out = get_axes(bytes(rom), ign_map, VARIANT_404)
-        assert rpm_out  == rpm_vals
-        assert load_out == load_vals
+        assert rpm_out  == [b * 40 for b in rpm_raw], f"RPM decode wrong: {rpm_out}"
+        assert load_out == load_vals, f"Load wrong: {load_out}"
+
 
     def test_unknown_variant_returns_indices(self):
         # Build a minimal unknown variant
