@@ -258,3 +258,94 @@ architectural conclusions for UrROM's AAN boost chip handling.
 | 1267356462 | Bosch ROM (3B fuel/ign chip) = B57741L |
 | 1267356261 | Bosch ROM (RR fuel/ign chip) |
 | 0 273 003 204 | Bosch MAP sensor, 200kPa, stock |
+
+---
+
+## 7. AAN VARIANTS — 551A vs 551AA (Hall Sensor Architecture)
+
+### Discovery: D02 vs D03 Trigger System
+
+The embedded ID strings reveal two distinct AAN hardware generations:
+
+| Field | 551A (early) | 551AA (late) |
+|---|---|---|
+| ECU PN | 4A0907551A | 4A0907551AA |
+| ID string | `MOTOR D02PMC` | `MOTR.RHV HS D03PMC` |
+| Trigger descriptor | **D02** | **HS D03** |
+| Hall sensor location | Distributor (like 3B) | Cam pulley (`HS` = Hall Sensor) |
+| Bosch ECU PN | 0261200465 | 0261200465 (same) |
+| ROM PN (fuel/ign) | 1267356703 | 1267357391 |
+| Fuel chip size | 64KB (doubled 27C512) | 64KB (doubled 27C512, 65535b dump) |
+| Boost chip size | **8KB** | **32KB** |
+| Firmware build | 0x0202 | 0x0202 (same) |
+| Calibration tag (WH 0x7FFE) | 0xA04A | 0x0202 |
+| Reset vector | LJMP 0x117A | LJMP 0x1297 |
+
+**`D02`** = distributor-based trigger (crank + distributor hall sensor, same as 3B)  
+**`HS D03`** = cam-referenced trigger (crank + cam pulley hall sensor)  
+**`HS`** is Bosch's explicit "Hall Sensor" flag in the ID string — confirms the 
+trigger system change directly from the ROM.
+
+Both variants share **Bosch ECU PN 0261200465** — same hardware, different software.
+
+### Fuel Chip Code Differences
+
+Working half similarity: **80.6% identical** (6347 bytes differ out of 32767).
+
+Diff concentrated in 6 clusters:
+- `WH 0x001A–0x00E6` (205b) — interrupt dispatch table differences
+- `WH 0x0385–0x05F8` (628b) — early init / peripheral setup  
+- `WH 0x0801–0x0903` (259b) — trigger system ISR code
+- `WH 0x0A48–0x2019` (5586b) — **primary calibration and trigger tables**
+- `WH 0x7EFF–0x7F3B` (61b) — ID string / end-of-ROM metadata
+- `WH 0x7FFD–0x7FFE` (2b) — calibration tag
+
+The reset handler opening bytes are **identical** between 551A and 551AA 
+(`D2 BE D2 DE 75 83 A0...`), confirming shared peripheral init before
+the trigger system diverges.
+
+### Calibration Differences
+
+All major map tables differ between 551A and 551AA:
+
+| Map | Address | Similarity |
+|---|---|---|
+| Fuel enrichment P/T | WH 0x0E13 | 1% identical (99% differ) |
+| Ign no-knock P/T | WH 0x125F | 0% identical (100% differ) |
+| MAP target | WH 0x1600 | differs |
+| WGDC | WH 0x1800 | differs |
+
+These are **completely different calibrations** despite sharing firmware 
+build 0x0202. The cam-pulley trigger system enables finer crank angle 
+resolution which allows different (typically more aggressive) ignition 
+advance tables.
+
+### Boost Chip Architecture Evolution
+
+```
+3B     boost: 8KB  — executable 8051 MCU code only
+551A   boost: 8KB  — executable 8051 MCU code only  (D02, distributor era)
+551AA  boost: 32KB — 8KB code (0x0000–0x1FFF) + 24KB data tables (0x2000–0x7FFF)
+```
+
+The 551AA boost chip is a **27C256** (32KB) vs the **27C64** (8KB) in 3B and 551A.  
+The extra 24KB (entropy 4.14 = structured table data, not code) represents
+expanded calibration tables enabled by the cam trigger system — likely finer
+RPM/load resolution for boost and WGDC maps.
+
+Boost chip build numbers:
+- 3B: `0x0254`
+- 551A: `0xA04B`  
+- 551AA: `0x0202`
+
+Note: 551A boost has a different build numbering scheme (`0xA04B` vs 
+sequential `0x02xx`) — may indicate a different revision lineage.
+
+### CRC32 Fingerprints (for KNOWN_CRCS)
+
+| File | CRC32 | Description |
+|---|---|---|
+| `aan_fuel-ign_551a.bin` (WH) | `0xF7432BB5` | 551A fuel/ign, 4A0907551A, D02 (distributor) |
+| `aan_boost_551a.bin` | `0xBBAFE260` | 551A boost, 8KB, build 0xA04B |
+| `aan_fuel-ign_551aa.bin` (WH) | `0xB9A49F8A` | 551AA fuel/ign, 4A0907551AA, D03+HS (cam) |
+| `aan_boost_551aa.bin` | `0x16707F66` | 551AA boost, 32KB, build 0x0202 |
