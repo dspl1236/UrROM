@@ -763,3 +763,98 @@ class TestMapTableEditing:
         assert t._current_raw[0][2] < 100
         # Neighbours should pull up
         assert t._current_raw[0][1] > 0 or t._current_raw[0][3] > 0
+
+
+# ── XDF Import ─────────────────────────────────────────────────────────────────
+
+class TestXDFImport:
+    """Tests for urrom/xdf_import.py — XDF v1.50 parser."""
+
+    XDF_FUEL = "/home/claude/rs2_xdf/RS2 551B fuel timing.xdf"
+    XDF_BOOST = "/home/claude/rs2_xdf/8D0907551B RS2 Boost.xdf"
+
+    def _skip_if_missing(self, path):
+        import pytest
+        from pathlib import Path
+        if not Path(path).exists():
+            pytest.skip(f"XDF file not available: {path}")
+
+    def test_parse_fuel_xdf_basic(self):
+        self._skip_if_missing(self.XDF_FUEL)
+        from urrom.xdf_import import parse_xdf
+        r = parse_xdf(self.XDF_FUEL)
+        assert r.region_size == 0x10000   # 64KB fuel chip
+        assert r.wh_offset_delta == 0x8000
+        assert len(r.tables) >= 100       # vwnut8392 XDF has 314 tables
+
+    def test_fuel_xdf_map_address(self):
+        self._skip_if_missing(self.XDF_FUEL)
+        from urrom.xdf_import import parse_xdf
+        r = parse_xdf(self.XDF_FUEL)
+        # Fuel map at WH 0x0E13 (XDF addr 0x8E13)
+        fuel_tbls = [t for t in r.tables if "Fuel" in t.title and t.rows == 16 and t.cols == 16]
+        assert fuel_tbls, "No 16x16 fuel table found"
+        wh_addrs = set(t.address - 0x8000 for t in fuel_tbls)
+        assert 0x0E13 in wh_addrs, f"Expected 0x0E13 in {wh_addrs}"
+
+    def test_ign_decode_equation_parsed(self):
+        self._skip_if_missing(self.XDF_FUEL)
+        from urrom.xdf_import import parse_xdf, equation_to_decode
+        r = parse_xdf(self.XDF_FUEL)
+        ign_tbls = [t for t in r.tables if "Ignition" in t.title and t.rows == 16 and t.cols == 16
+                    and "0.75" in t.equation]
+        assert ign_tbls, "No ign table with 0.75 equation found"
+        decode = equation_to_decode(ign_tbls[0].equation)
+        assert decode is not None
+        # (X * 0.75) - 22.5 at raw=83: 83*0.75-22.5 = 39.75
+        assert abs(decode(83) - 39.75) < 0.1
+
+    def test_parse_boost_xdf_basic(self):
+        self._skip_if_missing(self.XDF_BOOST)
+        from urrom.xdf_import import parse_xdf
+        r = parse_xdf(self.XDF_BOOST)
+        assert r.region_size == 0x7FFF   # 32KB boost chip
+        assert r.wh_offset_delta == 0    # direct addresses
+        assert len(r.tables) == 20
+
+    def test_boost_xdf_n75_address(self):
+        self._skip_if_missing(self.XDF_BOOST)
+        from urrom.xdf_import import parse_xdf
+        r = parse_xdf(self.XDF_BOOST)
+        n75 = [t for t in r.tables if "N75" in t.title and t.rows >= 8]
+        assert n75
+        assert n75[0].address == 0x2480
+
+    def test_equation_identity(self):
+        from urrom.xdf_import import equation_to_decode, equation_to_encode
+        assert equation_to_decode("X") is None
+        assert equation_to_encode("X") is None
+
+    def test_equation_linear_decode(self):
+        from urrom.xdf_import import equation_to_decode
+        fn = equation_to_decode("X*0.6491-8.2186")
+        assert fn is not None
+        assert abs(fn(50) - (50 * 0.6491 - 8.2186)) < 0.001
+
+    def test_equation_linear_encode_roundtrip(self):
+        from urrom.xdf_import import equation_to_decode, equation_to_encode
+        eq = "X*0.6491-8.2186"
+        decode = equation_to_decode(eq)
+        encode = equation_to_encode(eq)
+        assert decode is not None and encode is not None
+        for raw in [30, 50, 80, 120]:
+            decoded = decode(raw)
+            reencoded = encode(decoded)
+            assert abs(reencoded - raw) <= 1, f"Roundtrip fail: {raw} → {decoded} → {reencoded}"
+
+    def test_xdf_to_mapdefs_returns_mapdefs(self):
+        self._skip_if_missing(self.XDF_FUEL)
+        from urrom.xdf_import import parse_xdf, xdf_to_mapdefs
+        from urrom.ecu_profiles import MapDef
+        r = parse_xdf(self.XDF_FUEL)
+        maps = xdf_to_mapdefs(r)
+        assert len(maps) > 0
+        assert all(isinstance(m, MapDef) for m in maps)
+        # All addresses should be WH offsets (< 0x8000)
+        for m in maps:
+            assert m.main_addr < 0x8000, f"{m.name} addr 0x{m.main_addr:04X} not WH"

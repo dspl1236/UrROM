@@ -717,8 +717,20 @@ class MapTable(QTableWidget):
         elif act == a_paste: self._paste_selection()
         elif act == a_del:   self._delete_selection()
         elif act == a_scale:
+            decode = self._map_def.decode if self._map_def else None
+            unit   = self._map_def.unit   if self._map_def else "raw"
+            hint_lines = [
+                "Examples:",
+                "  1.05 = +5%   richening fuel / retarding ign",
+                "  0.95 = -5%   leaning fuel / advancing ign",
+                "  1.00 = no change",
+            ]
+            if decode:
+                hint_lines.append(f"Values displayed in {unit}")
+            hint = "\n".join(hint_lines)
             factor, ok = QInputDialog.getDouble(
-                self, "Scale selection", "Multiply all selected values by:", 1.0, 0.1, 10.0, 3)
+                self, "Scale selection", f"Multiply all selected values by:\n{hint}",
+                1.0, 0.1, 10.0, 3)
             if ok: self._scale_selection(factor)
         elif act == a_interp:  self._interpolate_rows()
         elif act == a_interpc: self._interpolate_cols()
@@ -2371,6 +2383,67 @@ class MainWindow(QMainWindow):
 
     # ── KWPBridge overlay ──────────────────────────────────────────────────────
 
+    def _on_import_xdf(self):
+        """Import a TunerPro XDF v1.50 file to add map entries to current variant."""
+        if self._det is None or self._det.variant is None:
+            QMessageBox.information(self, "Import XDF",
+                "Load a ROM first, then import an XDF to add its map addresses.")
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import XDF", "",
+            "TunerPro XDF (*.xdf *.XDF);;All files (*.*)")
+        if not path:
+            return
+
+        try:
+            from urrom.xdf_import import parse_xdf, xdf_to_mapdefs
+            result = parse_xdf(path)
+            maps   = xdf_to_mapdefs(result, filter_min_cells=4)
+        except Exception as e:
+            QMessageBox.critical(self, "XDF Import Error", str(e))
+            return
+
+        if not maps:
+            QMessageBox.information(self, "XDF Import",
+                "No usable maps found in this XDF file.")
+            return
+
+        v = self._det.variant
+        existing_addrs = {m.main_addr for m in v.main_maps + v.boost_maps}
+        new_maps = [m for m in maps if m.main_addr not in existing_addrs]
+        dup_count = len(maps) - len(new_maps)
+
+        msg = (f"XDF: {result.title or Path(path).name}
+"
+               f"Author: {result.author or '—'}
+"
+               f"Found {len(maps)} maps, {dup_count} already known.
+
+"
+               f"Add {len(new_maps)} new PROVISIONAL maps to {v.name}?
+
+"
+               f"These will be available in Map editor for this session only.
+"
+               f"To persist them, edit ecu_profiles.py.")
+        reply = QMessageBox.question(self, "Import XDF", msg,
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        # Inject into variant (session only — not persisted)
+        v.main_maps = v.main_maps + new_maps
+
+        # Reload tabs
+        if self._main_rom is not None:
+            self._main_chip_tab.load(self._main_rom, v)
+            self._compare_tab.set_rom_a(bytes(self._main_rom), v)
+            self._overview_tab.update(self._det, self._boost_det if hasattr(self, "_boost_det") else None)
+
+        self._update_status(
+            f"XDF imported: {len(new_maps)} maps added from {Path(path).name}")
+
     def _on_kwp_connected(self, ecu_pn: str):
         self._kwp_matched = self._kwp_monitor.is_matched()
         self._refresh_kwp_badge()
@@ -2453,6 +2526,67 @@ class MainWindow(QMainWindow):
         event.accept()
 
     # ── KWPBridge live overlay ────────────────────────────────────────────────
+
+    def _on_import_xdf(self):
+        """Import a TunerPro XDF v1.50 file to add map entries to current variant."""
+        if self._det is None or self._det.variant is None:
+            QMessageBox.information(self, "Import XDF",
+                "Load a ROM first, then import an XDF to add its map addresses.")
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import XDF", "",
+            "TunerPro XDF (*.xdf *.XDF);;All files (*.*)")
+        if not path:
+            return
+
+        try:
+            from urrom.xdf_import import parse_xdf, xdf_to_mapdefs
+            result = parse_xdf(path)
+            maps   = xdf_to_mapdefs(result, filter_min_cells=4)
+        except Exception as e:
+            QMessageBox.critical(self, "XDF Import Error", str(e))
+            return
+
+        if not maps:
+            QMessageBox.information(self, "XDF Import",
+                "No usable maps found in this XDF file.")
+            return
+
+        v = self._det.variant
+        existing_addrs = {m.main_addr for m in v.main_maps + v.boost_maps}
+        new_maps = [m for m in maps if m.main_addr not in existing_addrs]
+        dup_count = len(maps) - len(new_maps)
+
+        msg = (f"XDF: {result.title or Path(path).name}
+"
+               f"Author: {result.author or '—'}
+"
+               f"Found {len(maps)} maps, {dup_count} already known.
+
+"
+               f"Add {len(new_maps)} new PROVISIONAL maps to {v.name}?
+
+"
+               f"These will be available in Map editor for this session only.
+"
+               f"To persist them, edit ecu_profiles.py.")
+        reply = QMessageBox.question(self, "Import XDF", msg,
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        # Inject into variant (session only — not persisted)
+        v.main_maps = v.main_maps + new_maps
+
+        # Reload tabs
+        if self._main_rom is not None:
+            self._main_chip_tab.load(self._main_rom, v)
+            self._compare_tab.set_rom_a(bytes(self._main_rom), v)
+            self._overview_tab.update(self._det, self._boost_det if hasattr(self, "_boost_det") else None)
+
+        self._update_status(
+            f"XDF imported: {len(new_maps)} maps added from {Path(path).name}")
 
     def _on_kwp_connected(self, ecu_pn: str):
         self._kwp_matched = self._kwp_monitor.is_matched()
