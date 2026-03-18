@@ -336,10 +336,16 @@ class OverviewTab(QWidget):
         self._boost_chip_lbl.setStyleSheet(f"color:{FG};font-size:11px;")
         self._checksum_lbl = QLabel("")
         self._checksum_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+        self._health_badge = QLabel("")
+        self._health_badge.setStyleSheet(
+            f"font-size:10px;padding:2px 8px;border-radius:10px;"
+            f"background:{BG3};border:1px solid {BORDER};")
         chip_row.addWidget(self._main_chip_lbl)
         chip_row.addSpacing(24)
         chip_row.addWidget(self._boost_chip_lbl)
         chip_row.addStretch()
+        chip_row.addWidget(self._health_badge)
+        chip_row.addSpacing(8)
         chip_row.addWidget(self._checksum_lbl)
         layout.addLayout(chip_row)
 
@@ -533,6 +539,36 @@ class OverviewTab(QWidget):
             self._tuning_note.setVisible(True)
         else:
             self._tuning_note.setVisible(False)
+
+        # Run tuning health check and update badge
+        from urrom.tuning_checks import run_all_checks
+        try:
+            issues = run_all_checks(wh_bytes := bytes(det.crc32.to_bytes(4, 'big'))
+                                    if False else b'',
+                                    v, crc32=det.crc32)
+            # We need the actual ROM bytes — check if passed via _rom_bytes attr
+            if hasattr(self, '_rom_bytes') and self._rom_bytes:
+                issues = run_all_checks(self._rom_bytes, v, crc32=det.crc32)
+                n_err  = sum(1 for i in issues if i.severity == 'error')
+                n_warn = sum(1 for i in issues if i.severity == 'warning')
+                if n_err:
+                    badge_txt = f"✗ {n_err} error{'s' if n_err!=1 else ''}"
+                    badge_col = RED
+                elif n_warn:
+                    badge_txt = f"⚠ {n_warn} warning{'s' if n_warn!=1 else ''}"
+                    badge_col = AMBER
+                else:
+                    badge_txt = "✓ clean"
+                    badge_col = GREEN
+                self._health_badge.setText(badge_txt)
+                self._health_badge.setStyleSheet(
+                    f"font-size:10px;padding:2px 8px;border-radius:10px;"
+                    f"background:{badge_col}20;border:1px solid {badge_col};"
+                    f"color:{badge_col};")
+            else:
+                self._health_badge.setText("—")
+        except Exception:
+            self._health_badge.setText("—")
 
         # Hardware requirements from KNOWN_CRCS description
         from urrom.ecu_profiles import KNOWN_CRCS, get_boost_pairing
@@ -1293,19 +1329,21 @@ class MapTable(QTableWidget):
         new_col = self._kwp_col
         new_row = self._kwp_row
 
-        # Match RPM → column via col_axis, load → row via row_axis
+        # row_axis = RPM axis (MapTable rows map to RPM)
+        # col_axis = load axis (MapTable columns map to load/MAF)
+        # Match lv.rpm → closest row, lv.load → closest column
         col_axis = getattr(self, "_col_axis", [])
         row_axis = getattr(self, "_row_axis", [])
 
-        if col_axis and lv.rpm is not None and len(col_axis) > 1:
-            new_col = min(range(len(col_axis)),
-                         key=lambda i: abs(col_axis[i] - lv.rpm))
-
-        if row_axis and lv.load is not None and len(row_axis) > 1:
-            # lv.load is the raw KWP cell value (1-255 MAF load units).
-            # row_axis is also raw (not /25 decoded) — compare directly.
+        if row_axis and lv.rpm is not None and len(row_axis) > 1:
             new_row = min(range(len(row_axis)),
-                         key=lambda i: abs(row_axis[i] - lv.load))
+                         key=lambda i: abs(row_axis[i] - lv.rpm))
+
+        if col_axis and lv.load is not None and len(col_axis) > 1:
+            # lv.load is raw KWP MAF load value (1-255).
+            # col_axis stores the load axis values from the ROM descriptor.
+            new_col = min(range(len(col_axis)),
+                         key=lambda i: abs(col_axis[i] - lv.load))
 
         changed = (new_col != self._kwp_col or
                    new_row != self._kwp_row or
@@ -1747,11 +1785,13 @@ class MainChipTab(QWidget):
             frame.setFixedSize(
                 m.cols * CELL_SIZE + 24,
                 m.rows * CELL_SIZE + 36)
-            frame.mousePressEvent = (lambda e, idx=map_idx: (
-                self._grid_btn.setChecked(False),
-                self._on_toggle_grid(),
-                self._map_combo.setCurrentIndex(idx)
-            ))
+            def _make_click(idx):
+                def _handler(e):
+                    self._grid_btn.setChecked(False)
+                    self._on_toggle_grid()
+                    self._map_combo.setCurrentIndex(idx)
+                return _handler
+            frame.mousePressEvent = _make_click(map_idx)
             frame.setCursor(Qt.PointingHandCursor)
 
             vl = QVBoxLayout(frame)
@@ -2909,11 +2949,20 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(1100, 720)
 
+        self.setAcceptDrops(True)
+
         # State
         self._main_path:  Path | None = None
         self._boost_path: Path | None = None
         self._main_rom:   bytearray | None = None   # working half
         self._boost_rom:  bytearray | None = None
+        # Session changelog
+        from urrom.session_log import SessionLog
+        self._session_log = SessionLog()
+        # Recent files (stored in memory — persisted on exit via QSettings)
+        from PyQt5.QtCore import QSettings
+        self._settings = QSettings("UrROM", "UrROM")
+        self._recent_files = list(self._settings.value("recent_files", []) or [])
         self._det:        DetectionResult | None = None
         self._unsaved     = False
         self._kwp_matched = False
@@ -3009,6 +3058,15 @@ class MainWindow(QMainWindow):
 
         # Wire hover status bar for map table
         self._main_chip_tab.set_status_fn(self._update_status)
+
+        # Wire session log recording
+        def _log_edits(map_def, old_grid, new_grid):
+            for r in range(map_def.rows):
+                for c in range(map_def.cols):
+                    if old_grid[r][c] != new_grid[r][c]:
+                        self._session_log.record(
+                            map_def, r, c, old_grid[r][c], new_grid[r][c])
+        self._main_chip_tab.set_session_log_fn(_log_edits)
         self._main_chip_tab.set_title_fn(lambda name: self._update_title(name))
 
         # Status bar
@@ -3027,6 +3085,10 @@ class MainWindow(QMainWindow):
             f"QMenuBar::item:selected {{ background: {BG3}; }}"
             f"QMenu {{ background: {BG2}; color: {FG}; border: 1px solid {BORDER}; }}"
             f"QMenu::item:selected {{ background: {BG3}; }}")
+        tools_menu = mb.addMenu("Tools")
+        fpr_act = QAction("Fuel pressure calculator…", self)
+        fpr_act.triggered.connect(self._on_fpr_calculator)
+        tools_menu.addAction(fpr_act)
         help_menu = mb.addMenu("Help")
         shortcuts_act = QAction("Keyboard shortcuts…", self)
         shortcuts_act.triggered.connect(self._on_show_shortcuts)
@@ -3090,6 +3152,10 @@ class MainWindow(QMainWindow):
         self._kwp_menu_timer.start(2000)
 
         # ── Help ─────────────────────────────────────────────────────────────
+        tools_menu = mb.addMenu("Tools")
+        fpr_act = QAction("Fuel pressure calculator…", self)
+        fpr_act.triggered.connect(self._on_fpr_calculator)
+        tools_menu.addAction(fpr_act)
         help_menu = mb.addMenu("Help")
         about_act = QAction("About UrROM", self)
         about_act.triggered.connect(self._on_about)
@@ -3217,11 +3283,18 @@ class MainWindow(QMainWindow):
         fname = path.name
         self._main_lbl.setText(fname)
         self._main_lbl.setStyleSheet(f"color: {FG}; font-size: 11px;")
+        # Reset session log for new ROM
+        from urrom.session_log import SessionLog
+        v_name = det.variant.name if det and det.variant else ""
+        self._session_log = SessionLog(rom_name=fname, variant_name=v_name)
         # Update window title to show ROM name
         from urrom.version import APP_VERSION, APP_NAME
         self._refresh_title()
+        self._add_recent(path)
         self._info_strip.update(det)
-        self._overview_tab.update(det, self._boost_det if hasattr(self, "_boost_det") else None)
+        ov = self._overview_tab
+        ov._rom_bytes = bytes(wh)
+        ov.update(det, self._boost_det if hasattr(self, "_boost_det") else None)
         self._hardware_tab.update(bytes(wh), det.variant.name if det.variant else "")
         # Wire LC/NLS scalar edits -> dirty flag + ROM write-back
         def _on_scalar_changed(wh_off: int, raw: int):
@@ -3823,6 +3896,26 @@ class MainWindow(QMainWindow):
         Path(path).write_text(full, encoding="utf-8")
         self._update_status(f"Exported → {Path(path).name}")
 
+    def _on_export_changelog(self):
+        """Export the session edit changelog as HTML or text."""
+        if self._session_log.count == 0:
+            QMessageBox.information(self, "Session changelog",
+                "No edits recorded in this session yet.")
+            return
+        path, filt = QFileDialog.getSaveFileName(
+            self, "Export session changelog",
+            f"changelog_{self._session_log.rom_name}.html",
+            "HTML (*.html);;Text (*.txt);;All files (*.*)")
+        if not path:
+            return
+        if path.endswith('.txt'):
+            Path(path).write_text(self._session_log.to_text(), encoding="utf-8")
+        else:
+            Path(path).write_text(self._session_log.to_html(), encoding="utf-8")
+        n = self._session_log.count
+        m = len(self._session_log.changed_maps)
+        self._update_status(f"Changelog exported: {n} edits in {m} maps → {Path(path).name}")
+
     def _on_export_rom_html(self):
         """Export all confirmed maps as a single printable HTML reference."""
         if self._main_rom is None or self._det is None:
@@ -3975,6 +4068,100 @@ class MainWindow(QMainWindow):
         lay.addWidget(btns)
         dlg.exec_()
 
+    def _on_fpr_calculator(self):
+        """Standalone fuel pressure / injector sizing calculator."""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
+                                      QDoubleSpinBox, QDialogButtonBox, QFrame)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Fuel pressure & injector calculator")
+        dlg.setMinimumWidth(380)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+
+        def _make_spin(lo, hi, val, dec, suffix):
+            s = QDoubleSpinBox()
+            s.setRange(lo, hi); s.setDecimals(dec); s.setValue(val)
+            s.setSuffix(f"  {suffix}")
+            s.setStyleSheet(f"background:{BG2};color:{FG};border:1px solid {BORDER};"
+                            f"border-radius:3px;padding:2px 4px;")
+            return s
+
+        form = QFormLayout(); form.setSpacing(8); lay.addLayout(form)
+        inj_stock = _make_spin(50, 2000, 293, 0, "cc/min  stock injectors")
+        inj_new   = _make_spin(50, 2000, 440, 0, "cc/min  new injectors")
+        fpr_stock = _make_spin(0.5, 10, 3.0, 1, "bar  stock FPR")
+        fpr_new   = _make_spin(0.5, 10, 5.0, 1, "bar  new FPR")
+        form.addRow("Stock injectors:", inj_stock)
+        form.addRow("New injectors:",   inj_new)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color:{BORDER}"); lay.addWidget(sep)
+
+        form2 = QFormLayout(); form2.setSpacing(8); lay.addLayout(form2)
+        form2.addRow("Stock FPR:", fpr_stock)
+        form2.addRow("New FPR:",   fpr_new)
+
+        result_lbl = QLabel("")
+        result_lbl.setStyleSheet(
+            f"background:{BG2};padding:10px;border-radius:4px;"
+            f"font-size:12px;color:{ACCENT};border:1px solid {BORDER};")
+        result_lbl.setWordWrap(True)
+        lay.addWidget(result_lbl)
+
+        def _calc():
+            import math
+            si, ni = inj_stock.value(), inj_new.value()
+            sp, np_ = fpr_stock.value(), fpr_new.value()
+            if ni == 0 or np_ == 0: return
+            # Injector scaling: new_cc_effective = ni * sqrt(np_/sp)
+            ni_eff = ni * math.sqrt(np_ / sp)
+            # Fuel scale factor to maintain same AFR
+            factor = si / ni_eff
+            # Duty cycle at max (assuming 85% at stock)
+            dc = 0.85 * factor * 100
+            parts = [
+                f"Effective injector flow: {ni_eff:.0f} cc/min",
+                f"Fuel map scale factor:   {factor:.4f}x  ({factor*100:.1f}%)",
+                f"Max duty cycle estimate: {dc:.0f}%",
+                ("\u26a0 Duty cycle > 90% - may be marginal"
+                 if dc > 90 else "\u2713 Duty cycle acceptable"),
+            ]
+            result_lbl.setText("\n".join(parts))
+        for w in (inj_stock, inj_new, fpr_stock, fpr_new):
+            w.valueChanged.connect(_calc)
+        _calc()
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+        dlg.exec_()
+
+    def _add_recent(self, path: Path) -> None:
+        """Add a file to the recent list, keeping max 8 unique entries."""
+        p = str(path)
+        if p in self._recent_files:
+            self._recent_files.remove(p)
+        self._recent_files.insert(0, p)
+        self._recent_files = self._recent_files[:8]
+        self._settings.setValue("recent_files", self._recent_files)
+
+    def _refresh_recent_menu(self) -> None:
+        """Rebuild the Recent files submenu."""
+        self._recent_menu.clear()
+        if not self._recent_files:
+            self._recent_menu.addAction("(no recent files)").setEnabled(False)
+            return
+        for p_str in self._recent_files:
+            p = Path(p_str)
+            act = self._recent_menu.addAction(p.name)
+            act.setToolTip(p_str)
+            act.triggered.connect(lambda checked, pp=p: self._load_main(pp))
+        self._recent_menu.addSeparator()
+        self._recent_menu.addAction("Clear recent files").triggered.connect(
+            lambda: (self._recent_files.clear(),
+                     self._settings.setValue("recent_files", []),
+                     self._update_status("Recent files cleared")))
+
     def _on_about(self):
         from PyQt5.QtWidgets import QMessageBox
         from urrom.version import APP_VERSION
@@ -3990,6 +4177,21 @@ class MainWindow(QMainWindow):
             "Built with Python + PyQt5<br>"
             '<a href="https://github.com/dspl1236/UrROM">'
             "github.com/dspl1236/UrROM</a>")
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            exts = {Path(u.toLocalFile()).suffix.lower() for u in urls}
+            if exts & {".bin", ".034", ".rom", ".BIN"}:
+                event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        for url in urls:
+            p = Path(url.toLocalFile())
+            if p.suffix.lower() in {".bin", ".034", ".rom"}:
+                self._load_main(p)
+                break
 
     def _toggle_dashboard(self):
         """Open or close the live ECU dashboard window."""
@@ -4035,6 +4237,99 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"{WINDOW_TITLE}  —  {self._main_path.name}{dirty}{map_ctx}")
         else:
             self.setWindowTitle(WINDOW_TITLE)
+
+    def _on_fpr_calculator(self):
+        """Standalone fuel pressure / injector sizing calculator."""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
+                                      QDoubleSpinBox, QDialogButtonBox, QFrame)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Fuel pressure & injector calculator")
+        dlg.setMinimumWidth(380)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+
+        def _make_spin(lo, hi, val, dec, suffix):
+            s = QDoubleSpinBox()
+            s.setRange(lo, hi); s.setDecimals(dec); s.setValue(val)
+            s.setSuffix(f"  {suffix}")
+            s.setStyleSheet(f"background:{BG2};color:{FG};border:1px solid {BORDER};"
+                            f"border-radius:3px;padding:2px 4px;")
+            return s
+
+        form = QFormLayout(); form.setSpacing(8); lay.addLayout(form)
+        inj_stock = _make_spin(50, 2000, 293, 0, "cc/min  stock injectors")
+        inj_new   = _make_spin(50, 2000, 440, 0, "cc/min  new injectors")
+        fpr_stock = _make_spin(0.5, 10, 3.0, 1, "bar  stock FPR")
+        fpr_new   = _make_spin(0.5, 10, 5.0, 1, "bar  new FPR")
+        form.addRow("Stock injectors:", inj_stock)
+        form.addRow("New injectors:",   inj_new)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color:{BORDER}"); lay.addWidget(sep)
+
+        form2 = QFormLayout(); form2.setSpacing(8); lay.addLayout(form2)
+        form2.addRow("Stock FPR:", fpr_stock)
+        form2.addRow("New FPR:",   fpr_new)
+
+        result_lbl = QLabel("")
+        result_lbl.setStyleSheet(
+            f"background:{BG2};padding:10px;border-radius:4px;"
+            f"font-size:12px;color:{ACCENT};border:1px solid {BORDER};")
+        result_lbl.setWordWrap(True)
+        lay.addWidget(result_lbl)
+
+        def _calc():
+            import math
+            si, ni = inj_stock.value(), inj_new.value()
+            sp, np_ = fpr_stock.value(), fpr_new.value()
+            if ni == 0 or np_ == 0: return
+            # Injector scaling: new_cc_effective = ni * sqrt(np_/sp)
+            ni_eff = ni * math.sqrt(np_ / sp)
+            # Fuel scale factor to maintain same AFR
+            factor = si / ni_eff
+            # Duty cycle at max (assuming 85% at stock)
+            dc = 0.85 * factor * 100
+            parts2 = [
+                f"Effective injector flow: {ni_eff:.0f} cc/min",
+                f"Fuel map scale factor:   {factor:.4f}x  ({factor*100:.1f}%)",
+                f"Max duty cycle estimate: {dc:.0f}%",
+                ("\u26a0 Duty cycle > 90% - marginal" if dc > 90 else "\u2713 Duty cycle OK"),
+            ]
+            result_lbl.setText("\n".join(parts2))
+        for w in (inj_stock, inj_new, fpr_stock, fpr_new):
+            w.valueChanged.connect(_calc)
+        _calc()
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+        dlg.exec_()
+
+    def _add_recent(self, path: Path) -> None:
+        """Add a file to the recent list, keeping max 8 unique entries."""
+        p = str(path)
+        if p in self._recent_files:
+            self._recent_files.remove(p)
+        self._recent_files.insert(0, p)
+        self._recent_files = self._recent_files[:8]
+        self._settings.setValue("recent_files", self._recent_files)
+
+    def _refresh_recent_menu(self) -> None:
+        """Rebuild the Recent files submenu."""
+        self._recent_menu.clear()
+        if not self._recent_files:
+            self._recent_menu.addAction("(no recent files)").setEnabled(False)
+            return
+        for p_str in self._recent_files:
+            p = Path(p_str)
+            act = self._recent_menu.addAction(p.name)
+            act.setToolTip(p_str)
+            act.triggered.connect(lambda checked, pp=p: self._load_main(pp))
+        self._recent_menu.addSeparator()
+        self._recent_menu.addAction("Clear recent files").triggered.connect(
+            lambda: (self._recent_files.clear(),
+                     self._settings.setValue("recent_files", []),
+                     self._update_status("Recent files cleared")))
 
     def _on_about(self):
         QMessageBox.about(
