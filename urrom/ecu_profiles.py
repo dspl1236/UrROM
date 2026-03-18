@@ -554,6 +554,28 @@ VARIANT_551B = ROMVariant(
     ),
 )
 
+VARIANT_551B_D02 = ROMVariant(
+    name                = "RS2 early — distributor trigger (551B / D02)",
+    software_id         = "551B_D02",
+    engine_codes        = ["ADU"],
+    ecu_pns             = ["8A0907551B"],
+    bosch_pns           = ["0261203478"],
+    dual_eprom          = True,
+    working_half_offset = 0x8000,
+    main_maps           = _MAPS_551AA_MAIN,
+    boost_maps          = _MAPS_BOOST_551,
+    notes               = (
+        "Early RS2 — distributor hall sensor trigger (D02 in ID string). "
+        "ID: '8A0907551B  2,2l R5 MOTR.RHV RS2D02PMC 0261203478 1267358289'. "
+        "ECU PN 8A0907551B. Bosch ECU PN 0261203478. ROM PN 1267358289. "
+        "Firmware build 0x0202, cal tag 0xA1E9, reset LJMP 0x1329. "
+        "Mirrors the AAN D02→D03 transition: RS2 also had an early distributor "
+        "variant (D02) before the cam-trigger D01 version (551C). "
+        "Boost chip: 32KB, build 0x0202. "
+        "Map addresses PROVISIONAL — same layout as 551B/551C assumed, unverified."
+    ),
+)
+
 VARIANT_551A = ROMVariant(
     name                = "AAN early — distributor hall trigger (551A / D02)",
     software_id         = "551A",
@@ -1588,6 +1610,7 @@ ALL_VARIANTS: list[ROMVariant] = [
     VARIANT_551A,       # early AAN, distributor trigger (D02), 8KB boost chip
     VARIANT_551AA,      # late AAN, cam trigger (D03+HS), 32KB boost chip
     VARIANT_551B,       # ABY S2 Coupe, cam trigger (D01), 32KB boost chip
+    VARIANT_551B_D02,   # early RS2, distributor trigger (D02), 32KB boost chip
     VARIANT_551AA_0202,
     VARIANT_404,
     VARIANT_V8_ABH,
@@ -1605,6 +1628,10 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0xBF11DB48: ("551aa",      "AAN fuel/ign, build 0x0812 (lower 32KB working half, truncated read)"),
     0xF6E33043: ("551b_boost", "Stock — ABY boost chip, 32KB, 895907551B, build 0x0202 (direct read)"),
     0x4A3CB7DC: ("551b_boost", "ABY boost chip WH core 16KB, 895907551B, build 0x0202"),
+    # RS2 D02 (early distributor RS2) — from RS2_551B_bins_XDF.zip
+    0xC5B30158: ("551B_D02",  "Stock — RS2 D02 fuel/ign WH, 8A0907551B, ROM PN 1267358289"),
+    0xC349075E: ("551B_D02",  "Stock — RS2 D02 fuel/ign full 64KB, 8A0907551B"),
+    0x288CBFBC: ("551B_D02_boost", "Stock — RS2 D02 boost 32KB, build 0x0202"),
     0x4378E077: ("551C",      "Stock — ADU/RS2 fuel/ign WH, 8A0907551C, ROM PN 1267358668 (direct read)"),
     0x1529520A: ("551C",      "Stock — ADU/RS2 fuel/ign full 64KB, 8A0907551C"),
     0x4EE87833: ("551c_boost","Stock — ADU/RS2 boost chip 32KB, 8A0907551C, build 0x0202 (direct read)"),
