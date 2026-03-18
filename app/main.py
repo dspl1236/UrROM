@@ -921,6 +921,10 @@ class MapTable(QTableWidget):
         a_redo.setEnabled(bool(self._redo_stack))
         menu.addAction(a_undo)
         menu.addAction(a_redo)
+        menu.addSeparator()
+        a_copy_from = QAction("Copy this map from another ROM…", self)
+        a_copy_from.setEnabled(self._map_def is not None)
+        menu.addAction(a_copy_from)
 
         act = menu.exec_(event.globalPos())
         if act == a_copy:    self._copy_selection()
@@ -961,6 +965,7 @@ class MapTable(QTableWidget):
         elif act == a_annotate: self._annotate_cell()
         elif act == a_undo:   self.undo()
         elif act == a_redo:   self.redo()
+        elif act == a_copy_from: self._copy_map_from_rom()
 
     def _selected_cells(self) -> list[tuple[int,int]]:
         """Return list of (display_row, col) for current selection."""
@@ -1206,6 +1211,38 @@ class MapTable(QTableWidget):
             del self._annotations[key]
         self._redraw()
 
+    def _copy_map_from_rom(self):
+        """Open a second ROM and copy this map's data into the current map."""
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        if self._map_def is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open source ROM to copy map from",
+            "", "ROM files (*.bin *.BIN *.034);;All files (*.*)")
+        if not path:
+            return
+        try:
+            raw = open(path, "rb").read()
+        except OSError as e:
+            QMessageBox.critical(self, "Error", str(e))
+            return
+        # Handle .034 format
+        if path.lower().endswith(".034"):
+            from urrom.descramble import descramble_034, is_valid_034
+            if is_valid_034(raw):
+                raw = bytes(descramble_034(raw))
+        from urrom.ecu_profiles import normalize_rom, read_map
+        src_wh, _ = normalize_rom(raw)
+        if len(src_wh) < self._map_def.main_addr + self._map_def.size:
+            QMessageBox.warning(self, "Map copy",
+                f"Source ROM too small for map at WH 0x{self._map_def.main_addr:04X}")
+            return
+        self._push_undo()
+        src_data = read_map(bytes(src_wh), self._map_def)
+        self._current_raw = [row[:] for row in src_data]
+        self._redraw()
+        self.itemChanged.emit(QTableWidgetItem())
+
     def set_status_callback(self, fn):
         """Register fn(msg) to push hover info to the main window status bar."""
         self._status_callback = fn
@@ -1409,6 +1446,16 @@ class MainChipTab(QWidget):
             f"QPushButton:hover{{border-color:{ACCENT};}}")
         self._decode_btn.clicked.connect(self._on_toggle_decode)
         toolbar.addWidget(self._decode_btn)
+
+        self._axis_btn = QPushButton("Axis…")
+        self._axis_btn.setFixedWidth(50)
+        self._axis_btn.setEnabled(False)
+        self._axis_btn.setStyleSheet(
+            f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:0 6px;font-size:10px;}}"
+            f"QPushButton:hover{{border-color:{ACCENT};}}")
+        self._axis_btn.clicked.connect(self._on_edit_axis)
+        toolbar.addWidget(self._axis_btn)
 
         self._revert_btn = QPushButton("Revert changes")
         self._revert_btn.setEnabled(False)
@@ -1785,6 +1832,88 @@ class MainChipTab(QWidget):
                 self._table._display_decode = None
             self._table._redraw()
 
+    def _on_edit_axis(self):
+        """Open axis editor to view/modify the RPM and load axis values."""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                                      QTableWidget, QTableWidgetItem, QDialogButtonBox,
+                                      QHeaderView, QGroupBox)
+        if not self._maps or self._map_combo.currentIndex() < 0:
+            return
+        m = self._maps[self._map_combo.currentIndex()]
+        rpm_ax = list(self._table._row_axis)
+        load_ax = list(self._table._col_axis)
+
+        dlg = QDialog()
+        dlg.setWindowTitle(f"Axis editor — {m.name}")
+        dlg.setMinimumWidth(520)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(8)
+
+        note = QLabel(
+            "Axis values shown here are read from the ROM descriptor.\n"
+            "Editing updates the display only - not written to ROM.")
+        note.setStyleSheet(f"color:{AMBER};font-size:10px;padding:6px;background:{BG2};"
+                           f"border-left:3px solid {AMBER};border-radius:2px;")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+
+        split = QHBoxLayout()
+
+        def _make_axis_table(title, values, unit):
+            grp = QGroupBox(title)
+            grp.setStyleSheet(f"QGroupBox{{color:{FG};border:1px solid {BORDER};"
+                              f"border-radius:4px;padding:4px;margin-top:8px;}}"
+                              f"QGroupBox::title{{subcontrol-origin:margin;left:8px;}}")
+            tbl = QTableWidget(len(values), 2)
+            tbl.setHorizontalHeaderLabels(["#", f"Value ({unit})"])
+            tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            tbl.setStyleSheet(f"background:{BG2};color:{FG};gridline-color:{BORDER};")
+            for i, v in enumerate(values):
+                tbl.setItem(i, 0, QTableWidgetItem(str(i)))
+                it = QTableWidgetItem(str(int(v)) if isinstance(v, float) and v == int(v) else f"{v:.1f}")
+                tbl.setItem(i, 1, it)
+            gl = QVBoxLayout(grp)
+            gl.addWidget(tbl)
+            return grp, tbl
+
+        rpm_grp, rpm_tbl = _make_axis_table("RPM Axis (rows)", rpm_ax, "RPM")
+        load_grp, load_tbl = _make_axis_table("Load Axis (columns)", load_ax, "load")
+        split.addWidget(rpm_grp)
+        split.addWidget(load_grp)
+        lay.addLayout(split)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        def _apply():
+            # Read back edited values and update the table's axis display
+            new_rpm = []
+            for i in range(rpm_tbl.rowCount()):
+                it = rpm_tbl.item(i, 1)
+                try: new_rpm.append(float(it.text()) if it else rpm_ax[i])
+                except ValueError: new_rpm.append(rpm_ax[i])
+            new_load = []
+            for i in range(load_tbl.rowCount()):
+                it = load_tbl.item(i, 1)
+                try: new_load.append(float(it.text()) if it else load_ax[i])
+                except ValueError: new_load.append(load_ax[i])
+            # Apply to map table headers
+            self._table._row_axis = new_rpm
+            self._table._col_axis = new_load
+            from urrom.ecu_profiles import MapDef
+            def _fmt(v):
+                return f"{v:.1f}" if isinstance(v, float) and v != int(v) else str(int(v))
+            row_labels = [_fmt(v) for v in reversed(new_rpm)]
+            col_labels = [_fmt(v) for v in new_load]
+            self._table.setVerticalHeaderLabels(row_labels)
+            self._table.setHorizontalHeaderLabels(col_labels)
+            dlg.accept()
+
+        btns.accepted.connect(_apply)
+        dlg.exec_()
+
     def _update_stats(self):
         """Recompute min/max/mean of selected (or all) cells and update strip."""
         if not self._maps or self._table._map_def is None:
@@ -1968,6 +2097,14 @@ class HardwareTab(QWidget):
             f"QPushButton:hover{{border-color:{ACCENT};}}")
         self._open_boost_btn.clicked.connect(self._on_open_boost)
         hdr.addWidget(self._open_boost_btn)
+        self._inj_btn = QPushButton("⚙ Injector scaling…")
+        self._inj_btn.setFixedHeight(26)
+        self._inj_btn.setEnabled(False)
+        self._inj_btn.setStyleSheet(
+            f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:0 10px;}}"
+            f"QPushButton:hover{{border-color:{ACCENT};}}")
+        hdr.addWidget(self._inj_btn)
         outer.addLayout(hdr)
 
         # ── Subtitle ─────────────────────────────────────────────────────
@@ -2225,6 +2362,16 @@ class HardwareTab(QWidget):
         return card
 
     # ── Public update method ──────────────────────────────────────────────
+
+    def set_injector_callback(self, fn):
+        """Register fn() called when injector scaling button is clicked."""
+        self._inj_btn.setEnabled(fn is not None)
+        if fn:
+            try:
+                self._inj_btn.clicked.disconnect()
+            except TypeError:
+                pass
+            self._inj_btn.clicked.connect(fn)
 
     def update(self, wh: bytes | None, variant_name: str = "") -> None:
         """Called when main chip is loaded."""
@@ -3082,9 +3229,12 @@ class MainWindow(QMainWindow):
                 self._main_rom[wh_off] = raw
                 self._set_dirty()
         self._hardware_tab.set_scalar_changed_callback(_on_scalar_changed)
+        self._hardware_tab.set_injector_callback(self._on_injector_scaling)
         self._save_btn.setEnabled(True)
 
         if det.variant:
+            # Auto-inject XDF maps for 551B/C if the community XDF is available
+            self._try_auto_xdf(det.variant)
             self._main_chip_tab.load(self._main_rom, det.variant)
             self._compare_tab.set_rom_a(bytes(self._main_rom), det.variant)
             self._tabs.setCurrentIndex(1)  # jump to map editor
@@ -3232,6 +3382,128 @@ class MainWindow(QMainWindow):
 
     # ── KWPBridge overlay ──────────────────────────────────────────────────────
 
+    def _on_injector_scaling(self):
+        """Guided injector scaling wizard — rescales all fuel maps proportionally."""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+                                      QLabel, QSpinBox, QDoubleSpinBox, QCheckBox,
+                                      QDialogButtonBox, QFrame)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Injector scaling wizard")
+        dlg.setMinimumWidth(420)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(10)
+
+        # Info
+        info = QLabel(
+            "Rescales all fuel map values when changing injector size.\n"
+            "Formula: new_raw = old_raw x (stock_cc / new_cc)\n\n"
+            "Common injector sizes:\n"
+            "  Stock ABY/AAN: 293 cc/min\n"
+            "  RS2 / 034 Stage 1: 440 cc/min (Bosch) or 550 cc/min\n"
+            "  034 Stage 1 EV14: 550 cc/min\n"
+            "  034 Stage 1 440cc Siemens: 440 cc/min")
+        info.setStyleSheet(f"color:{FG_DIM};font-size:11px;background:{BG2};"
+                           f"padding:8px;border-radius:4px;")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color:{BORDER};"); lay.addWidget(sep)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        stock_spin = QSpinBox()
+        stock_spin.setRange(100, 2000); stock_spin.setValue(293)
+        stock_spin.setSuffix(" cc/min")
+        stock_spin.setStyleSheet(f"background:{BG2};color:{FG};border:1px solid {BORDER};border-radius:3px;padding:2px 4px;")
+
+        new_spin = QSpinBox()
+        new_spin.setRange(100, 2000); new_spin.setValue(440)
+        new_spin.setSuffix(" cc/min")
+        new_spin.setStyleSheet(f"background:{BG2};color:{FG};border:1px solid {BORDER};border-radius:3px;padding:2px 4px;")
+
+        factor_lbl = QLabel("Scale factor: 0.666×")
+        factor_lbl.setStyleSheet(f"color:{ACCENT};font-weight:bold;")
+
+        def _update_factor():
+            s, n = stock_spin.value(), new_spin.value()
+            if n > 0:
+                f = s / n
+                factor_lbl.setText(f"Scale factor: {f:.4f}×  ({f*100:.1f}% of original)")
+
+        stock_spin.valueChanged.connect(_update_factor)
+        new_spin.valueChanged.connect(_update_factor)
+        _update_factor()
+
+        # FPR scaling option
+        fpr_check = QCheckBox("Also adjust for different fuel pressure")
+        fpr_check.setStyleSheet(f"color:{FG};")
+        fpr_frame = QFrame()
+        fpr_lay = QHBoxLayout(fpr_frame)
+        fpr_lay.setContentsMargins(20, 0, 0, 0)
+        stock_fpr = QDoubleSpinBox(); stock_fpr.setRange(1.0, 10.0); stock_fpr.setValue(3.0)
+        stock_fpr.setSuffix(" bar stock")
+        new_fpr = QDoubleSpinBox(); new_fpr.setRange(1.0, 10.0); new_fpr.setValue(5.0)
+        new_fpr.setSuffix(" bar new")
+        for w in (stock_fpr, new_fpr):
+            w.setStyleSheet(f"background:{BG2};color:{FG};border:1px solid {BORDER};border-radius:3px;padding:2px 4px;")
+            fpr_lay.addWidget(w)
+        fpr_frame.setEnabled(False)
+        fpr_check.toggled.connect(fpr_frame.setEnabled)
+        fpr_check.toggled.connect(_update_factor)
+
+        form.addRow("Stock injector size:", stock_spin)
+        form.addRow("New injector size:", new_spin)
+        form.addRow("", factor_lbl)
+        form.addRow("", fpr_check)
+        form.addRow("", fpr_frame)
+        lay.addLayout(form)
+
+        warn = QLabel("\u26a0 This modifies ALL confirmed fuel maps in the ROM.\n"
+                      "Use Revert or Undo (Ctrl+Z) to roll back.")
+        warn.setStyleSheet(f"color:{AMBER};font-size:10px;")
+        warn.setWordWrap(True)
+        lay.addWidget(warn)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        def _apply():
+            s = stock_spin.value(); n = new_spin.value()
+            if n == 0: return
+            factor = s / n
+            if fpr_check.isChecked() and stock_fpr.value() > 0:
+                # Flow scales as sqrt(pressure ratio)
+                import math
+                factor *= math.sqrt(new_fpr.value() / stock_fpr.value())
+            # Apply to all confirmed fuel maps
+            from urrom.ecu_profiles import read_map, write_map
+            v = self._det.variant if self._det else None
+            if not v: return
+            fuel_maps = [m for m in v.main_maps
+                         if m.map_type == 'fuel' and m.confidence == 'CONFIRMED' and m.rows > 1]
+            for m in fuel_maps:
+                data = read_map(bytes(self._main_rom), m)
+                scaled = [[max(0, min(255, round(data[r][c] * factor)))
+                           for c in range(m.cols)] for r in range(m.rows)]
+                self._main_rom = bytearray(write_map(bytes(self._main_rom), m, scaled))
+            # Reload the map editor
+            self._main_chip_tab.load(self._main_rom, v)
+            self._compare_tab.set_rom_a(bytes(self._main_rom), v)
+            self._set_dirty()
+            n_maps = len(fuel_maps)
+            self._update_status(
+                f"Injector scaling applied: {s}cc → {n}cc  (×{factor:.4f}) "
+                f"across {n_maps} fuel maps")
+            dlg.accept()
+
+        btns.accepted.connect(_apply)
+        dlg.exec_()
+
     def _on_scan_issues(self):
         """Run automated tuning health checks and show results dialog."""
         if self._main_rom is None or self._det is None or not self._det.variant:
@@ -3328,6 +3600,45 @@ class MainWindow(QMainWindow):
         btns.rejected.connect(dlg.reject)
         lay.addWidget(btns)
         dlg.exec_()
+
+    def _try_auto_xdf(self, variant) -> None:
+        """
+        Silently inject XDF maps for known variants if the community XDF is present.
+        Runs transparently — no dialogs, no errors if XDF not found.
+        """
+        # This XDF uses prjmod firmware layout (64KB doubled ROM, 0x0202 firmware)
+        # Only inject into 551AA_0202 (prjmod) variants — stock 551B/C have different map offsets
+        XDF_MAP = {
+            "551AA_0202": "rs2_xdf/RS2 551B fuel timing.xdf",
+        }
+        sw_id = variant.software_id
+        xdf_rel = XDF_MAP.get(sw_id)
+        if not xdf_rel:
+            return
+        # Look relative to app and cwd
+        for base in [Path(__file__).parent.parent, Path(".")]:
+            xdf_path = base / xdf_rel
+            if xdf_path.exists():
+                break
+        else:
+            return  # XDF not found — silently skip
+
+        try:
+            from urrom.xdf_import import parse_xdf, xdf_to_mapdefs
+            result = parse_xdf(xdf_path)
+            new_maps = xdf_to_mapdefs(result, filter_min_cells=16)
+        except Exception:
+            return
+
+        if not new_maps:
+            return
+
+        existing_addrs = {m.main_addr for m in variant.main_maps + variant.boost_maps}
+        added = [m for m in new_maps if m.main_addr not in existing_addrs]
+        if added:
+            variant.main_maps = variant.main_maps + added
+            self._update_status(
+                f"Auto-imported {len(added)} maps from {xdf_path.name} ({sw_id})")
 
     def _on_compare_to_stock(self):
         """Auto-load the matching stock ROM from roms/ and open Compare tab."""
