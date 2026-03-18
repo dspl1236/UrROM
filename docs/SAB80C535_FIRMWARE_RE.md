@@ -128,14 +128,14 @@ From analysis of all 12 call sites to the ADC subroutine at `$1726`:
 
 | Channel | Pin | Call Sites | Evidence | Likely Sensor |
 |---------|-----|-----------|---------|--------------|
-| AIN0 | P6.0 | `$124E`, `$579C` | Plausibility checks (0x06/0xFC thresholds) | TPS or battery ref |
-| **AIN1** | P6.1 | `$169A`, `$2436`, `$2509` | Most frequent; table lookup at `$2190` | **MAF (hot-wire airflow)** |
-| AIN2 | P6.2 | `$1264` | Plausibility check sequence | Battery or TPS |
-| AIN3 | P6.3 | `$1259` | Plausibility check | ECT or O2S |
-| **AIN4** | P6.4 | `$4E5C` | 8-entry NTC binary search table at `$4E88` | **ECT (coolant NTC)** |
-| AIN5 | P6.5 | `$16A6` | Stored to xRAM page 4, addr `$15h` | IAT or O2S |
-| AIN6 | P6.6 | Not found | — | N75 solenoid / knock? |
-| AIN7 | P6.7 | Not found | — | O2S / Knock? |
+| AIN0 | P6.0 | `$124E`, `$579C` | Plausibility checks (0x06/0xFC) | TPS — confirmed vwnut8392 |
+| **AIN1** | P6.1 | `$169A`, `$2436`, `$2509` | Most frequent; table lookup at `$2190` | **UBAT (battery voltage)** — confirmed vwnut8392 |
+| AIN2 | P6.2 | `$1264` | Plausibility check | IAT (Intake Air Temp, pin 44) — confirmed |
+| AIN3 | P6.3 | `$1259` | Plausibility check | ECT (Coolant Temp, pin 45) — confirmed |
+| **AIN4** | P6.4 | `$4E5C` | 8-entry NTC binary search `$4E88` | **Free ADC** — coding plug pin 2, ECU pin 39 |
+| **AIN5** | P6.5 | `$16A6` | Stored to xRAM page 4 | **MAP sensor input (SD mode)** — SD inter-board wire target |
+| AIN6 | P6.6 | Pin 46 | Early: map switch | WB logging input (vwnut8392 patch) |
+| AIN7 | P6.7 | — | Lambda (S600 variant) | Preliminary |
 
 **Note:** The M2.3.2 MAP sensor is **internal to the ECU board** (on-board
 pressure transducer, accessed via vacuum port on the ECU case). It may use
@@ -176,10 +176,15 @@ The serial ISR at `$5A39` handles KWP1281 diagnostic communication.
 | ADC SFR interface (ADCON/ADDAT) | ✓ Confirmed |
 | ADC polling subroutine at `$1726` | ✓ Fully traced |
 | ADC channel encoding via DPL | ✓ Confirmed |
-| AIN1 = MAF (preliminary) | 🔶 High confidence, needs confirmation |
-| AIN4 = ECT (preliminary) | 🔶 High confidence from table shape |
-| AIN0/2/3/5/6/7 assignments | ❌ Needs deeper trace |
-| MAP sensor location | ❌ Likely internal — needs schematic |
+| AIN0 = TPS | ✓ Confirmed (vwnut8392) |
+| AIN1 = UBAT (battery voltage) | ✓ Confirmed (vwnut8392) — not MAF |
+| AIN2 = IAT (pin 44) | ✓ Confirmed (vwnut8392) |
+| AIN3 = ECT (pin 45) | ✓ Confirmed (vwnut8392) |
+| AIN4 = Free ADC (coding plug pin 2) | ✓ Confirmed (vwnut8392) |
+| AIN5 = SD MAP sensor input | ✓ Confirmed — SD inter-board wire target |
+| AIN6 = WB logging / pin 46 | ✓ Confirmed (vwnut8392 patcher) |
+| MAP sensor location | ✓ Boost board vacuum port → inter-board wire → AN5 |
+| Bosch schematic IDs (S250/S700/S701/S703) | ✓ Confirmed from Y261 C20/C27 schematics |
 | Background loop `$0438` — fuel lookup | ❌ Not yet disassembled |
 | Crank ISR `$03CA` — injection calc | ❌ Not yet disassembled |
 | Rev limit — address confirmed | ❌ Likely in crank ISR code |
