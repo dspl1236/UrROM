@@ -1445,6 +1445,19 @@ class MainChipTab(QWidget):
         self._table = MapTable()
         layout.addWidget(self._table)
 
+        # Statistics strip — updates on selection change
+        stats_row = QHBoxLayout()
+        self._stats_min = QLabel("min —")
+        self._stats_max = QLabel("max —")
+        self._stats_mean = QLabel("mean —")
+        self._stats_range = QLabel("")
+        for lbl in (self._stats_min, self._stats_max, self._stats_mean, self._stats_range):
+            lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+            stats_row.addWidget(lbl)
+            stats_row.addSpacing(16)
+        stats_row.addStretch()
+        layout.addLayout(stats_row)
+
         # Status row
         status_row = QHBoxLayout()
         self._addr_lbl = QLabel("")
@@ -1721,15 +1734,15 @@ class MainChipTab(QWidget):
                         if decode:
                             dv = decode(rv)
                             if m.map_type == "ign":
-                                bg = _ign_colour(float(dv) if dv else 0)
+                                bg_hex = _ign_colour(float(dv) if dv else 0).name()
                             elif m.map_type == "fuel":
-                                bg = _fuel_colour(rv)
+                                bg_hex = _fuel_colour(rv).name()
                             else:
-                                bg = _heat(rv, vmin, vmax)
+                                bg_hex = _heat(rv, vmin, vmax).name()
                         else:
-                            bg = _heat(rv, vmin, vmax)
+                            bg_hex = _heat(rv, vmin, vmax).name()
                         cells_html += (
-                            f'<td style="background:{bg.name()};'
+                            f'<td style="background:{bg_hex};'
                             f'width:{CELL_SIZE}px;height:{CELL_SIZE}px;'
                             f'padding:0;border:none;"></td>')
                     cells_html += "</tr><tr>"
@@ -1771,6 +1784,43 @@ class MainChipTab(QWidget):
                 # Show raw bytes
                 self._table._display_decode = None
             self._table._redraw()
+
+    def _update_stats(self):
+        """Recompute min/max/mean of selected (or all) cells and update strip."""
+        if not self._maps or self._table._map_def is None:
+            return
+        sel = self._table.selectedRanges()
+        if sel:
+            cells = self._table._selected_cells()
+            vals = []
+            for disp_r, c in cells:
+                raw_r = self._table._disp_to_raw(disp_r)
+                if 0 <= raw_r < len(self._table._current_raw):
+                    rv = self._table._current_raw[raw_r][c]
+                    decode = self._table._map_def.decode
+                    vals.append(decode(rv) if decode else float(rv))
+            label = f"selection ({len(vals)} cells)"
+        else:
+            m = self._maps[self._map_combo.currentIndex()]
+            decode = m.decode
+            vals = []
+            for r in range(m.rows):
+                for c in range(m.cols):
+                    rv = self._table._current_raw[r][c] if self._table._current_raw else 0
+                    vals.append(decode(rv) if decode else float(rv))
+            label = f"all ({m.rows}×{m.cols})"
+
+        if not vals:
+            return
+        vmin = min(vals); vmax = max(vals)
+        mean = sum(vals) / len(vals)
+        unit = self._maps[self._map_combo.currentIndex()].unit or ""
+
+        def _f(v): return f"{v:.1f}" if isinstance(v, float) and v != int(v) else str(int(v))
+        self._stats_min.setText(f"min {_f(vmin)} {unit}")
+        self._stats_max.setText(f"max {_f(vmax)} {unit}")
+        self._stats_mean.setText(f"mean {_f(mean)} {unit}")
+        self._stats_range.setText(f"range {_f(vmax-vmin)} {unit}  ·  {label}")
 
     def _on_revert(self):
         self._table.revert()
@@ -2379,8 +2429,24 @@ class CompareTab(QWidget):
         self._summary.setStyleSheet(f"color: {FG_DIM}; font-size: 10px;")
         layout.addWidget(self._summary)
 
+        # Delta summary — one coloured block per map showing change intensity
+        self._delta_strip = QWidget()
+        self._delta_strip.setFixedHeight(18)
+        self._delta_strip.setVisible(False)
+        self._delta_strip.setToolTip("Change intensity per map — click to jump")
+        layout.addWidget(self._delta_strip)
+
         # Export row
         exp_row = QHBoxLayout()
+        self._jump_btn = QPushButton("⇒ Most changed map")
+        self._jump_btn.setEnabled(False)
+        self._jump_btn.setFixedHeight(24)
+        self._jump_btn.setStyleSheet(
+            f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:0 10px;font-size:10px;}}"
+            f"QPushButton:hover{{border-color:{ACCENT};}}")
+        self._jump_btn.clicked.connect(self._on_jump_most_changed)
+        exp_row.addWidget(self._jump_btn)
         exp_row.addStretch()
         self._export_btn = QPushButton("Export diff report…")
         self._export_btn.setEnabled(False)
@@ -2532,6 +2598,8 @@ class CompareTab(QWidget):
 
         total = nrows * ncols
         self._export_btn.setEnabled(bool(self._rom_b))
+        self._jump_btn.setEnabled(bool(self._rom_b))
+        self._update_delta_strip()
         if raw_b:
             pct = 100 * changed_count / total
             # Compute max/min decoded delta for headline stat
@@ -2559,6 +2627,25 @@ class CompareTab(QWidget):
                 f"{m.name}  \u2014  {changed_count}/{total} cells changed  ({pct:.0f}%){range_str}")
         else:
             self._summary.setText(f"Load ROM B to see delta  \u2014  {m.name}")
+
+    def _on_jump_most_changed(self):
+        """Switch map selector to the map with the largest number of changed cells."""
+        if self._rom_a is None or self._rom_b is None or not self._maps:
+            return
+        from urrom.ecu_profiles import read_map
+        best_idx, best_count = 0, 0
+        for i, m in enumerate(self._maps):
+            if m.rows <= 1: continue
+            try:
+                ra = read_map(self._rom_a, m)
+                rb = read_map(self._rom_b, m)
+                count = sum(1 for r in range(m.rows) for c in range(m.cols)
+                            if ra[r][c] != rb[r][c])
+                if count > best_count:
+                    best_count, best_idx = count, i
+            except Exception:
+                pass
+        self._map_combo.setCurrentIndex(best_idx)
 
     def _on_export_diff(self):
         """Export a text diff report for all changed maps."""
@@ -2606,6 +2693,59 @@ class CompareTab(QWidget):
         Path(path).write_text("\n".join(lines))
         QMessageBox.information(self, "Exported",
                                 f"Diff report saved to {Path(path).name}")
+
+    def _update_delta_strip(self):
+        """Build the coloured delta-intensity strip above the export row."""
+        if self._rom_a is None or self._rom_b is None or not self._maps:
+            self._delta_strip.setVisible(False)
+            return
+        from urrom.ecu_profiles import read_map
+        from PyQt5.QtWidgets import QHBoxLayout, QLabel
+        from PyQt5.QtCore import Qt
+
+        # Clear old children
+        old_lay = self._delta_strip.layout()
+        if old_lay:
+            while old_lay.count():
+                item = old_lay.takeAt(0)
+                if item.widget(): item.widget().deleteLater()
+        else:
+            old_lay = QHBoxLayout(self._delta_strip)
+            old_lay.setContentsMargins(0,0,0,0)
+            old_lay.setSpacing(1)
+
+        max_pct = 0.0
+        data = []
+        for m in self._maps:
+            if m.rows <= 1: continue
+            try:
+                ra = read_map(self._rom_a, m)
+                rb = read_map(self._rom_b, m)
+                changed = sum(1 for r in range(m.rows) for c in range(m.cols)
+                              if ra[r][c] != rb[r][c])
+                pct = changed / (m.rows * m.cols)
+                data.append((m.name, pct, changed))
+                max_pct = max(max_pct, pct)
+            except Exception:
+                data.append((m.name, 0.0, 0))
+
+        for name, pct, count in data:
+            intensity = pct / max_pct if max_pct > 0 else 0
+            if intensity < 0.05:
+                bg = BG2
+            elif intensity < 0.3:
+                bg = "#1a2a10"
+            elif intensity < 0.6:
+                bg = "#2a3a10"
+            else:
+                bg = "#3a5010"
+            cell = QLabel()
+            cell.setFixedHeight(16)
+            cell.setToolTip(f"{name}: {count} cells changed ({pct*100:.0f}%)")
+            cell.setStyleSheet(f"background:{bg};border:none;")
+            old_lay.addWidget(cell, 1)
+
+        self._delta_strip.setVisible(True)
 
     def _clear_tables(self):
         for tbl in (self._table_a, self._table_d, self._table_b):
@@ -3091,6 +3231,103 @@ class MainWindow(QMainWindow):
         self._update_status(f"Saved → {Path(path).name}  ({len(out_bytes):,} bytes){note_str}")
 
     # ── KWPBridge overlay ──────────────────────────────────────────────────────
+
+    def _on_scan_issues(self):
+        """Run automated tuning health checks and show results dialog."""
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            QMessageBox.information(self, "Scan for issues", "Load a ROM first.")
+            return
+
+        from urrom.tuning_checks import run_all_checks
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                      QLabel, QTableWidget, QTableWidgetItem,
+                                      QDialogButtonBox, QHeaderView, QProgressBar)
+
+        v   = self._det.variant
+        crc = self._det.crc32
+        boost = bytes(self._boost_rom) if self._boost_rom else None
+
+        # Run checks (may take a moment for large map sets)
+        issues = run_all_checks(bytes(self._main_rom), v, boost_rom=boost, crc32=crc)
+
+        # Build results dialog
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Scan results — {v.name}")
+        dlg.setMinimumSize(700, 440)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+
+        # Summary row
+        n_err  = sum(1 for i in issues if i.severity == 'error')
+        n_warn = sum(1 for i in issues if i.severity == 'warning')
+        n_info = sum(1 for i in issues if i.severity == 'info')
+
+        summary_lbl = QLabel(
+            f"<b style='color:{'#ff4444' if n_err else '#2dff6e'};'>"
+            f"{'⚠ ' if n_err else '✓ '}{n_err} errors</b>"
+            f"  ·  <span style='color:#ffaa00;'>{n_warn} warnings</span>"
+            f"  ·  <span style='color:#6e7681;'>{n_info} info</span>"
+            f"  ·  {len(issues)} total")
+        summary_lbl.setTextFormat(Qt.RichText)
+        summary_lbl.setStyleSheet("font-size:12px;padding:4px 0;")
+        lay.addWidget(summary_lbl)
+
+        # Issues table
+        tbl = QTableWidget(len(issues), 4)
+        tbl.setHorizontalHeaderLabels(["Severity", "Category", "Map", "Description"])
+        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        tbl.setEditTriggers(QTableWidget.NoEditTriggers)
+        tbl.setAlternatingRowColors(True)
+        tbl.setStyleSheet(
+            f"QTableWidget{{background:{BG2};color:{FG};gridline-color:{BORDER};}}"
+            f"QTableWidget::item:alternate{{background:{BG};}}")
+        tbl.verticalHeader().setVisible(False)
+        lay.addWidget(tbl)
+
+        SEV_COLOURS = {'error': RED, 'warning': AMBER, 'info': FG_DIM}
+        for row_i, iss in enumerate(issues):
+            col = SEV_COLOURS.get(iss.severity, FG)
+            for col_i, text in enumerate([
+                iss.severity.upper(), iss.category,
+                iss.map_name, iss.description
+            ]):
+                it = QTableWidgetItem(text)
+                it.setData(Qt.UserRole, iss)
+                if col_i == 0:
+                    it.setForeground(QBrush(QColor(col)))
+                tbl.setItem(row_i, col_i, it)
+
+        def _on_issue_click(row, col):
+            it = tbl.item(row, 0)
+            if not it: return
+            iss = it.data(Qt.UserRole)
+            if not iss or not iss.cell or iss.cell[1] is None:
+                return
+            # Jump to the cell in the map editor
+            try:
+                map_idx = next(i for i, m in enumerate(self._main_chip_tab._maps)
+                               if m.name == iss.map_name)
+                self._tabs.setCurrentWidget(self._main_chip_tab)
+                self._main_chip_tab._map_combo.setCurrentIndex(map_idx)
+                r, c = iss.cell
+                disp_r = self._main_chip_tab._table._map_def.rows - 1 - r
+                self._main_chip_tab._table.scrollToItem(
+                    self._main_chip_tab._table.item(disp_r, c))
+                self._main_chip_tab._table.setCurrentCell(disp_r, c)
+            except (StopIteration, Exception):
+                pass
+
+        tbl.cellDoubleClicked.connect(_on_issue_click)
+
+        hint = QLabel("Double-click a row to jump to that cell in the map editor.")
+        hint.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+        lay.addWidget(hint)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+        dlg.exec_()
 
     def _on_compare_to_stock(self):
         """Auto-load the matching stock ROM from roms/ and open Compare tab."""

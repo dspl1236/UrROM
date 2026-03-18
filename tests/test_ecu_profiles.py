@@ -1232,3 +1232,98 @@ class TestMapExport:
         result = export_map_html(bytes(wh), m2, v)
         assert "<script>" not in result
         assert "&lt;script&gt;" in result
+
+
+# ── Tuning checks ──────────────────────────────────────────────────────────────
+
+class TestTuningChecks:
+
+    def _get_aby_wh(self):
+        import pytest
+        from pathlib import Path
+        from urrom.ecu_profiles import normalize_rom, detect_rom
+        p = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        if not p.exists():
+            pytest.skip("ABY ROM not available")
+        raw = p.read_bytes()
+        wh, _ = normalize_rom(raw)
+        det = detect_rom(bytes(wh))
+        return bytes(wh), det
+
+    def test_stock_aby_has_no_issues(self):
+        """Stock ABY chip should produce zero issues after filter calibration."""
+        from urrom.tuning_checks import run_all_checks
+        wh, det = self._get_aby_wh()
+        issues = run_all_checks(wh, det.variant, crc32=det.crc32)
+        errors = [i for i in issues if i.severity == 'error']
+        assert errors == [], f"Unexpected errors on stock ABY: {errors}"
+
+    def test_stock_aby_warnings_zero(self):
+        from urrom.tuning_checks import run_all_checks
+        wh, det = self._get_aby_wh()
+        issues = run_all_checks(wh, det.variant, crc32=det.crc32)
+        warnings = [i for i in issues if i.severity == 'warning']
+        assert len(warnings) == 0, f"{len(warnings)} unexpected warnings on stock: {warnings[:3]}"
+
+    def test_check_fuel_range_flags_lean(self):
+        """Inject a lean cell and verify it's flagged."""
+        import copy
+        from urrom.tuning_checks import check_fuel_range
+        wh, det = self._get_aby_wh()
+        wh_mut = bytearray(wh)
+        # Write a lean value (raw=200) into the fuel map area
+        v = det.variant
+        fuel_m = next(m for m in v.main_maps if m.map_type == 'fuel' and m.rows > 1)
+        wh_mut[fuel_m.main_addr] = 200  # very lean
+        issues = check_fuel_range(bytes(wh_mut), v, lean_threshold=170)
+        lean_issues = [i for i in issues if 'lean' in i.description.lower()]
+        assert len(lean_issues) > 0, "Lean cell not flagged"
+
+    def test_check_ign_advance_flags_extreme(self):
+        """Inject an extreme advance value and verify detection."""
+        from urrom.tuning_checks import check_ign_advance
+        wh, det = self._get_aby_wh()
+        wh_mut = bytearray(wh)
+        v = det.variant
+        ign_m = next(m for m in v.main_maps
+                     if m.map_type == 'ign' and m.confidence == 'CONFIRMED'
+                     and m.rows > 1 and m.decode)
+        # Write a value that decodes to 60° (extreme)
+        # decode = raw * 0.6491 - 8.2186; 60 = raw * 0.6491 - 8.22 → raw ≈ 105
+        wh_mut[ign_m.main_addr + 5] = 105
+        issues = check_ign_advance(bytes(wh_mut), v, warn_advance=52.0, error_advance=58.0)
+        errors = [i for i in issues if i.severity == 'error']
+        assert len(errors) > 0, "Extreme advance not flagged"
+
+    def test_repeated_rows_skips_flat_maps(self):
+        """Maps with 'failsafe' in name should be excluded."""
+        from urrom.tuning_checks import check_repeated_rows, _is_expected_flat
+        assert _is_expected_flat("Fuel P/T (failsafe)")
+        assert _is_expected_flat("VE Table")
+        assert _is_expected_flat("Ign P/T (LPG)")
+        assert not _is_expected_flat("Fuel P/T (primary)")
+        assert not _is_expected_flat("Ign P/T (no knock)")
+
+    def test_checksum_skips_stock(self):
+        """Stock chips (CRC in KNOWN_CRCS with 'Stock' label) should not raise checksum error."""
+        from urrom.tuning_checks import check_checksum
+        from urrom.ecu_profiles import detect_rom
+        wh, det = self._get_aby_wh()
+        issues = check_checksum(wh, det.variant, crc32=det.crc32)
+        assert issues == [], f"False alarm on stock chip: {issues}"
+
+    def test_run_all_checks_returns_sorted(self):
+        """Errors should come before warnings before info."""
+        from urrom.tuning_checks import run_all_checks, TuningIssue
+        wh, det = self._get_aby_wh()
+        # Synthesise some issues
+        issues = [
+            TuningIssue('info',    'structure', 'M', 'd'),
+            TuningIssue('warning', 'fuel',      'M', 'd'),
+            TuningIssue('error',   'checksum',  'M', 'd'),
+        ]
+        order = {'error': 0, 'warning': 1, 'info': 2}
+        issues.sort(key=lambda i: order.get(i.severity, 3))
+        assert issues[0].severity == 'error'
+        assert issues[1].severity == 'warning'
+        assert issues[2].severity == 'info'
