@@ -122,24 +122,27 @@ MOV ADCON, #C0h   ; ADEX=1, ADCI=1 (extended ref, interrupt flag clear)
 
 ---
 
-## ADC Channel Map (AAN 551AA — Preliminary)
+## ADC Channel Map (AAN 551AA — Confirmed)
 
-From analysis of all 12 call sites to the ADC subroutine at `$1726`:
+Confirmed from Bosch schematic (Y261 C27 020), vwnut8392 S2Forum documentation,
+and firmware disassembly call-site analysis:
 
-| Channel | Pin | Call Sites | Evidence | Likely Sensor |
-|---------|-----|-----------|---------|--------------|
-| AIN0 | P6.0 | `$124E`, `$579C` | Plausibility checks (0x06/0xFC) | TPS — confirmed vwnut8392 |
-| **AIN1** | P6.1 | `$169A`, `$2436`, `$2509` | Most frequent; table lookup at `$2190` | **UBAT (battery voltage)** — confirmed vwnut8392 |
-| AIN2 | P6.2 | `$1264` | Plausibility check | IAT (Intake Air Temp, pin 44) — confirmed |
-| AIN3 | P6.3 | `$1259` | Plausibility check | ECT (Coolant Temp, pin 45) — confirmed |
-| **AIN4** | P6.4 | `$4E5C` | 8-entry NTC binary search `$4E88` | **Free ADC** — coding plug pin 2, ECU pin 39 |
-| **AIN5** | P6.5 | `$16A6` | Stored to xRAM page 4 | **MAP sensor input (SD mode)** — SD inter-board wire target |
-| AIN6 | P6.6 | Pin 46 | Early: map switch | WB logging input (vwnut8392 patch) |
-| AIN7 | P6.7 | — | Lambda (S600 variant) | Preliminary |
+| Channel | Pin | ECU connector | Confirmed sensor | Evidence |
+|---------|-----|--------------|-----------------|----------|
+| AIN0 | P6.0 | — | **TPS** (Throttle Position Sensor) | vwnut8392 / S2Forum |
+| **AIN1** | P6.1 | 18 `ADK` | **MAF** (hot-wire airflow) | Schematic trace + call sites `$169A`, `$2436`, `$2509` |
+| AIN2 | P6.2 | — | **UBAT** (Battery voltage) | vwnut8392 |
+| AIN3 | P6.3 | 17 `TAN` | **IAT** (Intake Air Temp, ECU pin 44) | Schematic confirmed |
+| **AIN4** | P6.4 | 16 `TMOT` | **ECT** (Coolant Temp NTC, ECU pin 45) | Schematic + NTC table at `$4E88` |
+| **AIN5** | P6.5 | — | Auto-trans stock → **MAP SD input (prjmod)** | vwnut8392 confirmed ★ |
+| AIN6 | P6.6 | 46 | Map-switch (early ECUs) → WB logging | vwnut8392 |
+| AIN7 | P6.7 | — | Lambda / O2S (S600 variant) | Preliminary |
 
-**Note:** The M2.3.2 MAP sensor is **internal to the ECU board** (on-board
-pressure transducer, accessed via vacuum port on the ECU case). It may use
-a separate ADC path or a dedicated hardware interface — not seen on Port 6.
+★ **AIN5 SD MAP path:** vwnut8392 (S2Forum "Patcher for PRJmod"): *"AN5 = not used,
+automatic related. (Used for MAP sensor input.)"* — removing R660 and soldering the
+boost→motor inter-board wire routes MAP sensor output to AIN5 on S250.
+The M2.3.2 MAP sensor circuit (S200 on Grundplatte) reaches the CPU via the
+standard Port 6 ADC path — no separate hardware interface exists.
 
 ### ECT Table at `$4E88h` (AIN4 result used as index)
 
