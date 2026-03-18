@@ -3729,20 +3729,29 @@ class MainWindow(QMainWindow):
         sw_id = self._det.variant.software_id
         # Map software IDs to bundled stock ROM files
         # Stock baseline ROMs bundled with UrROM
-        # 034EFI prjmod tunes (551AA_0202) compare against the prjmod stock rip chip
-        # which is itself a prjmod ROM, so deltas show only the tune changes
+        # Confirmed real direct chip reads: ABY 551B and ADU 551C only
+        # 551A and 551AA chips are factory-erased (blank calibration)
+        # RS2 D02 (551B_D02) is partial (high-RPM area blank)
         STOCK_ROMS = {
-            "551B":       "roms/aby_fuel-ign_551aa.bin",
-            "551C":       "roms/adu_fuel-ign_551c.bin",
-            "551AA":      "roms/aan_fuel-ign_551aa.bin",
-            "551A":       "roms/aan_fuel-ign_551a.bin",
-            "551AA_0202": "roms/aan_fuel-ign_551aa.bin",
-            "551B_D02":   "roms/aby_fuel-ign_551aa.bin",
-            "404":        "roms/3b_fuel-ign_404aa.bin",
+            "551B":       "roms/aby_fuel-ign_551aa.bin",    # ABY S2 Coupe — REAL ✓
+            "551C":       "roms/adu_fuel-ign_551c.bin",      # ADU RS2 Avant — REAL ✓
+            "551AA":      None,                               # BLANK — no usable baseline
+            "551A":       None,                               # BLANK — no usable baseline
+            "551AA_0202": "roms/aan_fuel-ign_551aa.bin",    # PRJmod — compare to prjmod base
+            "551B_D02":   "roms/rs2_d02_fuel-ign_551b.bin", # RS2 D02 — PARTIAL baseline
+            "404":        "roms/3b_fuel-ign_404aa.bin",      # 3B 200 20vT — REAL ✓
         }
         # Find the app base directory
         app_base = Path(__file__).parent.parent
         stock_rel = STOCK_ROMS.get(sw_id)
+        if stock_rel is None and sw_id in STOCK_ROMS:
+            # Explicitly mapped to None = blank chip, no calibration baseline
+            QMessageBox.information(self, "Compare to stock",
+                f"No calibration baseline available for {sw_id}.\n"
+                f"The {sw_id} chips in our collection have factory-erased "
+                "calibration (all 0x02).\n"
+                "Use the ADU 551C or ABY 551B as the nearest reference.")
+            return
         if not stock_rel:
             QMessageBox.information(self, "Compare to stock",
                 f"No bundled stock ROM for variant {sw_id}.\n"
