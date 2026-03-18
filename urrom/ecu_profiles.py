@@ -1751,8 +1751,8 @@ ALL_VARIANTS: list[ROMVariant] = [
 # Working half = entire file for 3B/V8.
 
 KNOWN_CRCS: dict[int, tuple[str, str]] = {
-    0x0808B2E5: ("551a",       "ABY/early-AAN fuel/ign, build 0x0274 (lower 32KB working half)"),
-    0xBF11DB48: ("551aa",      "AAN fuel/ign, build 0x0812 (lower 32KB working half, truncated read)"),
+    0x0808B2E5: ("551B",       "Stock — ABY/early-AAN fuel/ign WH, build 0x0274 (lower 32KB only)"),
+    0xBF11DB48: ("551AA",      "BLANK AAN — factory-erased 4A0907551AA (D03PMC). Calibration all 0x02, ID string only. 65535B reader error. NOT a usable tuning baseline."),
     0xF6E33043: ("551b_boost", "Stock — ABY boost chip, 32KB, 895907551B, build 0x0202 (direct read)"),
     0x4A3CB7DC: ("551b_boost", "ABY boost chip WH core 16KB, 895907551B, build 0x0202"),
     # RS2 D02 (early distributor RS2) — from RS2_551B_bins_XDF.zip
@@ -1934,11 +1934,17 @@ def check_chip_pair(fuel_crc: int, boost_crc: int) -> tuple[str, str]:
     if boost_crc in expected:
         return ('ok', 'Boost chip confirmed: correct pair for this fuel chip.')
     fuel_label  = KNOWN_CRCS.get(fuel_crc,  (None, 'unknown'))[1]
-    boost_label = KNOWN_CRCS.get(boost_crc, (None, 'unknown'))[1]
-    exp_labels  = [KNOWN_CRCS.get(c, (None, f'0x{c:08X}'))[1] for c in expected]
+    # Use short labels (strip long description — just keep name before first dash)
+    def _short(label: str) -> str:
+        return label.split(" — ")[0].split(". ")[0][:60]
+    boost_short = _short(KNOWN_CRCS.get(boost_crc, (None, f"0x{boost_crc:08X}"))[1])
+    fuel_short  = _short(fuel_label)
+    exp_shorts  = [_short(KNOWN_CRCS.get(c, (None, f"0x{c:08X}"))[1]) for c in expected]
     return ('mismatch',
-            f'Boost chip MISMATCH: loaded "{boost_label}" — '
-            f'"{fuel_label}" requires: {" OR ".join(exp_labels)}')
+            f'Boost chip MISMATCH\n'
+            f'Loaded:   {boost_short}\n'
+            f'Required: {" OR ".join(exp_shorts)}\n'
+            f'Fuel chip: {fuel_short}')
 
 
 # ── Chip hardware requirements ───────────────────────────────────────────────

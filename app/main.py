@@ -1325,6 +1325,17 @@ class MainChipTab(QWidget):
         toolbar.addWidget(QLabel("Map:"))
         toolbar.addWidget(self._map_combo)
 
+        from PyQt5.QtWidgets import QLineEdit
+        self._search_box = QLineEdit()
+        self._search_box.setPlaceholderText("Search maps…")
+        self._search_box.setFixedWidth(140)
+        self._search_box.setStyleSheet(
+            f"QLineEdit{{background:{BG2};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:2px 6px;font-size:10px;}}"
+            f"QLineEdit:focus{{border-color:{ACCENT};}}")
+        self._search_box.textChanged.connect(self._on_search_maps)
+        toolbar.addWidget(self._search_box)
+
         self._conf_badge = QLabel("")
         self._conf_badge.setStyleSheet(
             f"font-size: 10px; padding: 2px 6px; border-radius: 3px; "
@@ -1432,6 +1443,87 @@ class MainChipTab(QWidget):
         self._status_fn = fn
         self._table.set_status_callback(fn)
 
+    def _on_search_maps(self, text: str):
+        """Filter map combo to entries matching search text (name or address)."""
+        if not self._maps:
+            return
+        text = text.strip().lower()
+        self._map_combo.blockSignals(True)
+        self._map_combo.clear()
+        matched = []
+        for i, m in enumerate(self._maps):
+            if (not text
+                    or text in m.name.lower()
+                    or text in f"0x{m.main_addr:04x}"
+                    or text in (m.unit or "").lower()
+                    or text in (m.map_type or "").lower()):
+                label = f"{m.name}  [{m.rows}\xd7{m.cols}  {m.unit}]"
+                self._map_combo.addItem(label, userData=i)
+                matched.append(i)
+        self._map_combo.blockSignals(False)
+        if matched:
+            self._map_combo.setCurrentIndex(0)
+            self._on_map_selected_by_real_idx(matched[0])
+        if text:
+            self._search_box.setStyleSheet(
+                f"QLineEdit{{background:{BG2};color:{GREEN if matched else RED};"
+                f"border:1px solid {'#2dff6e' if matched else '#ff4444'};"
+                f"border-radius:3px;padding:2px 6px;font-size:10px;}}")
+        else:
+            self._search_box.setStyleSheet(
+                f"QLineEdit{{background:{BG2};color:{FG};border:1px solid {BORDER};"
+                f"border-radius:3px;padding:2px 6px;font-size:10px;}}")
+
+    def _on_map_selected_by_real_idx(self, real_idx: int):
+        """Load map by its real index in self._maps (not combo index)."""
+        if 0 <= real_idx < len(self._maps):
+            # Temporarily update _on_map_selected to use real idx
+            m = self._maps[real_idx]
+            from urrom.ecu_profiles import get_axes
+            rpm_axis, load_axis = get_axes(bytes(self._rom), m, self._variant)
+            self._table.load(self._rom, m, rpm_axis, load_axis)
+            try:
+                self._table.itemChanged.disconnect()
+            except TypeError:
+                pass
+            self._table.itemChanged.connect(lambda _: self.on_table_changed())
+            if hasattr(self, "_status_fn"):
+                self._table.set_status_callback(self._status_fn)
+            self._desc_lbl.setText(m.description)
+            self._addr_lbl.setText(f"Address: 0x{m.main_addr:04X}  (working half offset)")
+            self._size_lbl.setText(f"{m.rows}\xd7{m.cols} = {m.size} bytes")
+            conf = m.confidence
+            conf_colour = (GREEN if conf=="CONFIRMED" else AMBER if conf=="PROVISIONAL" else RED)
+            self._conf_badge.setText(conf)
+            self._conf_badge.setStyleSheet(
+                f"font-size:10px;padding:2px 6px;border-radius:3px;"
+                f"color:{conf_colour};background:{BG3};border:1px solid {conf_colour};")
+            self._revert_btn.setEnabled(False)
+            self._update_sd_bar(m)
+
+    def _update_sd_bar(self, m):
+        """SD mode notice bar logic extracted for reuse."""
+        v = self._variant
+        v_id = v.software_id if v else ""
+        if v_id == "551AA_0202":
+            from urrom.hw_patches import SD_VE_TABLE_OFFSET, SD_VE_TABLE_SIZE, _is_real_ve_table
+            ve_bytes = bytes(self._rom[SD_VE_TABLE_OFFSET: SD_VE_TABLE_OFFSET + SD_VE_TABLE_SIZE])
+            sd_active = _is_real_ve_table(ve_bytes)
+            if m.main_addr == SD_VE_TABLE_OFFSET:
+                self._sd_bar.setText(
+                    "⚡ Speed-density VE table — " +
+                    ("active (non-blank). Edit to change VE targets. MAF maps ignored in SD mode."
+                     if sd_active else
+                     "blank (0x02 fill). ROM uses MAF-based fuelling."))
+                self._sd_bar.setVisible(True)
+            elif sd_active and m.map_type == "fuel":
+                self._sd_bar.setText("⚠ SD mode active — VE table populated. Fuel P/T map may not be used.")
+                self._sd_bar.setVisible(True)
+            else:
+                self._sd_bar.setVisible(False)
+        else:
+            self._sd_bar.setVisible(False)
+
     def clear(self):
         self._variant = None
         self._rom = None
@@ -1444,7 +1536,16 @@ class MainChipTab(QWidget):
         self._revert_btn.setEnabled(False)
 
     def _on_map_selected(self, idx: int):
-        if not self._maps or idx < 0 or idx >= len(self._maps):
+        if not self._maps or idx < 0:
+            return
+        # When search is active, combo items carry userData = real index
+        real_idx = self._map_combo.itemData(idx)
+        if real_idx is not None:
+            if real_idx < 0 or real_idx >= len(self._maps):
+                return
+            self._on_map_selected_by_real_idx(real_idx)
+            return
+        if idx >= len(self._maps):
             return
         m = self._maps[idx]
         v = self._variant
@@ -1477,32 +1578,7 @@ class MainChipTab(QWidget):
             f"color: {conf_colour}; background: {BG3}; border: 1px solid {conf_colour};")
         self._revert_btn.setEnabled(False)
 
-        # SD mode detection: show notice when viewing VE table or when VE table
-        # is active and user is editing fuel maps (warn they may be in SD mode)
-        v_id = v.software_id if v else ""
-        if v_id == "551AA_0202":
-            from urrom.hw_patches import SD_VE_TABLE_OFFSET, SD_VE_TABLE_SIZE, _is_real_ve_table
-            ve_bytes = bytes(self._rom[SD_VE_TABLE_OFFSET: SD_VE_TABLE_OFFSET + SD_VE_TABLE_SIZE])
-            sd_active = _is_real_ve_table(ve_bytes)
-            if m.main_addr == SD_VE_TABLE_OFFSET:
-                if sd_active:
-                    self._sd_bar.setText(
-                        "⚡ Speed-density VE table — active (non-blank values detected). "
-                        "Edit this table to change VE targets. MAF fuel maps ignored in SD mode.")
-                else:
-                    self._sd_bar.setText(
-                        "ℹ VE table is blank (all 0x02). This ROM uses MAF-based fuelling. "
-                        "Populate this table to enable speed-density mode.")
-                self._sd_bar.setVisible(True)
-            elif sd_active and m.map_type == "fuel":
-                self._sd_bar.setText(
-                    "⚠ SD mode active — VE table is populated. "
-                    "Fuel P/T map may not be used. Check VE Table tab.")
-                self._sd_bar.setVisible(True)
-            else:
-                self._sd_bar.setVisible(False)
-        else:
-            self._sd_bar.setVisible(False)
+        self._update_sd_bar(m)
 
     def _on_toggle_decode(self):
         """Toggle between showing decoded values (°BTDC, AFR) and raw bytes."""
@@ -1739,37 +1815,52 @@ class HardwareTab(QWidget):
         self._lc_rows: list[tuple] = []  # (name_lbl, val_lbl, raw_lbl)
 
         LC_SCALARS = [
-            ("Hard RPM limit",        0x0617, lambda b: b * 40,   "RPM"),
-            ("LC speed threshold",    0x0620, lambda b: b * 2,    "km/h"),
-            ("LC ign retard RPM",     0x0625, lambda b: b * 40,   "RPM"),
-            ("LC ign angle (ATDC)",   0x062B, lambda b: b * 1,    "°"),
-            ("NLS min RPM",           0x063D, lambda b: b * 40,   "RPM"),
-            ("NLS ign angle (ATDC)",  0x0643, lambda b: b * 1,    "°"),
-            ("Spark cut knock RPM",   0x064C, lambda b: b * 40,   "RPM"),
-            ("LC ign cut RPM",        0x066E, lambda b: b * 40,   "RPM"),
+            # (name, wh_off, decode_fn, encode_fn, unit)
+            ("Hard RPM limit",        0x0617, lambda b: b*40,   lambda d: d//40,  "RPM"),
+            ("LC speed threshold",    0x0620, lambda b: b*2,    lambda d: d//2,   "km/h"),
+            ("LC ign retard RPM",     0x0625, lambda b: b*40,   lambda d: d//40,  "RPM"),
+            ("LC ign angle (ATDC)",   0x062B, lambda b: b,      lambda d: d,      "°"),
+            ("NLS min RPM",           0x063D, lambda b: b*40,   lambda d: d//40,  "RPM"),
+            ("NLS ign angle (ATDC)",  0x0643, lambda b: b,      lambda d: d,      "°"),
+            ("Spark cut knock RPM",   0x064C, lambda b: b*40,   lambda d: d//40,  "RPM"),
+            ("LC ign cut RPM",        0x066E, lambda b: b*40,   lambda d: d//40,  "RPM"),
         ]
 
-        for name, wh_off, decode_fn, unit in LC_SCALARS:
+        for name, wh_off, decode_fn, encode_fn, unit in LC_SCALARS:
             row_w = QWidget()
             row_h = QHBoxLayout(row_w)
             row_h.setContentsMargins(0, 0, 0, 0)
             row_h.setSpacing(6)
             n_lbl = QLabel(name)
             n_lbl.setStyleSheet(f"color:{FG};font-size:11px;min-width:180px;")
-            v_lbl = QLabel("—")
-            v_lbl.setStyleSheet(f"color:{ACCENT};font-size:11px;font-weight:bold;")
+            # Editable spinbox — shows decoded value; accepts decoded input
+            from PyQt5.QtWidgets import QSpinBox
+            spin = QSpinBox()
+            spin.setRange(0, 255 * (40 if "RPM" in unit else 2 if "km/h" in unit else 1))
+            spin.setSingleStep(40 if "RPM" in unit else 2 if "km/h" in unit else 1)
+            spin.setSuffix(f"  {unit}")
+            spin.setValue(0)
+            spin.setEnabled(False)
+            spin.setFixedWidth(120)
+            spin.setStyleSheet(
+                f"QSpinBox{{background:{BG2};color:{FG};border:1px solid {BORDER};"
+                f"border-radius:3px;padding:1px 4px;font-size:11px;}}"
+                f"QSpinBox:disabled{{color:{FG_DIM};}}")
             r_lbl = QLabel("")
             r_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
             addr_lbl = QLabel(f"WH 0x{wh_off:04X}")
             addr_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
             row_h.addWidget(n_lbl)
-            row_h.addWidget(v_lbl)
-            row_h.addWidget(QLabel(unit))
+            row_h.addWidget(spin)
             row_h.addStretch()
             row_h.addWidget(r_lbl)
             row_h.addWidget(addr_lbl)
             lc_grid.addWidget(row_w)
-            self._lc_rows.append((v_lbl, r_lbl, wh_off, decode_fn))
+            # Wire valueChanged → write back
+            _off = wh_off; _enc = encode_fn; _dec = decode_fn
+            spin.valueChanged.connect(
+                lambda val, o=_off, e=_enc, d=_dec: self._on_lc_scalar_changed(o, d, e, val))
+            self._lc_rows.append((spin, r_lbl, wh_off, decode_fn))
 
         self._lc_inactive = QLabel(
             "LC/NLS scalars require prjmod 0x0202 firmware (551AA_0202 variant).")
@@ -1986,18 +2077,43 @@ class HardwareTab(QWidget):
         # ── Update LC/NLS scalars ─────────────────────────────────────────
         is_0202 = (self._variant_name == "551AA_0202")
         self._lc_inactive.setVisible(not is_0202)
-        for (v_lbl, r_lbl, wh_off, decode_fn) in self._lc_rows:
+        for (spin, r_lbl, wh_off, decode_fn) in self._lc_rows:
+            spin.setEnabled(is_0202)
             if is_0202 and self._wh and wh_off < len(self._wh):
                 raw = self._wh[wh_off]
                 decoded = decode_fn(raw)
-                v_lbl.setText(f"{decoded}")
-                r_lbl.setText(f"(raw 0x{raw:02X}={raw})")
+                spin.blockSignals(True)
+                spin.setValue(decoded)
+                spin.blockSignals(False)
+                r_lbl.setText(f"raw 0x{raw:02X}")
             else:
-                v_lbl.setText("—")
+                spin.blockSignals(True)
+                spin.setValue(0)
+                spin.blockSignals(False)
                 r_lbl.setText("")
 
 
     # ── Boost chip file open ──────────────────────────────────────────────
+
+    def _on_lc_scalar_changed(self, wh_off: int, decode_fn, encode_fn, value: int):
+        """Write edited LC/NLS scalar back to working half and emit dirty signal."""
+        if self._wh is None or not (wh_off < len(self._wh)):
+            return
+        raw = encode_fn(value)
+        wh_list = bytearray(self._wh)
+        wh_list[wh_off] = raw
+        self._wh = bytes(wh_list)
+        # Find raw_lbl and update
+        for spin, r_lbl, off, dfn in self._lc_rows:
+            if off == wh_off:
+                r_lbl.setText(f"raw 0x{raw:02X} ← edited")
+                r_lbl.setStyleSheet(f"color:{AMBER};font-size:10px;")
+        if hasattr(self, "_scalar_changed_callback"):
+            self._scalar_changed_callback(wh_off, raw)
+
+    def set_scalar_changed_callback(self, fn):
+        """Register fn(wh_off, raw_byte) called when a scalar is edited."""
+        self._scalar_changed_callback = fn
 
     def _on_open_boost(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
