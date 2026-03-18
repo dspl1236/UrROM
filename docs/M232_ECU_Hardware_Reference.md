@@ -609,7 +609,7 @@ with 36-byte offset to map data.
 
 | Item | Status | Notes |
 |---|---|---|
-| AAN 551AA map addresses (direct chip read) | ❌ Pending | PRJ XDF says 0x0E13 fuel / 0x125F ign — unconfirmed vs ABY |
+| AAN 551AA map addresses (direct chip read) | ❌ Pending | PRJ XDF (prjmod 0x0202 firmware) says 0x0E13 fuel / 0x125F ign. AAN direct chip read required to confirm stock addresses match ABY pattern. |
 | MFTS boost cut bypass — exact byte signature | ❌ Pending | Need Ghidra trace of MFTS check routine |
 | Load decap patch — exact offset | ❌ Pending | Near load accumulation routine, 1–2 byte change |
 | Lambda delay patch offset | ❌ Pending | Start of lambda routine in fuel chip |
@@ -617,3 +617,7 @@ with 36-byte offset to map data.
 | Crank ISR at $03CA — full disassembly | ❌ Pending | Contains injection pulse width calc + ign timing |
 | AN7 function (motor chip) | 🔶 Preliminary | Lambda on S600 variant — unconfirmed on AAN/ABY |
 | S2Forum 32-page hardware thread | ❌ Pending upload | Zip not yet received |
+| Rev limit address — stock 551x | ✓ Resolved | WH 0x3FF0 is NOT rev limit. End-of-cal RPM table at 0x3FE0–0x3FFF confirmed from ABY direct read. Stock rev limit in 8051 code (hardcoded compare). prjmod: WH 0x0617 (raw×40 = RPM). |
+| ABY/ADU calibration memory layout | ✓ Confirmed | Code region WH 0x0000–0x2CFF (LJMP-fill). Calibration WH 0x2D00–0x3FFF. PRJ XDF addresses (0x8xxx–0xAxxx) are for prjmod firmware, NOT stock 551B/C chips. |
+| Maps J/K (WH 0x3D05 / 0x3E65) | 🔶 PROVISIONAL | 16×16, values 13–22°BTDC at 2320 RPM axis. Possible idle ign maps. Identical mirror pair. |
+| XDF attribution | ✓ Confirmed | "RS2 551B fuel timing.xdf" is for prjmod 551AA_0202 firmware (not stock ABY 551B). "8D0907551B RS2 Boost.xdf" is for stock boost chip. |
