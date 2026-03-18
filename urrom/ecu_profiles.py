@@ -1553,6 +1553,10 @@ ALL_VARIANTS: list[ROMVariant] = [
 # Working half = entire file for 3B/V8.
 
 KNOWN_CRCS: dict[int, tuple[str, str]] = {
+    0x0808B2E5: ("551a",       "ABY/early-AAN fuel/ign, build 0x0274 (lower 32KB working half)"),
+    0xBF11DB48: ("551aa",      "AAN fuel/ign, build 0x0812 (lower 32KB working half, truncated read)"),
+    0xF6E33043: ("551a_boost", "ABY boost chip, 32KB mirrored, build 0x0202"),
+    0x4A3CB7DC: ("551a_boost", "ABY boost chip, 16KB working half core, build 0x0202"),
     0x4378E077: ("551C",      "Stock — ADU RS2 (adu_fuel-ign_551c.bin)"),
     0xA98CB481: ("551AA",     "Stock — ABY S2 Coupe (aby_fuel-ign_551aa.bin)"),
     0x0AE3CACD: ("404",       "Stock — 3B 200 20vT (stock fuel.BIN)"),
