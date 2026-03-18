@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from urrom.version import APP_VERSION, APP_NAME, WINDOW_TITLE
 from urrom.ecu_profiles import (
     normalize_rom, detect_rom, read_map, read_map_decoded,
+    get_boost_pairing, check_chip_pair,
     CHIP_REQUIREMENTS,
     write_map, apply_checksum, DetectionResult, ROMVariant, MapDef,
     fuel_encode, ign_encode, ign_encode_3b,
@@ -187,7 +188,10 @@ class InfoStrip(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(38)
+        self.setMinimumHeight(34)
+        self.setSizePolicy(
+            __import__("PyQt5.QtWidgets", fromlist=["QSizePolicy"]).QSizePolicy.Expanding,
+            __import__("PyQt5.QtWidgets", fromlist=["QSizePolicy"]).QSizePolicy.Preferred)
         self.setStyleSheet(
             f"background: {BG3}; border-bottom: 1px solid {BORDER};")
 
@@ -207,11 +211,17 @@ class InfoStrip(QFrame):
         self._conf_lbl = QLabel("")
         self._conf_lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
 
+        self._req_lbl = QLabel("")
+        self._req_lbl.setStyleSheet(f"color: {AMBER}; font-size: 10px;")
+        self._req_lbl.setWordWrap(True)
+        self._req_lbl.setVisible(False)
+
         layout.addWidget(self._variant_lbl)
         layout.addWidget(self._build_lbl)
         layout.addWidget(self._cs_lbl)
         layout.addWidget(self._conf_lbl)
         layout.addStretch()
+        layout.addWidget(self._req_lbl)
 
     def update(self, det: DetectionResult | None, boost_loaded: bool = False):
         if det is None:
@@ -238,6 +248,39 @@ class InfoStrip(QFrame):
         else:
             self._cs_lbl.setText("⚠ checksum unverified")
             self._cs_lbl.setStyleSheet(f"color: {AMBER}; font-size: 11px;")
+
+        # Boost chip pairing requirement
+        from urrom.ecu_profiles import get_boost_pairing, KNOWN_CRCS
+        pairs = get_boost_pairing(det.crc32) if det.crc32 else []
+        if pairs:
+            pair_labels = [KNOWN_CRCS.get(c, (None, f"0x{c:08X}"))[1].split(" — ")[0]
+                           for c in pairs]
+            self._pair_lbl.setText(f"⚡ requires boost: {' | '.join(pair_labels)}")
+            self._pair_lbl.setStyleSheet(f"color: {AMBER}; font-size: 10px;")
+        else:
+            self._pair_lbl.setText("")
+
+        # Hardware requirements for known 034EFI chips
+        from urrom.ecu_profiles import get_chip_requirements
+        req = get_chip_requirements(det.crc32)
+        if req and hasattr(self, "_req_lbl"):
+            parts = []
+            if req.get("map_kpa"):
+                parts.append(f"{req['map_kpa']}kPa MAP")
+            if req.get("injectors"):
+                parts.append(f"{req['injectors']} injectors")
+            if req.get("fpr_bar"):
+                parts.append(f"{req['fpr_bar']}BAR FPR")
+            if req.get("turbo") and req["turbo"] not in ("NA", "stock"):
+                parts.append(f"{req['turbo']} turbo")
+            if req.get("maf") and req["maf"] != "stock":
+                parts.append(f"MAF: {req['maf']}")
+            if req.get("notes"):
+                parts.append(req["notes"])
+            self._req_lbl.setText("Requires: " + "  ·  ".join(parts) if parts else "")
+            self._req_lbl.setVisible(bool(parts))
+        elif hasattr(self, "_req_lbl"):
+            self._req_lbl.setVisible(False)
 
         # Confidence
         colour = GREEN if det.confidence == "HIGH" else (AMBER if det.confidence == "MEDIUM" else RED)
@@ -326,6 +369,25 @@ class OverviewTab(QWidget):
         self._tuning_note.setVisible(False)
         layout.addWidget(self._tuning_note)
 
+        # Hardware requirements card
+        hw_hdr = QLabel("HARDWARE REQUIREMENTS")
+        hw_hdr.setStyleSheet(
+            f"color:{FG_DIM};font-size:10px;letter-spacing:1px;margin-top:4px;")
+        layout.addWidget(hw_hdr)
+
+        self._hw_card = QFrame()
+        self._hw_card.setStyleSheet(
+            f"QFrame{{background:{BG3};border:1px solid {BORDER};"
+            f"border-radius:4px;padding:2px;}}")
+        hw_layout = QVBoxLayout(self._hw_card)
+        hw_layout.setContentsMargins(12, 8, 12, 8)
+        hw_layout.setSpacing(3)
+        self._hw_lbl = QLabel("Load a ROM to see hardware requirements.")
+        self._hw_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+        self._hw_lbl.setWordWrap(True)
+        hw_layout.addWidget(self._hw_lbl)
+        layout.addWidget(self._hw_card)
+
         layout.addStretch()
 
         # Signal for jump-to-map (emitted with map index in variant.main_maps)
@@ -397,6 +459,21 @@ class OverviewTab(QWidget):
         else:
             self._checksum_lbl.setText("Stock Bosch ID string (no computed checksum)")
 
+        # Boost chip pairing hint
+        from urrom.ecu_profiles import get_boost_pairing, KNOWN_CRCS
+        required_boost = get_boost_pairing(det.crc32)
+        if required_boost and not (boost_det and boost_det.crc32 in required_boost):
+            boost_names = [KNOWN_CRCS.get(c,(None,""))[1].split(" — ")[0] for c in required_boost]
+            hint = "  ·  ".join(boost_names)
+            self._tuning_note.setText(f"⚡ BOOST CHIP REQUIRED: {hint}")
+            self._tuning_note.setVisible(True)
+        elif required_boost and boost_det and boost_det.crc32 in required_boost:
+            self._tuning_note.setText("✓ Boost chip confirmed: correct pair loaded.")
+            self._tuning_note.setStyleSheet(
+                f"color:{GREEN};font-size:10px;padding:4px 8px;"
+                f"background:{BG2};border-left:2px solid {GREEN};")
+            self._tuning_note.setVisible(True)
+
         # Map inventory — 5 columns, track jump indices for main_maps only
         all_maps = v.all_maps if v else []
         main_map_set = set(id(m) for m in (v.main_maps if v else []))
@@ -447,6 +524,59 @@ class OverviewTab(QWidget):
             self._tuning_note.setVisible(True)
         else:
             self._tuning_note.setVisible(False)
+
+        # Hardware requirements from KNOWN_CRCS description
+        from urrom.ecu_profiles import KNOWN_CRCS, get_boost_pairing
+        crc = det.crc32 if det else 0
+        if crc and crc in KNOWN_CRCS:
+            _, desc = KNOWN_CRCS[crc]
+            # Parse structured fields from description
+            hw_lines = []
+            import re
+            # Extract requirements: MAP sensor, injectors, FPR, MAF, whp, boost
+            for pattern, label in [
+                (r'3\.0 BAR MAP',       '🗺  MAP sensor: 3.0 BAR (e.g. MPX4300 or VMAP)'),
+                (r'300kPa MAP',          '🗺  MAP sensor: 300 kPa required'),
+                (r'(\d{3,4})cc.*injector', None),
+                (r'(\d+\.?\d*) BAR FPR', None),
+                (r'stock MAF',           '💨  MAF: stock sensor (no replacement)'),
+                (r'big bore.*MAF',       '💨  MAF: big bore housing required'),
+                (r'billet MAF',          '💨  MAF: 034 billet housing required'),
+                (r'(\d+)whp',            None),
+                (r'(\d+)psi.*redline',   None),
+                (r'7[0-9]{3}rpm',        None),
+            ]:
+                m = re.search(pattern, desc, re.IGNORECASE)
+                if m:
+                    if label:
+                        hw_lines.append(label)
+                    else:
+                        raw = m.group(0)
+                        if 'cc' in raw.lower():
+                            hw_lines.append(f'💉  Injectors: {raw}')
+                        elif 'BAR FPR' in raw:
+                            hw_lines.append(f'⛽  FPR: {raw}')
+                        elif 'whp' in raw.lower():
+                            hw_lines.append(f'📊  Rated: {raw}')
+                        elif 'psi' in raw.lower() and 'redline' in raw.lower():
+                            hw_lines.append(f'🔩  Boost: {raw}')
+                        elif 'rpm' in raw.lower():
+                            hw_lines.append(f'🔴  Rev limit: {raw.upper()}')
+            # Boost chip pairing
+            pairs = get_boost_pairing(crc)
+            if pairs:
+                pair_labels = [KNOWN_CRCS.get(c, (None, f"0x{c:08X}"))[1].split(" — ")[0]
+                               for c in pairs]
+                hw_lines.append(f'⚡  Boost chip: {" OR ".join(pair_labels)}')
+            if hw_lines:
+                self._hw_lbl.setText("\n".join(hw_lines))
+                self._hw_lbl.setStyleSheet(f"color:{FG};font-size:11px;")
+            else:
+                self._hw_lbl.setText("No specific hardware requirements documented.")
+                self._hw_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+        else:
+            self._hw_lbl.setText("Hardware requirements not available for this ROM.")
+            self._hw_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
 
         # Hardware requirements from CHIP_REQUIREMENTS lookup
         crc = det.crc32 if det else None
@@ -1791,10 +1921,24 @@ class HardwareTab(QWidget):
         """Called when boost chip is loaded."""
         self._boost_bytes = boost_bytes
         if boost_bytes:
-            self._boost_lbl.setText(
-                f"Boost chip: {filename or 'loaded'}  ({len(boost_bytes)} B)")
+            import zlib, struct
+            from urrom.ecu_profiles import KNOWN_CRCS, CHIP_REQUIREMENTS
+            crc = zlib.crc32(boost_bytes[:0x8000]) & 0xFFFFFFFF
+            known = KNOWN_CRCS.get(crc)
+            build = struct.unpack_from(">H", boost_bytes, 0x3FFE)[0] if len(boost_bytes) >= 0x4000 else None
+            boost_info = f"Boost chip: {filename or 'loaded'}  ({len(boost_bytes)} B)"
+            if known:
+                boost_info += f"  — {known[1]}"
+            elif build:
+                boost_info += f"  build 0x{build:04X}"
+            if build == 0x0054:
+                boost_info += "  ⚠ 034EFI custom (requires 300kPa MAP + matched fuel chip)"
+            self._boost_lbl.setText(boost_info)
+            self._boost_lbl.setStyleSheet(
+                f"color:{'#ff9900' if build==0x0054 else FG_DIM};font-size:11px;")
         else:
             self._boost_lbl.setText("Boost chip: not loaded")
+            self._boost_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
         self._refresh()
 
     # ── Internal refresh ──────────────────────────────────────────────────
@@ -2559,8 +2703,18 @@ class MainWindow(QMainWindow):
 
         bld = boost_det.build_number if boost_det else 0
         crc = boost_det.crc32 if boost_det else 0
-        self._update_status(
-             f"Boost chip: {path.name}  CRC32 0x{crc:08X}  build 0x{bld:04X}")
+        status_msg = f"Boost chip: {path.name}  CRC32 0x{crc:08X}  build 0x{bld:04X}"
+
+        # Check fuel+boost pairing
+        if self._det and boost_det:
+            from urrom.ecu_profiles import check_chip_pair
+            pair_status, pair_msg = check_chip_pair(self._det.crc32, boost_det.crc32)
+            if pair_status == 'mismatch':
+                QMessageBox.warning(self, "Boost Chip Mismatch", pair_msg)
+                status_msg += "  ⚠ MISMATCH"
+            elif pair_status == 'ok' and 'confirmed' in pair_msg.lower():
+                status_msg += "  ✓ paired"
+        self._update_status(status_msg)
 
     def _on_save(self):
         if self._main_rom is None:

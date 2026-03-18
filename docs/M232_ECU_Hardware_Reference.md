@@ -621,3 +621,71 @@ with 36-byte offset to map data.
 | ABY/ADU calibration memory layout | ✓ Confirmed | Code region WH 0x0000–0x2CFF (LJMP-fill). Calibration WH 0x2D00–0x3FFF. PRJ XDF addresses (0x8xxx–0xAxxx) are for prjmod firmware, NOT stock 551B/C chips. |
 | Maps J/K (WH 0x3D05 / 0x3E65) | 🔶 PROVISIONAL | 16×16, values 13–22°BTDC at 2320 RPM axis. Possible idle ign maps. Identical mirror pair. |
 | XDF attribution | ✓ Confirmed | "RS2 551B fuel timing.xdf" is for prjmod 551AA_0202 firmware (not stock ABY 551B). "8D0907551B RS2 Boost.xdf" is for stock boost chip. |
+
+---
+
+## 034EFI Rip Chip Package — Boost Chip Pairing (2026-03 fingerprinting session)
+
+All 034EFI `.034` files from the released package were fingerprinted. 18 of 20 files are valid standard 034EFI scramble format. 2 files (`893906266D` 7A late ECU, 54903 bytes each) are a different encoding — not standard 034 scramble and not 65536-byte standard size. These belong to the Hitachi/7A project.
+
+### Confirmed CRC32 fingerprints
+
+| CRC32 | File | Variant | Notes |
+|-------|------|---------|-------|
+| `0x956BFC9C` | Stock RipChip | 551AA_0202 | Reconstructed stock. No HW mods. |
+| `0xA47011AB` | Stage 1+ K24 | 551AA_0202 | 3.0 BAR, RS2 injectors, 7200rpm, +40whp |
+| `0x16FD8953` | Stage 1 K24 | 551AA_0202 | Variant of Stage 1 |
+| `0x9A8A6B4E` | GT28RS Stage 1 R2 | 551AA_0202 | 3.0 BAR, 550cc, 7000rpm, 285whp |
+| `0x6F3AE675` | GT3071 R8 42lb | 551AA_0202 | 3.0 BAR, 440cc, 7200rpm, 346whp |
+| `0x07DA1752` | GT3071 R9.1 550cc | 551AA_0202 | 3.0 BAR, 550cc, 7200rpm |
+| `0x2EB58546` | GT2871 R9.1 550cc EV14 | 551AA_0202 | 3.0 BAR, 550cc EV14, 7200rpm, 330whp |
+| `0xA77BB88E` | GT2871 R9 440cc Siemens | 551AA_0202 | 3.0 BAR, 440cc Siemens, 7200rpm, 330whp |
+| `0x28C04D7B` | RS2 91Oct | 551AA_0202 | ABY/ADU application, 3.0 BAR, 440cc |
+| `0xB9F0FD51` | GT3071 R9 440cc Siemens | 551AA_0202 | 3.0 BAR, 440cc Siemens, 7200rpm, 346whp |
+| `0x69156B3A` | GT2871 Boost chip | 551AA_0202_boost | Build 0x0054. 3.0 BAR MAP. 26psi OB/22psi. |
+| `0x39DC67DA` | GT3071 Boost chip 26-23psi | 551AA_0202_boost | Build 0x0054. 3.0 BAR MAP. |
+| `0x84B0504E` | 7A NA Big MAF R2 | 7A_NA | ECU 893906266B (early). 034 billet MAF. |
+| `0xC075767F` | 7A Stage 1 R1 | 7A_Stage1 | ECU 893906266B (early). Stock mods. |
+| `0xA01C4EDA` | 7A Turbo Stage 2 550cc | 7A_Turbo | ECU 893906266D (late). 034 turbo kit. |
+| `0x55177DDB` | 7A Turbo Kit Stage 1 R2 | 7A_Turbo | ECU 893906266B (early). 034 T3/T4 kit. |
+| `0x4818FA0B` | AAH Stage 1+ R1 | AAH | MMS-200 ECU (8A0 906 266A). Big bore MAF. |
+| `0x28C04D7B` | RS2 91Oct (RS2 Tuned) | 551AA_0202 | ADU/ABY specific. 3.0 BAR, 440cc. |
+
+### Boost chip pairing rules
+
+- GT2871 fuel chips (`0x2EB58546`, `0xA77BB88E`) → **GT2871 boost** (`0x69156B3A`)  
+- GT3071 fuel chips (`0x6F3AE675`, `0x07DA1752`, `0xB9F0FD51`) → **GT3071 boost** (`0x39DC67DA`)  
+- GT28RS fuel chip (`0x9A8A6B4E`) → **GT2871 or GT3071 boost** (either)
+- RS2 91Oct (`0x28C04D7B`) → **ABY boost** (`0xF6E33043`) or **ADU/RS2 boost** (`0x4EE87833`)
+- Stock Rip Chip → **stock AAN boost** (`0x16707F66`)
+
+### 893906266D 7A late ECU files (54903 bytes)
+
+These two files use a different encoding (not standard 034 scramble, non-standard size). They are 7A Hitachi-ECU specific. Investigation needed: may be a different scramble version or a raw binary dump. The valid 65536-byte `893906266D` Turbo Stage 2 file (`0xA01C4EDA`) descrambles correctly.
+
+
+## 034EFI Chipset Reference (2026-03)
+
+### File Summary (from zip, 18 valid chips)
+
+| Fuel CRC | Variant | Boost Chip Required | Specs |
+|---|---|---|---|
+| 0x956BFC9C | 551AA_0202 | 0x16707F66 (stock AAN) | Stock Rip Chip — no mods |
+| 0xA47011AB | 551AA_0202 | 0x69156B3A or 0x39DC67DA | Stage 1+ K24: 3.0 BAR MAP, RS2 injectors, 20psi/14psi/7200rpm |
+| 0x9A8A6B4E | 551AA_0202 | 0x69156B3A or 0x39DC67DA | GT28RS R2: 3.0 BAR MAP, 550cc, 27psi/16psi/7000rpm/285whp |
+| 0x2EB58546 | 551AA_0202 | 0x69156B3A | GT2871 R9.1 550cc EV14: 26psi/22psi/7200rpm/330whp |
+| 0xA77BB88E | 551AA_0202 | 0x69156B3A | GT2871 R9 440cc Siemens: 26psi/22psi/7200rpm/330whp |
+| 0x6F3AE675 | 551AA_0202 | 0x39DC67DA | GT3071 R8 42lb: 26psi/23psi/7200rpm/346whp |
+| 0x07DA1752 | 551AA_0202 | 0x39DC67DA | GT3071 R9.1 550cc 91Oct: 26psi/23psi/7200rpm |
+| 0xB9F0FD51 | 551AA_0202 | 0x39DC67DA | GT3071 R9 440cc Siemens: 346whp |
+| 0x28C04D7B | 551AA_0202 | 0xF6E33043 or 0x4EE87833 | RS2 91Oct: ABY/ADU application, 3.0 BAR MAP, 440cc |
+| 0x69156B3A | 551AA_0202_boost | — | GT2871 Stage 1 boost, build 0x0054, 300kPa MAP |
+| 0x39DC67DA | 551AA_0202_boost | — | GT3071 Stage 1 boost 26-23psi, build 0x0054, 300kPa MAP |
+| 0x84B0504E | 7A_NA | — | 7A Big MAF 91Oct R2, ECU 893906266B (early 2-conn) |
+| 0xC075767F | 7A_Stage1 | — | 7A Stage 1 91Oct R1, ECU 893906266B |
+| 0xA01C4EDA | 7A_Turbo | — | 7A Turbo Stage 2 550cc, ECU 893906266D (late 4-conn) |
+| 0x55177DDB | 7A_Turbo | — | 7A Turbo Kit Stage 1 R2, ECU 893906266B |
+| 0x4818FA0B | AAH | — | AAH/AKH 12v V6 Stage 1+, MMS-200 ECU only, big bore MAF |
+
+### Invalid Files (non-standard format)
+- `893906266D - CQ Big MAF 91Oct R1` (2× copies): 54903 bytes, not standard 034 scramble

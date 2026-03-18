@@ -470,11 +470,13 @@ _MAPS_V8_MAIN = [
            decode=ign_decode, encode=ign_encode,
            confidence="UNCONFIRMED"),
 
-    MapDef("Rev Limit",
-           "Fuel cut RPM. Address UNCONFIRMED — needs disassembly.",
-           main_addr=0x3FF0, rows=1, cols=2,
+    MapDef("End-of-Cal RPM table",
+           "End-of-cal RPM table. V8 layout not RE'd — "
+           "address UNCONFIRMED. NOT the rev limit.",
+           main_addr=0x3FE0, rows=2, cols=16,
            map_type="raw", unit="RPM",
            confidence="UNCONFIRMED"),
+
 ]
 
 # ── Boost chip maps ───────────────────────────────────────────────────────────
@@ -1777,15 +1779,15 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x594F97FB: ("404V8",     "Stock — PT V8 3.6L"),
     0x750A9EB0: ("404V8",     "ABT tune — PT V8 3.6L"),
     # 034EFI Rip Chip / prjmod 0x0202 firmware (confirmed from .034 diff analysis)
-    0x956BFC9C: ("551AA_0202", "034EFI Stock Rip Chip (4A0907551AA)"),
-    0xA47011AB: ("551AA_0202", "034EFI Stage 1"),
-    0x16FD8953: ("551AA_0202", "034EFI Stage 1 (variant)"),
-    0x9A8A6B4E: ("551AA_0202", "034EFI Stage 1 28RS R2"),
-    0x6F3AE675: ("551AA_0202", "034EFI Stage 1 R8 42lb Green Tops"),
-    0x07DA1752: ("551AA_0202", "034EFI Stage 1 R9.1 550cc 91Oct"),
-    0x2EB58546: ("551AA_0202", "034EFI Stage 1 R9.1 550cc EV14"),
-    0xA77BB88E: ("551AA_0202", "034EFI Stage 1 AAN 2871 R9 440cc Siemens"),
-    0x28C04D7B: ("551AA_0202", "034EFI Rip Chip RS2 91Oct"),
+    0x956BFC9C: ("551AA_0202", "034EFI Stock Rip Chip — 4A0907551AA reconstructed stock. Fuel chip. PAIR with stock 551AA boost chip 0x16707F66. No hardware mods required."),
+    0xA47011AB: ("551AA_0202", "034EFI K24/Stage 1+ — Fuel chip. PAIR with GT2871 boost 0x69156B3A or GT3071 boost 0x39DC67DA. Requires: 3.0 BAR MAP, RS2 replica injectors, 4.0 BAR FPR, stock MAF. 20psi OB / 14psi / 7200rpm / ~+40whp"),
+    0x16FD8953: ("551AA_0202", "034EFI Stage 1 K24 (fuel chip variant). PAIR with boost chip. Requires: 3.0 BAR MAP, RS2 injectors, 4.0 BAR FPR, stock MAF."),
+    0x9A8A6B4E: ("551AA_0202", "034EFI GT28RS Stage 1 R2 — Fuel chip. PAIR with GT2871 or GT3071 boost chip. Requires: 3.0 BAR MAP, 550cc Bosch injectors + adapters, stock MAF. 27psi OB / 16psi / 7000rpm / 285whp / 355ft-lb"),
+    0x6F3AE675: ("551AA_0202", "034EFI GT3071 Stage 1 R8 42lb Green Tops — Fuel chip. PAIR with GT3071 boost 0x39DC67DA. Requires: 3.0 BAR MAP, 440cc injectors, stock MAF. 26psi OB / 23psi / 7200rpm / 346whp"),
+    0x07DA1752: ("551AA_0202", "034EFI GT3071 Stage 1 R9.1 550cc 91Oct — Fuel chip. PAIR with GT3071 boost 0x39DC67DA. Requires: 3.0 BAR MAP, 550cc injectors, stock MAF. 26psi OB / 23psi / 7200rpm"),
+    0x2EB58546: ("551AA_0202", "034EFI GT2871 Stage 1 R9.1 550cc EV14 — Fuel chip. PAIR with GT2871 boost 0x69156B3A. Requires: 3.0 BAR MAP, 550cc EV14 injectors, stock MAF. 26psi OB / 22psi / 7200rpm / 330whp"),
+    0xA77BB88E: ("551AA_0202", "034EFI GT2871 Stage 1 R9 440cc Siemens — Fuel chip. PAIR with GT2871 boost 0x69156B3A. Requires: 3.0 BAR MAP, 440cc Siemens injectors, stock MAF. 26psi OB / 22psi / 7200rpm / 330whp"),
+    0x28C04D7B: ("551AA_0202", "034EFI Rip Chip RS2 91Oct — ABY/ADU fuel chip. PAIR with stock 551B/C boost chip. Requires: 3.0 BAR MAP, 440cc injectors, stock MAF. RS2/ADU/ABY application."),
     0x81D197CF: ("551AA_0202", "PRJ AAN/ABY stock (m232.org)"),
     0xAD9330AC: ("551AA_0202", "PRJ AAN bigturbo WMI"),
     # vwnut8392/M232-Firmware
@@ -1794,7 +1796,7 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
 
     # ── 034EFI additional fuel chips (from 034_Files.zip, 2026-03) ────────────
     # GT3071 Stage 1 R9 440cc Siemens — paired with GT3071 boost chip below
-    0xB9F0FD51: ("551AA_0202", "034EFI GT3071 Stage 1 R9 440cc Siemens fuel chip"),
+    0xB9F0FD51: ("551AA_0202", "034EFI GT3071 Stage 1 R9 440cc Siemens — Fuel chip. PAIR with GT3071 boost 0x39DC67DA. Requires: 3.0 BAR MAP, 440cc Siemens injectors, stock MAF. 26psi OB / 23psi / 7200rpm / 346whp"),
 
     # ── 034EFI custom boost chips (build 0x0054, NOT stock 0x0202) ────────────
     # These use a custom 034EFI firmware (build 0x0054) that requires:
@@ -1802,8 +1804,8 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     #   - Paired fuel chip from the same GT package (matching turbo spec)
     # Diffs between 2871 and 3071 boost chips cluster at 0x2480 (N75 wastegate
     # duty cycle table) — confirms turbo-specific boost profiles.
-    0x69156B3A: ("551AA_0202_boost", "034EFI boost chip — GT2871 Stage 1 (build 0x0054, 300kPa MAP required)"),
-    0x39DC67DA: ("551AA_0202_boost", "034EFI boost chip — GT3071 Stage 1 26-23psi (build 0x0054, 300kPa MAP required)"),
+    0x69156B3A: ("551AA_0202_boost", "034EFI GT2871 Stage 1 Boost chip — Build 0x0054. PAIR with GT2871/GT28RS fuel chips. Requires 3.0 BAR MAP sensor. 26psi OB / 22psi to redline."),
+    0x39DC67DA: ("551AA_0202_boost", "034EFI GT3071 Stage 1 Boost chip 26-23psi — Build 0x0054. PAIR with GT3071 fuel chips. Requires 3.0 BAR MAP sensor. 26psi OB / 23psi to redline."),
 
     # ── 034EFI Hitachi-based ECUs (7A 20v, AAH 12v V6) ───────────────────────
     # These are DIFFERENT ECU families from M2.3.2 — Hitachi 893906266x.
@@ -1811,16 +1813,16 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     # The 7A files belong to the 7A 20v Tuner / HachiRom project.
     # Detection fallback classifies them as 404/551AA — overridden by CRC here.
     # 7A NA Big MAF R2 — 893906266B (early 2-connector ECU)
-    0x84B0504E: ("7A_NA",     "034EFI 7A NA Big MAF 91Oct R2 (893906266B, early ECU)"),
+    0x84B0504E: ("7A_NA", "034EFI 7A NA Big MAF 91Oct R2 — ECU 893906266B (early 2-connector). Requires 034 billet MAF housing with stock 7A element (80mm inlet). Direct upgrade, no turbo."),
     # 7A Stage 1 R1 — 893906266B (early 2-connector ECU)
-    0xC075767F: ("7A_Stage1", "034EFI 7A Stage 1 91Oct R1 (893906266B, early ECU)"),
+    0xC075767F: ("7A_Stage1", "034EFI 7A Stage 1 91Oct R1 — ECU 893906266B (early 2-connector). Direct plug-in upgrade, stock engine components."),
     # 7A Turbo Stage 2 550cc R1 — 893906266D (late 4-connector ECU)
-    0xA01C4EDA: ("7A_Turbo",  "034EFI 7A Turbo Stage 2 550cc 91 R1 (893906266D, late ECU)"),
+    0xA01C4EDA: ("7A_Turbo", "034EFI 7A Turbo Stage 2 550cc 91Oct — ECU 893906266D (late 4-connector). Requires 034 turbo kit: T3/T4 turbo, billet MAF, 9.5:1 HG, 550cc injectors. ~200whp / 250crank."),
     # 7A Turbo Kit Stage 1 R2 — 893906266B (early ECU, stock T3/T4 turbo kit)
-    0x55177DDB: ("7A_Turbo",  "034EFI 7A Turbo Kit Stage 1 R2 (893906266B, early ECU)"),
+    0x55177DDB: ("7A_Turbo", "034EFI 7A Turbo Kit Stage 1 R2 — ECU 893906266B (early 2-connector). 034 T3/T4 turbo kit, billet MAF, 9.5:1 compression HG. ~200whp Stage 1. Stage 2 available at 14psi w/ intercooler."),
     # AAH/AKH 12v V6 Stage 1+ — MMS-200 ECU (8A0 906 266A)
     # Requires: MMS-200 ECU (not MMS-300+), big bore MAF (078 133 471A)
-    0x4818FA0B: ("AAH",       "034EFI AAH/AKH 12v V6 Stage 1+ R1 (MMS-200 ECU 8A0906266A, big bore MAF req)"),
+    0x4818FA0B: ("AAH", "034EFI AAH/AKH 12v V6 Stage 1+ R1 — MMS-200 ECU only (8A0 906 266A). Big bore MAF required (Audi 078 133 471A). +12HP / +13ft-lb TQ. MMS300+ ECUs cannot be chipped."),
 }
 
 # ── Hardware requirements per chip CRC ───────────────────────────────────────
@@ -1829,13 +1831,22 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
 CHIP_REQUIREMENTS: dict[int, dict] = {
     # 034EFI AAN/ABY/ADU tunes — all require MAP swap + matched injectors
     0x956BFC9C: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": None,
-                 "turbo": "K24 (stock)",  "notes": "Stock Rip Chip — 034EFI base, no hardware mods needed beyond 300kPa MAP"},
-    0xA47011AB: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": 5.0,
-                 "turbo": "K24 (stock)",  "notes": "Stage 1 — requires 300kPa MAP, 5.0 BAR FPR, stock MAF"},
-    0x16FD8953: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": 5.0,
-                 "turbo": "K24 (stock)",  "notes": "Stage 1 variant — requires 300kPa MAP, 5.0 BAR FPR, stock MAF"},
-    0x9A8A6B4E: {"map_kpa": 300, "injector_cc": 550,   "fpr_bar": 4.0,
-                 "turbo": "GT28RS",       "notes": "GT28RS Stage 1 — 7000rpm, 285whp, 550cc injectors + 300kPa MAP + 4.0 BAR FPR"},
+                 "turbo": "K24 (stock)",  "notes": "Stock Rip Chip — 034EFI baseline. No hardware mods beyond 300kPa MAP."},
+    0xA47011AB: {"map_kpa": 300, "injector_cc": None, "fpr_bar": 5.0,
+                 "turbo": "K24 (stock)",
+                 "notes": "Stage 1+ K24 — 20psi overboost, 14psi to redline, 7200rpm. "
+                          "RS2/replica injectors (550cc), 5.0 BAR FPR, 300kPa MAP, stock MAF."},
+    0x16FD8953: {"map_kpa": 300, "injector_cc": None, "fpr_bar": 5.0,
+                 "turbo": "K24 (stock)",
+                 "notes": "Stage 1 variant — 300kPa MAP, 5.0 BAR FPR, stock MAF."},
+    0x9A8A6B4E: {"map_kpa": 300, "injector_cc": 550,  "fpr_bar": 4.0,
+                 "turbo": "GT28RS",
+                 "notes": "GT28RS Stage 1 R2 — 27psi overboost, 16psi redline, 7000rpm, 285whp. "
+                          "550cc injectors + adapters, 300kPa MAP, 4.0 BAR FPR, stock MAF. "
+                          "Recommend 7A cams for +20whp at top end."},
+    0x28C04D7B: {"map_kpa": 300, "injector_cc": None, "fpr_bar": None,
+                 "turbo": "RS2 (stock)",
+                 "notes": "034EFI RS2 Rip Chip 91Oct — stock RS2 turbo, 300kPa MAP, stock MAF."},
     0x6F3AE675: {"map_kpa": 300, "injector_cc": 440,   "fpr_bar": 4.0,
                  "turbo": "GT3071",       "notes": "GT3071 R8 — 42lb green tops, 7200rpm, 346whp"},
     0x07DA1752: {"map_kpa": 300, "injector_cc": 550,   "fpr_bar": 4.0,
@@ -1886,6 +1897,84 @@ CHIP_REQUIREMENTS: dict[int, dict] = {
                           "Big bore MAF required (Audi 078 133 471A). "
                           "MMS-300+ ECUs CANNOT be chipped — must retrofit MMS-200."},
 }
+
+# ── Boost chip pairing table ─────────────────────────────────────────────────
+#
+# Maps a fuel chip CRC to its required/recommended boost chip CRC(s).
+# Used to validate loaded chip pairs and show pairing warnings.
+#
+BOOST_CHIP_PAIRINGS: dict[int, list[int]] = {
+    # 034EFI fuel chips -> required boost chip(s)
+    0x956BFC9C: [0x16707F66],              # Stock Rip Chip -> stock AAN boost
+    0xA47011AB: [0x69156B3A, 0x39DC67DA],  # Stage 1+ K24 -> GT2871 or GT3071
+    0x16FD8953: [0x69156B3A, 0x39DC67DA],  # Stage 1 variant
+    0x9A8A6B4E: [0x69156B3A, 0x39DC67DA],  # GT28RS R2
+    0x6F3AE675: [0x39DC67DA],              # GT3071 R8 42lb
+    0x07DA1752: [0x39DC67DA],              # GT3071 R9.1 550cc
+    0x2EB58546: [0x69156B3A],              # GT2871 R9.1 550cc EV14
+    0xA77BB88E: [0x69156B3A],              # GT2871 R9 440cc Siemens
+    0x28C04D7B: [0xF6E33043, 0x4EE87833],  # RS2 91Oct -> ABY or ADU boost
+    0xB9F0FD51: [0x39DC67DA],              # GT3071 R9 440cc Siemens
+}
+
+
+def get_boost_pairing(fuel_crc: int) -> list[int]:
+    """Return list of acceptable boost chip CRCs for a given fuel chip CRC."""
+    return BOOST_CHIP_PAIRINGS.get(fuel_crc, [])
+
+
+def check_chip_pair(fuel_crc: int, boost_crc: int) -> tuple[str, str]:
+    """
+    Validate a fuel+boost chip pair.
+    Returns (status, message): status is 'ok', 'warn', or 'mismatch'.
+    """
+    expected = get_boost_pairing(fuel_crc)
+    if not expected:
+        return ('ok', 'No specific boost chip required for this fuel chip.')
+    if boost_crc in expected:
+        return ('ok', 'Boost chip confirmed: correct pair for this fuel chip.')
+    fuel_label  = KNOWN_CRCS.get(fuel_crc,  (None, 'unknown'))[1]
+    boost_label = KNOWN_CRCS.get(boost_crc, (None, 'unknown'))[1]
+    exp_labels  = [KNOWN_CRCS.get(c, (None, f'0x{c:08X}'))[1] for c in expected]
+    return ('mismatch',
+            f'Boost chip MISMATCH: loaded "{boost_label}" — '
+            f'"{fuel_label}" requires: {" OR ".join(exp_labels)}')
+
+
+# ── Chip hardware requirements ───────────────────────────────────────────────
+#
+# Maps a CRC to the hardware required to run it safely.
+# Shown in the InfoStrip when a known 034EFI chip is loaded.
+#
+CHIP_REQUIREMENTS: dict[int, dict] = {
+    # 034EFI AAN/ABY/ADU fuel chips
+    0x956BFC9C: {"map_kpa": 300, "injectors": "RS2 replica", "fpr_bar": 4.0, "maf": "stock", "turbo": "stock K24"},
+    0xA47011AB: {"map_kpa": 300, "injectors": "RS2 replica", "fpr_bar": 4.0, "maf": "stock", "turbo": "stock K24", "notes": "20psi OB/14psi, 7200rpm, +40whp"},
+    0x16FD8953: {"map_kpa": 300, "injectors": "RS2 replica", "fpr_bar": 4.0, "maf": "stock"},
+    0x9A8A6B4E: {"map_kpa": 300, "injectors": "550cc Bosch", "fpr_bar": 4.0, "maf": "stock", "turbo": "GT28RS", "notes": "27psi OB/16psi, 7000rpm, 285whp/355ft-lb"},
+    0x6F3AE675: {"map_kpa": 300, "injectors": "440cc", "fpr_bar": 4.0, "maf": "stock", "turbo": "GT3071", "notes": "26psi OB/23psi, 7200rpm, 346whp"},
+    0x07DA1752: {"map_kpa": 300, "injectors": "550cc 91Oct", "fpr_bar": 4.0, "maf": "stock", "turbo": "GT3071", "notes": "26psi OB/23psi, 7200rpm"},
+    0x2EB58546: {"map_kpa": 300, "injectors": "550cc EV14", "fpr_bar": 5.0, "maf": "stock", "turbo": "GT2871", "notes": "26psi OB/22psi, 7200rpm, 330whp"},
+    0xA77BB88E: {"map_kpa": 300, "injectors": "440cc Siemens", "fpr_bar": 5.0, "maf": "stock", "turbo": "GT2871", "notes": "26psi OB/22psi, 7200rpm, 330whp"},
+    0x28C04D7B: {"map_kpa": 300, "injectors": "440cc", "fpr_bar": 5.0, "maf": "stock", "turbo": "any AAN/ABY/ADU", "notes": "RS2/ADU/ABY application"},
+    0xB9F0FD51: {"map_kpa": 300, "injectors": "440cc Siemens", "fpr_bar": 4.0, "maf": "stock", "turbo": "GT3071", "notes": "26psi OB/23psi, 7200rpm, 346whp"},
+    # 7A chips
+    0x84B0504E: {"map_kpa": None, "injectors": "stock", "maf": "034 billet 80mm", "turbo": "NA", "notes": "Big MAF: stock MAF element in 034 billet housing"},
+    0xC075767F: {"map_kpa": None, "injectors": "stock", "maf": "stock", "turbo": "NA", "notes": "Direct plug-in, no mods required"},
+    0xA01C4EDA: {"map_kpa": None, "injectors": "550cc", "maf": "034 billet", "turbo": "034 T3/T4 kit", "notes": "9.5:1 compression HG required. Stage 2=250whp w/ intercooler."},
+    0x55177DDB: {"map_kpa": None, "injectors": "034 injector kit", "maf": "034 billet", "turbo": "034 T3/T4 kit", "notes": "9.5:1 compression HG, ~200whp Stage 1"},
+    # AAH
+    0x4818FA0B: {"map_kpa": None, "injectors": "stock", "maf": "078 133 471A big bore", "turbo": "NA", "notes": "MMS-200 ECU only (8A0 906 266A). +12HP/+13ft-lb."},
+    # 034EFI boost chips
+    0x69156B3A: {"boost_chip": True, "map_kpa": 300, "turbo": "GT2871", "notes": "GT2871 Stage 1 boost chip. 26psi OB/22psi. Pair with GT2871 fuel chips."},
+    0x39DC67DA: {"boost_chip": True, "map_kpa": 300, "turbo": "GT3071", "notes": "GT3071 Stage 1 26-23psi boost chip. Pair with GT3071 fuel chips."},
+}
+
+
+def get_chip_requirements(crc: int) -> Optional[dict]:
+    """Return hardware requirements dict for a known chip CRC, or None."""
+    return CHIP_REQUIREMENTS.get(crc)
+
 
 # Build number ranges for MEDIUM confidence detection (fallback when CRC unknown)
 # 551AA_0202 (prjmod/034EFI): build 0x0202 — must come BEFORE the 551AA range
