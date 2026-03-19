@@ -43,6 +43,8 @@ def cmd_scan(args):
     p.add_argument('--strict', action='store_true',
                    help='Exit code 1 on warnings (not just errors)')
     p.add_argument('--json', action='store_true', help='Output JSON')
+    p.add_argument('--html', metavar='FILE', default=None,
+                   help='Write HTML scan report to FILE')
     ns = p.parse_args(args)
 
     path = Path(ns.rom)
@@ -95,11 +97,81 @@ def cmd_scan(args):
         if not issues:
             print("  ✓ No issues found")
 
+    if ns.html:
+        _write_scan_html(ns.html, Path(ns.rom), det, issues)
+        if not ns.json:
+            print(f"HTML report written to {ns.html}")
+
     if n_err:
         sys.exit(2)
     if ns.strict and n_warn:
         sys.exit(1)
     sys.exit(0)
+
+
+def _write_scan_html(out_path: str, rom_path: Path, det, issues) -> None:
+    """Write a standalone HTML scan report."""
+    import html as _html
+    from datetime import datetime
+    n_err  = sum(1 for i in issues if i.severity == 'error')
+    n_warn = sum(1 for i in issues if i.severity == 'warning')
+    n_info = sum(1 for i in issues if i.severity == 'info')
+    v_name = det.variant.name if det.variant else 'Unknown'
+    sw_id  = det.variant.software_id if det.variant else '?'
+    ts     = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+    badge_col = '#ff4444' if n_err else '#ffaa00' if n_warn else '#2dff6e'
+    badge_txt = (f'✗ {n_err} error{"s" if n_err!=1 else ""}' if n_err else
+                 f'⚠ {n_warn} warning{"s" if n_warn!=1 else ""}' if n_warn else
+                 '✓ Clean')
+
+    rows = []
+    sev_cols = {'error': '#ff4444', 'warning': '#ffaa00', 'info': '#6e7681'}
+    for iss in issues:
+        col = sev_cols.get(iss.severity, '#c9d1d9')
+        cell_s = f'[{iss.cell[0]},{iss.cell[1]}]' if iss.cell and iss.cell[1] is not None else ''
+        rows.append(
+            f'<tr>'
+            f'<td style="color:{col};font-weight:bold;">{iss.severity.upper()}</td>'
+            f'<td>{_html.escape(iss.category)}</td>'
+            f'<td>{_html.escape(iss.map_name)}</td>'
+            f'<td>{_html.escape(cell_s)}</td>'
+            f'<td>{_html.escape(iss.description)}</td>'
+            f'</tr>'
+        )
+    rows_html = '\n'.join(rows) if rows else (
+        '<tr><td colspan="5" style="color:#2dff6e;text-align:center;">No issues found</td></tr>')
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset='utf-8'>
+<title>UrROM Scan — {_html.escape(rom_path.name)}</title>
+<style>
+body{{background:#0d1117;color:#c9d1d9;font-family:Consolas,monospace;padding:20px;margin:0;}}
+h1{{font-size:16px;color:#c9d1d9;}} .meta{{color:#6e7681;font-size:11px;margin:8px 0 16px;}}
+.badge{{display:inline-block;padding:4px 14px;border-radius:12px;font-size:12px;
+        background:{badge_col}20;border:1px solid {badge_col};color:{badge_col};}}
+table{{border-collapse:collapse;width:100%;font-size:11px;margin-top:12px;}}
+th{{background:#1a2332;color:#6e7681;padding:6px 10px;text-align:left;}}
+td{{padding:5px 10px;border-bottom:1px solid #1a2332;}}
+tr:hover{{background:#131920;}}
+@media print{{body{{background:white;color:black;}} td{{border-bottom:1px solid #ddd;}}}}
+</style></head><body>
+<h1>UrROM Scan Report</h1>
+<div class='meta'>
+ROM: {_html.escape(rom_path.name)} &nbsp;·&nbsp;
+Variant: {_html.escape(v_name)} [{_html.escape(sw_id)}] &nbsp;·&nbsp;
+CRC32: 0x{det.crc32:08X} &nbsp;·&nbsp;
+Scanned: {ts}
+</div>
+<span class='badge'>{badge_txt}</span>
+&nbsp; {n_err} errors &nbsp;·&nbsp; {n_warn} warnings &nbsp;·&nbsp; {n_info} info
+<table>
+<tr><th>Severity</th><th>Category</th><th>Map</th><th>Cell</th><th>Description</th></tr>
+{rows_html}
+</table>
+</body></html>"""
+
+    Path(out_path).write_text(html, encoding='utf-8')
 
 
 def cmd_info(args):

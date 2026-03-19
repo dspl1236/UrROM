@@ -767,3 +767,128 @@ is consistent with the N75 map data pattern (zero duty at low RPM, progressive i
 (at 300kPa sensor: 94/255×300=110kPa, 144/255×300=169kPa). These represent
 atmospheric plus a small boost at idle — consistent with stock operation.
 
+
+---
+
+## Trigger System Compatibility: 3B → AAN ECU Swap (RE analysis 2026-03)
+
+### The question
+
+> If you have a 3B engine with a distributor, then swap in an AAN/S2/RS2 ECU and
+> complete coil-pack harness — can you use the 3B trigger/Hall sender signal with
+> the AAN ECU firmware?
+
+**Short answer: Not directly — but there are paths that work.**
+
+---
+
+### What the binary RE reveals
+
+#### INT0 ISR structure comparison
+
+Both the 3B (404AA) and late AAN (551AA) firmware have almost identical INT0 handler
+prologues — they're clearly from the same Bosch MCU firmware generation:
+
+```
+3B   INT0 @ 0x0339:  c0 e0 c0 d0 | c0 83 e8 c0 e0 c0 82 90 a0 80 ...
+551AA INT0 @ 0x0438: c0 e0 c0 d0 | 00 00 c0 83 e8 c0 e0 c0 82 90 a0 80 ...
+                     ^^^^^^^^^^^    ^^^^^^^^
+                     IDENTICAL      only 2 bytes different (2 NOPs in 551AA)
+```
+
+The reset handlers are **identically identical for the first 21 bytes**. These ECUs
+are from the same firmware lineage — the M2.3 → M2.3.2 evolution.
+
+#### Timer ISR: the coil driver output differs
+
+This is the critical difference for coil pack vs distributor:
+
+| Variant | Timer0 ISR | Output | Meaning |
+|---------|-----------|--------|---------|
+| 3B 404AA | `d2 93 32` = SETB P1.3, RETI | P1.3 | Distributor coil (single coil) |
+| 551AA | `d2 eb 32` = SETB bit 0xEB, RETI | SFR 0xE8.3 | Coil pack driver (multi-coil) |
+
+The 3B fires **one pin** (P1.3) which drives the single ignition coil through the
+distributor cap/rotor. The 551AA fires a **different SFR bit** that drives the
+multi-channel coil pack output circuit on the 551AA ECU's output stage hardware.
+
+This is a hardware difference — the ECU PCBs have different output transistor
+configurations. You cannot change this in firmware alone.
+
+---
+
+### Why the swap is not straightforward
+
+#### Trigger signal incompatibility
+
+| ECU variant | Expects | 3B distributor provides |
+|-------------|---------|------------------------|
+| 551A (early AAN) | Distributor Hall sender, 5 vanes | ✓ Compatible signal type |
+| 551AA (late AAN) | Cam Hall sensor with **reference tooth** | ✗ No reference tooth |
+| 551B/C (ABY/RS2) | Cam Hall + Hall sensor position ref | ✗ No cam sensor |
+
+The reference tooth is the key: the cam trigger firmware (551AA, 551B, 551C) uses
+a **missing vane** in the cam sensor wheel to identify cylinder 1. Without it, the
+ECU cannot determine which cylinder to fire. The 3B distributor has no equivalent —
+cylinder position is determined by where you physically position the cap.
+
+#### ECU hardware output differences
+
+Even if you solve the trigger signal, the 3B has one ignition output pin (P1.3)
+while the coil-pack ECUs have 5 individual coil driver outputs (one per cylinder)
+on completely different PCB circuits. A 3B ECU PCB **cannot drive coil packs**
+without hardware modification.
+
+---
+
+### What actually works
+
+#### Path 1: Keep the 3B distributor, use the early AAN ECU (551A)
+
+The early AAN (551A, 4A0907551A) also uses a distributor with a Hall sender.
+The **trigger signal concept is the same** as the 3B. However:
+- The ECU connectors and pinouts are completely different (different connector)
+- The firmware maps (calibration) are in a different part of ROM
+- You'd still need full harness adaptation
+
+**Verdict:** Feasible with harness adaptation, but you're still using a distributor —
+you don't get coil packs.
+
+#### Path 2: Add a cam sensor wheel to the 3B engine, use 551AA/551B ECU
+
+The AAN and 3B share the same engine block design. You can:
+1. Fit an AAN camshaft sprocket with the Hall sensor trigger wheel
+2. Mount the Hall sensor from the AAN harness
+3. Run the 551AA ECU and coil pack harness
+
+The **calibration maps are identical in structure** (confirmed from our RE). The 3B
+and AAN share the same basic fuel map layout (fuel @ WH 0x2E17). However:
+- Different engine displacement = different VE curve
+- Different turbo = different boost calibration
+- You'd start from the 3B calibration values in an AAN-format ROM
+
+**Verdict:** Mechanically feasible. Requires cam sensor wheel fabrication/sourcing and
+full harness swap. The ECU firmware will work — the cam trigger code handles the
+reference tooth correctly. Start with ABY calibration as baseline, retune for 3B spec.
+
+#### Path 3: Standalone ECU (Megasquirt, Haltech, etc.)
+
+Skip the M2.3.2 ECU entirely. Run a standalone that accepts any trigger pattern,
+drives coil packs, and is fully configurable. No firmware RE or harness adaptation
+needed. The 034EFI PRJmod system is essentially this for the AAN.
+
+---
+
+### Summary
+
+The 3B Hall sender from the distributor **cannot be directly connected to an
+AAN 551AA/551B/551C ECU** — the firmware expects a cam-mounted sensor with a
+reference tooth, and the ECU PCB has different coil driver hardware.
+
+The early AAN (551A) uses the same distributor Hall concept as the 3B, but the
+ECU is completely different hardware — different connector, different PCB,
+different pinout. Not a plug-and-play swap.
+
+The cleanest path to coil packs with the AAN ECU is to add an AAN cam sensor
+wheel to the 3B engine and run the full AAN trigger system.
+

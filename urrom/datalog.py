@@ -159,6 +159,20 @@ def load_log(path: Path) -> DataLog:
 
 # ── Coverage computation ──────────────────────────────────────────────────────
 
+def _validated_axes(rom: bytes, map_def, variant):
+    """Return (rpm_axis, load_axis) with fallback to static axes if ROM data is garbage."""
+    from urrom.ecu_profiles import (get_axes, _RPM_AXIS_551, _LOAD_AXIS_551,
+                                    _BOOST_RPM_AXIS, _BOOST_LOAD_AXIS)
+    rpm_axis, load_axis = get_axes(rom, map_def, variant)
+    is_boost = getattr(map_def, 'main_addr', 0) < 0x1000
+    # Real RPM axis always has values >= 600; garbage MCU data is often < 500
+    if not rpm_axis or not any(v >= 500 for v in rpm_axis):
+        rpm_axis = (_BOOST_RPM_AXIS if is_boost else _RPM_AXIS_551)[:map_def.rows]
+    if not load_axis or max(load_axis) < 5:
+        load_axis = (_BOOST_LOAD_AXIS if is_boost else _LOAD_AXIS_551)[:map_def.cols]
+    return rpm_axis, load_axis
+
+
 def compute_coverage(log: DataLog, map_def, variant,
                      rom: bytes) -> dict[tuple[int,int], int]:
     """
@@ -167,24 +181,7 @@ def compute_coverage(log: DataLog, map_def, variant,
     Returns dict: (raw_row, col) → hit_count
     raw_row = 0 is lowest RPM (NOT display row, which is inverted).
     """
-    from urrom.ecu_profiles import get_axes, _RPM_AXIS_551, _LOAD_AXIS_551, _BOOST_RPM_AXIS, _BOOST_LOAD_AXIS
-
-    rpm_axis, load_axis = get_axes(rom, map_def, variant)
-
-    # Validate axes — get_axes may return live MCU data (not real RPM values)
-    # Fall back to static known-good axes when the data looks wrong
-    sw = getattr(variant, 'software_id', '') if variant else ''
-    if not rpm_axis or max(rpm_axis) < 500:   # real RPM axis always ≥ 600
-        if 'boost' in sw.lower() or map_def.main_addr < 0x1000:
-            rpm_axis = _BOOST_RPM_AXIS[:map_def.rows]
-        else:
-            rpm_axis = _RPM_AXIS_551[:map_def.rows]
-    if not load_axis or max(load_axis) < 5:
-        if 'boost' in sw.lower() or map_def.main_addr < 0x1000:
-            load_axis = _BOOST_LOAD_AXIS[:map_def.cols]
-        else:
-            load_axis = _LOAD_AXIS_551[:map_def.cols]
-
+    rpm_axis, load_axis = _validated_axes(rom, map_def, variant)
     if not rpm_axis or not load_axis:
         return {}
 
@@ -264,15 +261,7 @@ def compute_afr_overlay(log: DataLog, map_def, variant,
         'note': str,
     }
     """
-    from urrom.ecu_profiles import get_axes, _RPM_AXIS_551, _LOAD_AXIS_551, _BOOST_RPM_AXIS, _BOOST_LOAD_AXIS
-
-    rpm_axis, load_axis = get_axes(rom, map_def, variant)
-    sw = getattr(variant, 'software_id', '') if variant else ''
-    if not rpm_axis or max(rpm_axis) < 500:
-        rpm_axis = _RPM_AXIS_551[:map_def.rows]
-    if not load_axis or max(load_axis) < 5:
-        load_axis = _LOAD_AXIS_551[:map_def.cols]
-
+    rpm_axis, load_axis = _validated_axes(rom, map_def, variant)
     if not rpm_axis or not load_axis:
         return {}
 
