@@ -35,6 +35,7 @@ jobs:
         with:
           name: UrROM-windows
           path: dist/*.exe
+          if-no-files-found: error
 
   create-release:
     needs: build-windows
@@ -47,8 +48,26 @@ jobs:
         with:
           name: UrROM-windows
           path: dist/
-      - name: Create release
+      - name: List artifacts
+        run: ls -la dist/
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.exe
           generate_release_notes: true
+          body: |
+            ## UrROM ${{ github.ref_name }}
+
+            Bosch Motronic M2.3 / M2.3.2 ECU ROM editor for Audi 5-cyl 20v Turbo and V8.
+
+            ### Supported variants
+            - **5-cyl M2.3**: 3B, RR (447/857 404 series)
+            - **5-cyl M2.3.2**: AAN, ABY, ADU, RS2 (551A/AA/B/C series)
+            - **V8 M2.3**: ABH 4.2L, PT 3.6L (557/404V8 series) *(map addresses confirmed this release)*
+
+            ### What's included
+            - Windows .exe — no Python installation required
+            - ROM collection (19 reference chips) bundled
+
+            ### Installation
+            Download `UrROM-v*.exe` and run directly. No installer needed.

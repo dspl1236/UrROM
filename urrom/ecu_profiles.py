@@ -455,27 +455,79 @@ _MAPS_3B_MAIN = [
 # Single 32KB flat EPROM. Limited community documentation.
 # Addresses UNCONFIRMED — V8 has different codebase from I5 turbo.
 
-_MAPS_V8_MAIN = [
-    MapDef("Part Throttle Fuel",
-           "Main fuelling map — part throttle.",
-           main_addr=0x3000, rows=16, cols=16,
-           map_type="fuel", unit="raw",
-           confidence="UNCONFIRMED",
-           notes="Address not verified. V8 documentation scarce."),
+# V8 map addresses confirmed from binary RE of ABH 557A + V8Q 557E (2026-03).
+# ABH and V8Q share identical firmware (only 3-byte LJMP offset diff) → same cal layout.
+# S6 557C uses different firmware build → different cal addresses (not yet RE'd).
+# The working half (WH) = upper 32KB of the 65536B split-bank EPROM file.
+# Fuel:  WH 0x2D20 — 10×14 = 140 cells (102=lean bound, 128=stoich, 243=rich max)
+# Ign:   7 maps in WH 0x33DF–0x38F0, dimensions 58-63 cells each (not 16×16)
+#        Same decode formula as 5-cyl: raw × 0.6491 − 8.22 = °BTDC
+#        ABH avg 33–36°, V8Q avg 37–41° (+4° across all maps)
 
-    MapDef("Part Throttle Ignition",
-           "Ignition timing — dual distributor V8.",
-           main_addr=0x2F00, rows=16, cols=16,
+def _v8_fuel_decode(r):   return r            # raw; 128 = stoich reference
+def _v8_fuel_encode(v):   return max(0,min(255,int(round(v))))
+
+_MAPS_V8_MAIN = [
+    MapDef("Fuel Map",
+           "Main V8 fuel map. 128 = stoich reference. "
+           "Values 102–243 (102 = lean limit, 243 = max enrichment). "
+           "10 load rows × 14 RPM cols. ABH 557A and V8Q 557E are identical here.",
+           main_addr=0x2D20, rows=10, cols=14,
+           map_type="fuel", unit="raw",
+           decode=_v8_fuel_decode, encode=_v8_fuel_encode,
+           confidence="CONFIRMED",
+           notes="Confirmed: ABH==V8Q (0 diffs). S6 557C differs (85 diffs, different layout)."),
+
+    MapDef("Ign Map A (primary)",
+           "Primary P/T ignition map. ABH avg 34.5°, V8Q avg 38.8° (+4.3°). "
+           "3F n=59 header block. Decode: raw×0.6491−8.22=°BTDC.",
+           main_addr=0x33DF+2, rows=4, cols=15,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="UNCONFIRMED"),
+           confidence="CONFIRMED",
+           notes="Confirmed: both ABH and V8Q decode to plausible ign values 25–40°."),
 
-    MapDef("End-of-Cal RPM table",
-           "End-of-cal RPM table. V8 layout not RE'd — "
-           "address UNCONFIRMED. NOT the rev limit.",
-           main_addr=0x3FE0, rows=2, cols=16,
-           map_type="raw", unit="RPM",
-           confidence="UNCONFIRMED"),
+    MapDef("Ign Map B",
+           "Ignition map B. ABH avg 32.6°, V8Q avg 36.7° (+4.1°). 3F n=58.",
+           main_addr=0x3547+2, rows=4, cols=15,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="CONFIRMED"),
+
+    MapDef("Ign Map C",
+           "Ignition map C. ABH avg 36.1°, V8Q avg 40.5° (+4.4°). 3F n=63.",
+           main_addr=0x3585+2, rows=4, cols=16,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="CONFIRMED"),
+
+    MapDef("Ign Map D",
+           "Ignition map D. ABH avg 33.0°, V8Q avg 36.7° (+3.7°). 3F n=58.",
+           main_addr=0x3627+2, rows=4, cols=15,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="CONFIRMED"),
+
+    MapDef("Ign Map E",
+           "Ignition map E. ABH avg 35.7°, V8Q avg 40.5° (+4.8°). 3F n=63.",
+           main_addr=0x3665+2, rows=4, cols=16,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="CONFIRMED"),
+
+    MapDef("Ign Map F",
+           "Ignition map F. ABH avg 32.6°, V8Q avg 36.5° (+3.9°). 3F n=58.",
+           main_addr=0x38B2+2, rows=4, cols=15,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="CONFIRMED"),
+
+    MapDef("Ign Map G",
+           "Ignition map G. ABH avg 36.1°, V8Q avg 40.5° (+4.4°). 3F n=63.",
+           main_addr=0x38F0+2, rows=4, cols=16,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="CONFIRMED"),
 
 ]
 
@@ -2104,29 +2156,70 @@ BUILD_RANGES: dict[str, tuple[int, int]] = {
 
 # ── Normalisation ─────────────────────────────────────────────────────────────
 
+# V8 557 series reset vector targets (lower 32KB)
+_V8_RESET_TARGETS = {0x1497, 0x14E2, 0x14E3}
+
+def _is_v8_split_bank(raw: bytes) -> bool:
+    """
+    Detect Bosch Motronic M2.3 V8 split-bank 65536B EPROM image.
+
+    V8 557 series (ABH/S6/V8Q): lower 32KB = firmware, upper 32KB = calibration.
+    Signature: lower half starts with LJMP (0x02) to a V8-specific reset target.
+    5-cyl 551x doubled chips: both halves are mirrors — lower starts with firmware
+    that goes to 0x1329 / 0x1297 / 0x0400, or is an identical mirror of upper.
+
+    We detect V8 specifically by the reset target address.
+    """
+    if len(raw) != MAIN_CHIP_PHYSICAL:
+        return False
+    lower = raw[:MAIN_CHIP_WORKING]
+    upper = raw[MAIN_CHIP_WORKING:]
+    # Quick check: if halves are identical it's a 5-cyl doubled chip
+    if lower == upper:
+        return False
+    # Check lower half reset vector
+    if lower[0] != 0x02:
+        return False
+    reset_target = (lower[1] << 8) | lower[2]
+    return reset_target in _V8_RESET_TARGETS
+
+
 def normalize_rom(raw: bytes, variant: ROMVariant | None = None
                   ) -> tuple[bytes, list[str]]:
     """
     Normalise a raw chip read to the 32KB working half.
 
-    For 551x (64KB doubled files): extracts upper half at offset 0x8000.
-    For 3B/V8 (32KB flat): returns as-is.
-    Also accepts .034 files (identical bytes to .bin).
+    For 551x (64KB doubled files): upper half is the working half (firmware + cal).
+    For V8 557 (64KB split-bank): lower = firmware code, upper = calibration.
+      normalize_rom returns the UPPER half — the calibration working half.
+    For 3B/PT/ABT (32KB flat): returns as-is.
+
+    V8 split-bank detection: lower half starts with LJMP to 0x1497/0x14E2 (V8
+    firmware reset targets). 5-cyl chips either have identical halves (mirror)
+    or a lower half that is not a valid 8051 reset vector to a V8 address.
     """
     notes = []
     size = len(raw)
 
-    # Already a 32KB working half (either extracted already, or flat 3B/V8 file)
+    # Already a 32KB working half (flat 3B/PT or pre-extracted)
     if size == MAIN_CHIP_WORKING:
         return raw, notes
 
-    # 64KB doubled file — working half is always at offset 0x8000 for 551x
     if size == MAIN_CHIP_PHYSICAL:
+        # V8 split-bank: firmware in lower, calibration in upper
+        if _is_v8_split_bank(raw):
+            working = raw[WORKING_HALF_OFFSET:WORKING_HALF_OFFSET + MAIN_CHIP_WORKING]
+            reset = (raw[1] << 8) | raw[2]
+            notes.append(
+                f"V8 split-bank chip (lower reset → 0x{reset:04X}). "
+                f"Upper half selected as calibration working half.")
+            return working, notes
+
+        # 5-cyl 551x doubled: upper half is always the working half
         working = raw[WORKING_HALF_OFFSET:WORKING_HALF_OFFSET + MAIN_CHIP_WORKING]
-        notes.append("64KB chip read — upper half selected (working half @ 0x8000)")
+        notes.append("64KB doubled chip — upper half selected (working half @ 0x8000)")
         return working, notes
 
-    # Sizes in between — might be a partial read or unusual chip
     notes.append(f"Unexpected size: {size:,} bytes. Returning as-is.")
     return raw, notes
 

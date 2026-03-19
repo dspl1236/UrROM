@@ -1656,3 +1656,98 @@ class TestMockEngine:
         sc.step(1.0, 0.1, s)
         # Just ensure it doesn't crash and state is plausible
         assert s.rpm > 0
+
+
+# ── V8 split-bank normalize_rom + map detection ────────────────────────────────
+
+class TestV8NormalizeAndMaps:
+
+    def test_v8_split_bank_detection(self):
+        """normalize_rom returns upper half for V8 split-bank chips."""
+        from urrom.ecu_profiles import normalize_rom, _is_v8_split_bank
+        from pathlib import Path
+        for fname in ['roms/abh_fuel-ign_557a.bin',
+                      'roms/s6v8_fuel-ign_557c.bin',
+                      'roms/v8q_fuel-ign_557e.bin']:
+            p = Path(fname)
+            if not p.exists():
+                continue
+            raw = p.read_bytes()
+            assert _is_v8_split_bank(raw), f"{fname} not detected as V8 split-bank"
+            wh, notes = normalize_rom(raw)
+            assert bytes(wh) == raw[32768:], f"{fname}: wrong half returned"
+            assert any('V8 split-bank' in n for n in notes)
+
+    def test_5cyl_not_detected_as_v8(self):
+        """5-cyl doubled chips are not confused with V8 split-bank."""
+        from urrom.ecu_profiles import normalize_rom, _is_v8_split_bank
+        from pathlib import Path
+        for fname in ['roms/aby_fuel-ign_551aa.bin', 'roms/adu_fuel-ign_551c.bin']:
+            p = Path(fname)
+            if not p.exists():
+                continue
+            raw = p.read_bytes()
+            assert not _is_v8_split_bank(raw), f"{fname} wrongly detected as V8"
+            wh, notes = normalize_rom(raw)
+            assert bytes(wh) == raw[32768:], f"{fname}: upper half should still be selected"
+
+    def test_32kb_flat_not_detected_as_v8(self):
+        """32KB flat chips (3B, PT) pass through unchanged."""
+        from urrom.ecu_profiles import normalize_rom, _is_v8_split_bank
+        from pathlib import Path
+        for fname in ['roms/3b_fuel-ign_404aa.bin', 'roms/pt_fuel-ign_404h.bin']:
+            p = Path(fname)
+            if not p.exists():
+                continue
+            raw = p.read_bytes()
+            assert len(raw) == 32768
+            assert not _is_v8_split_bank(raw)
+            wh, _ = normalize_rom(raw)
+            assert bytes(wh) == raw
+
+    def test_v8_abh_map_detection(self):
+        """VARIANT_V8_ABH maps load correct calibration from ABH chip."""
+        from urrom.ecu_profiles import normalize_rom, detect_rom, read_map
+        from pathlib import Path
+        p = Path('roms/abh_fuel-ign_557a.bin')
+        if not p.exists():
+            return
+        raw = p.read_bytes()
+        wh, _ = normalize_rom(raw)
+        det = detect_rom(bytes(wh))
+        assert det.variant is not None
+        assert det.variant.software_id == '557'
+        # Ign Map A: should decode to plausible V8 advance values
+        ign_a = next((m for m in det.variant.main_maps
+                      if m.map_type == 'ign' and m.confidence == 'CONFIRMED'), None)
+        assert ign_a is not None, "No confirmed ign map in V8 variant"
+        data = read_map(bytes(wh), ign_a)
+        flat = [data[r][c] for r in range(ign_a.rows) for c in range(ign_a.cols)]
+        decoded = [ign_a.decode(v) for v in flat if 28 <= v <= 100]
+        assert len(decoded) > 20, "Too few plausible ign cells"
+        avg = sum(decoded) / len(decoded)
+        assert 25 <= avg <= 45, f"V8 ign avg {avg:.1f}° out of expected range"
+
+    def test_v8_abh_vs_v8q_advance(self):
+        """V8Q should show higher average ign advance than ABH."""
+        from urrom.ecu_profiles import normalize_rom, detect_rom, read_map
+        from pathlib import Path
+        abh_p = Path('roms/abh_fuel-ign_557a.bin')
+        v8q_p = Path('roms/v8q_fuel-ign_557e.bin')
+        if not abh_p.exists() or not v8q_p.exists():
+            return
+        def avg_ign(path):
+            raw = path.read_bytes()
+            wh, _ = normalize_rom(raw)
+            det = detect_rom(bytes(wh))
+            ign = next((m for m in det.variant.main_maps
+                        if m.map_type == 'ign' and m.confidence == 'CONFIRMED'), None)
+            if not ign: return 0
+            data = read_map(bytes(wh), ign)
+            flat = [data[r][c] for r in range(ign.rows) for c in range(ign.cols)]
+            dec = [ign.decode(v) for v in flat if 28 <= v <= 100]
+            return sum(dec)/len(dec) if dec else 0
+        abh_avg = avg_ign(abh_p)
+        v8q_avg = avg_ign(v8q_p)
+        assert v8q_avg > abh_avg, f"V8Q {v8q_avg:.1f}° should exceed ABH {abh_avg:.1f}°"
+        assert 2 < (v8q_avg - abh_avg) < 8, f"Unexpected delta: {v8q_avg-abh_avg:.1f}°"
