@@ -3100,9 +3100,14 @@ class MainWindow(QMainWindow):
         log_act.triggered.connect(self._on_overlay_datalog)
         wb_act = QAction("Overlay wideband AFR on fuel map…", self)
         wb_act.triggered.connect(self._on_overlay_wideband)
+        timing_act = QAction("Global ign timing offset…", self)
+        timing_act.triggered.connect(self._on_global_timing_offset)
         tools_menu.addAction(fpr_act)
+        tools_menu.addSeparator()
         tools_menu.addAction(log_act)
         tools_menu.addAction(wb_act)
+        tools_menu.addSeparator()
+        tools_menu.addAction(timing_act)
         help_menu = mb.addMenu("Help")
         shortcuts_act = QAction("Keyboard shortcuts…", self)
         shortcuts_act.triggered.connect(self._on_show_shortcuts)
@@ -3173,9 +3178,14 @@ class MainWindow(QMainWindow):
         log_act.triggered.connect(self._on_overlay_datalog)
         wb_act = QAction("Overlay wideband AFR on fuel map…", self)
         wb_act.triggered.connect(self._on_overlay_wideband)
+        timing_act = QAction("Global ign timing offset…", self)
+        timing_act.triggered.connect(self._on_global_timing_offset)
         tools_menu.addAction(fpr_act)
+        tools_menu.addSeparator()
         tools_menu.addAction(log_act)
         tools_menu.addAction(wb_act)
+        tools_menu.addSeparator()
+        tools_menu.addAction(timing_act)
         help_menu = mb.addMenu("Help")
         about_act = QAction("About UrROM", self)
         about_act.triggered.connect(self._on_about)
@@ -4216,6 +4226,132 @@ class MainWindow(QMainWindow):
         btns.accepted.connect(_apply_overlay)
         dlg.exec_()
 
+    def _on_global_timing_offset(self):
+        """Shift ALL confirmed ignition map cells by a fixed degree offset.
+
+        Useful for distributor-as-cam-sensor setups where the physical trigger
+        point differs from the AAN cam sensor reference (nominally ~60 BTDC).
+        A positive offset advances timing globally; negative retards.
+        """
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
+                                      QDoubleSpinBox, QDialogButtonBox, QFrame,
+                                      QGroupBox)
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            QMessageBox.information(self, "Timing offset", "Load a ROM first.")
+            return
+
+        v = self._det.variant
+        ign_maps = [m for m in getattr(v, 'main_maps', [])
+                    if m.map_type == 'ign' and m.confidence == 'CONFIRMED'
+                    and m.rows > 1 and m.decode and m.encode]
+        if not ign_maps:
+            QMessageBox.information(self, "Timing offset",
+                "No confirmed ignition maps with encode function for this variant.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Global ignition timing offset")
+        dlg.setMinimumWidth(430)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(10)
+
+        ctx_lbl = QLabel(
+            "Shifts all ignition map values by a fixed degree offset."
+            "\n"
+            "\nUse case: distributor-as-cam-sensor adapter where the Hall"
+            "\nsender fires at a different crank angle than the AAN cam"
+            "\nsensor (nominally ~60 BTDC). Correct in software rather than"
+            "\nphysically repositioning the distributor."
+            "\n"
+            "\n+ offset = more advance  |  - offset = more retard")
+        ctx_lbl.setStyleSheet(
+            f"color:{FG_DIM};font-size:10px;background:{BG2};"
+            f"padding:8px;border-radius:4px;")
+        ctx_lbl.setWordWrap(True)
+        lay.addWidget(ctx_lbl)
+
+        form = QFormLayout(); form.setSpacing(8)
+        offset_spin = QDoubleSpinBox()
+        offset_spin.setRange(-60.0, 60.0)
+        offset_spin.setValue(0.0)
+        offset_spin.setDecimals(1)
+        offset_spin.setSingleStep(0.5)
+        offset_spin.setSuffix("  ° (BTDC positive)")
+        offset_spin.setStyleSheet(
+            f"background:{BG2};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:2px 4px;font-size:12px;")
+        form.addRow("Timing offset:", offset_spin)
+        lay.addLayout(form)
+
+        # Live preview
+        preview_lbl = QLabel("")
+        preview_lbl.setStyleSheet(f"color:{ACCENT};font-size:11px;")
+        lay.addWidget(preview_lbl)
+
+        def _update_preview():
+            deg = offset_spin.value()
+            if not ign_maps[0].decode or not ign_maps[0].encode:
+                return
+            # raw delta = floor(deg / 0.6491) approximately
+            sample_raw = 64  # ~33° BTDC
+            sample_dec = ign_maps[0].decode(sample_raw)
+            new_dec = sample_dec + deg
+            new_raw = ign_maps[0].encode(new_dec)
+            raw_delta = new_raw - sample_raw
+            sign = "+" if deg >= 0 else ""
+            preview_lbl.setText(
+                f"Example: {sample_dec:.1f} BTDC → {new_dec:.1f} BTDC  "
+                f"(raw {sign}{raw_delta:+d} per cell across {len(ign_maps)} maps)")
+
+        offset_spin.valueChanged.connect(_update_preview)
+        _update_preview()
+
+        warn = QLabel(
+            "This modifies ALL confirmed ign maps. Use Undo (Ctrl+Z) or"
+            "\nRevert to roll back. Session changelog records every cell change.")
+        warn.setStyleSheet(f"color:{AMBER};font-size:10px;")
+        warn.setWordWrap(True)
+        lay.addWidget(warn)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        def _apply():
+            deg = offset_spin.value()
+            if deg == 0.0:
+                dlg.accept()
+                return
+            from urrom.ecu_profiles import read_map, write_map
+            total_cells = 0
+            for m in ign_maps:
+                data = read_map(bytes(self._main_rom), m)
+                new_data = []
+                for r in range(m.rows):
+                    row = []
+                    for c in range(m.cols):
+                        raw = data[r][c]
+                        decoded = m.decode(raw)
+                        new_decoded = decoded + deg
+                        new_raw = max(0, min(255, m.encode(new_decoded)))
+                        row.append(new_raw)
+                        if raw != new_raw:
+                            total_cells += 1
+                    new_data.append(row)
+                self._main_rom = bytearray(write_map(bytes(self._main_rom), m, new_data))
+            self._main_chip_tab.load(self._main_rom, v)
+            self._compare_tab.set_rom_a(bytes(self._main_rom), v)
+            self._set_dirty()
+            sign = "+" if deg >= 0 else ""
+            self._update_status(
+                f"Timing offset {sign}{deg:.1f} applied: {total_cells} cells across "
+                f"{len(ign_maps)} ign maps")
+            dlg.accept()
+
+        btns.accepted.connect(_apply)
+        dlg.exec_()
+
     def _on_overlay_wideband(self):
         """Load a CSV with AFR data and overlay deviation from target on the fuel map."""
         if self._main_rom is None or self._det is None or not self._det.variant:
@@ -4577,6 +4713,132 @@ class MainWindow(QMainWindow):
             dlg.accept()
 
         btns.accepted.connect(_apply_overlay)
+        dlg.exec_()
+
+    def _on_global_timing_offset(self):
+        """Shift ALL confirmed ignition map cells by a fixed degree offset.
+
+        Useful for distributor-as-cam-sensor setups where the physical trigger
+        point differs from the AAN cam sensor reference (nominally ~60 BTDC).
+        A positive offset advances timing globally; negative retards.
+        """
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
+                                      QDoubleSpinBox, QDialogButtonBox, QFrame,
+                                      QGroupBox)
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            QMessageBox.information(self, "Timing offset", "Load a ROM first.")
+            return
+
+        v = self._det.variant
+        ign_maps = [m for m in getattr(v, 'main_maps', [])
+                    if m.map_type == 'ign' and m.confidence == 'CONFIRMED'
+                    and m.rows > 1 and m.decode and m.encode]
+        if not ign_maps:
+            QMessageBox.information(self, "Timing offset",
+                "No confirmed ignition maps with encode function for this variant.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Global ignition timing offset")
+        dlg.setMinimumWidth(430)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(10)
+
+        ctx_lbl = QLabel(
+            "Shifts all ignition map values by a fixed degree offset."
+            "\n"
+            "\nUse case: distributor-as-cam-sensor adapter where the Hall"
+            "\nsender fires at a different crank angle than the AAN cam"
+            "\nsensor (nominally ~60 BTDC). Correct in software rather than"
+            "\nphysically repositioning the distributor."
+            "\n"
+            "\n+ offset = more advance  |  - offset = more retard")
+        ctx_lbl.setStyleSheet(
+            f"color:{FG_DIM};font-size:10px;background:{BG2};"
+            f"padding:8px;border-radius:4px;")
+        ctx_lbl.setWordWrap(True)
+        lay.addWidget(ctx_lbl)
+
+        form = QFormLayout(); form.setSpacing(8)
+        offset_spin = QDoubleSpinBox()
+        offset_spin.setRange(-60.0, 60.0)
+        offset_spin.setValue(0.0)
+        offset_spin.setDecimals(1)
+        offset_spin.setSingleStep(0.5)
+        offset_spin.setSuffix("  ° (BTDC positive)")
+        offset_spin.setStyleSheet(
+            f"background:{BG2};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:2px 4px;font-size:12px;")
+        form.addRow("Timing offset:", offset_spin)
+        lay.addLayout(form)
+
+        # Live preview
+        preview_lbl = QLabel("")
+        preview_lbl.setStyleSheet(f"color:{ACCENT};font-size:11px;")
+        lay.addWidget(preview_lbl)
+
+        def _update_preview():
+            deg = offset_spin.value()
+            if not ign_maps[0].decode or not ign_maps[0].encode:
+                return
+            # raw delta = floor(deg / 0.6491) approximately
+            sample_raw = 64  # ~33° BTDC
+            sample_dec = ign_maps[0].decode(sample_raw)
+            new_dec = sample_dec + deg
+            new_raw = ign_maps[0].encode(new_dec)
+            raw_delta = new_raw - sample_raw
+            sign = "+" if deg >= 0 else ""
+            preview_lbl.setText(
+                f"Example: {sample_dec:.1f} BTDC → {new_dec:.1f} BTDC  "
+                f"(raw {sign}{raw_delta:+d} per cell across {len(ign_maps)} maps)")
+
+        offset_spin.valueChanged.connect(_update_preview)
+        _update_preview()
+
+        warn = QLabel(
+            "This modifies ALL confirmed ign maps. Use Undo (Ctrl+Z) or"
+            "\nRevert to roll back. Session changelog records every cell change.")
+        warn.setStyleSheet(f"color:{AMBER};font-size:10px;")
+        warn.setWordWrap(True)
+        lay.addWidget(warn)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        def _apply():
+            deg = offset_spin.value()
+            if deg == 0.0:
+                dlg.accept()
+                return
+            from urrom.ecu_profiles import read_map, write_map
+            total_cells = 0
+            for m in ign_maps:
+                data = read_map(bytes(self._main_rom), m)
+                new_data = []
+                for r in range(m.rows):
+                    row = []
+                    for c in range(m.cols):
+                        raw = data[r][c]
+                        decoded = m.decode(raw)
+                        new_decoded = decoded + deg
+                        new_raw = max(0, min(255, m.encode(new_decoded)))
+                        row.append(new_raw)
+                        if raw != new_raw:
+                            total_cells += 1
+                    new_data.append(row)
+                self._main_rom = bytearray(write_map(bytes(self._main_rom), m, new_data))
+            self._main_chip_tab.load(self._main_rom, v)
+            self._compare_tab.set_rom_a(bytes(self._main_rom), v)
+            self._set_dirty()
+            sign = "+" if deg >= 0 else ""
+            self._update_status(
+                f"Timing offset {sign}{deg:.1f} applied: {total_cells} cells across "
+                f"{len(ign_maps)} ign maps")
+            dlg.accept()
+
+        btns.accepted.connect(_apply)
         dlg.exec_()
 
     def _on_overlay_wideband(self):

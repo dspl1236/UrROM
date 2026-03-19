@@ -906,6 +906,13 @@ cam trigger wheel and fitting coil packs physically.
 
 ## 3B/7A Head on AAN Block: Distributor-as-Cam-Sensor Adapter
 
+> ⚠ **EXPERIMENTAL** — The trigger signal compatibility is confirmed by binary RE
+> of the M2.3.2 firmware. The exact AAN cam sensor reference angle (~60 BTDC) has
+> not yet been verified against factory Audi timing documentation. Until that
+> reference angle is confirmed, use the **software timing offset** workflow rather
+> than attempting to physically phase the distributor to an unverified position.
+> Physical procedure will be updated once AAN timing data is available (Bentley manual).
+
 ### The scenario
 
 AAN heads are becoming scarce. The 3B and 7A heads (which use camshafts with a
