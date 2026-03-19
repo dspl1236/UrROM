@@ -2275,11 +2275,88 @@ class HardwareTab(QWidget):
         outer.addWidget(lc_card)
         self._lc_card = lc_card
 
+        # ── Conversion patches ────────────────────────────────────────────────
+        conv_lbl = QLabel("CONVERSION PATCHES")
+        conv_lbl.setStyleSheet(
+            f"color:{FG_DIM};font-size:9px;letter-spacing:1px;"
+            f"margin-top:12px;margin-bottom:2px;")
+        outer.addWidget(conv_lbl)
+
+        self._dist_patch_card = self._make_dist_patch_card()
+        outer.addWidget(self._dist_patch_card)
 
         # State
         self._boost_bytes: bytes | None = None
         self._wh: bytes | None = None
         self._variant_name: str = ""
+
+    # ── Distributor conversion patch card ─────────────────────────────────
+
+    def _make_dist_patch_card(self) -> QFrame:
+        """Card: AAN cam sensor → 3B/7A distributor Hall sender conversion."""
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame{{background:{BG3};border:1px solid #3a2a10;"
+            f"border-radius:4px;padding:4px;}}")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(6)
+
+        # Header row
+        hdr = QHBoxLayout()
+        badge = QLabel("⚠ EXPERIMENTAL")
+        badge.setStyleSheet(
+            f"color:#c87020;font-size:9px;font-weight:bold;"
+            f"background:#3a2a10;padding:2px 6px;border-radius:3px;"
+            f"letter-spacing:0.5px;")
+        title = QLabel("AAN Cam Sensor → 3B/7A Distributor Hall Adapter")
+        title.setStyleSheet(f"color:{FG};font-size:11px;font-weight:bold;")
+        hdr.addWidget(title)
+        hdr.addStretch()
+        hdr.addWidget(badge)
+        lay.addLayout(hdr)
+
+        desc = QLabel(
+            "Allows fitting a 3B or 7A cylinder head (with distributor camshaft) "
+            "to an AAN engine block running a full AAN ECU and coil-pack harness. "
+            "The 3B/7A single-vane distributor Hall sender is wired to the AAN cam "
+            "sensor harness — the firmware trigger algorithm is identical. "
+            "A timing offset compensates for the difference between the distributor "
+            "position and the AAN cam sensor reference angle (~60 BTDC).")
+        desc.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+        desc.setWordWrap(True)
+        lay.addWidget(desc)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color:#3a2a10;"); lay.addWidget(sep)
+
+        # Current offset display
+        self._dist_offset_lbl = QLabel("No offset applied  (0.0)")
+        self._dist_offset_lbl.setStyleSheet(
+            f"color:{FG_DIM};font-size:10px;")
+        lay.addWidget(self._dist_offset_lbl)
+
+        # Patch button
+        btn = QPushButton(
+            "Set distributor timing offset…")
+        btn.setFixedHeight(28)
+        btn.setStyleSheet(
+            f"QPushButton{{background:#3a2a10;color:#c87020;"
+            f"border:1px solid #6a4a20;border-radius:3px;"
+            f"padding:0 12px;font-size:10px;font-weight:bold;}}"
+            f"QPushButton:hover{{background:#5a3a10;border-color:#c87020;}}")
+        btn.clicked.connect(self._on_dist_patch)
+        lay.addWidget(btn)
+
+        note = QLabel(
+            "Reference angle not yet confirmed from factory data. "
+            "Set offset = 0, verify timing with a timing light, then adjust.")
+        note.setStyleSheet(f"color:#6a4a20;font-size:9px;")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+
+        self._dist_patch_offset = 0.0   # track applied offset
+        return card
 
     # ── Sensor card ───────────────────────────────────────────────────────
 
@@ -2530,6 +2607,137 @@ class HardwareTab(QWidget):
     def set_scalar_changed_callback(self, fn):
         """Register fn(wh_off, raw_byte) called when a scalar is edited."""
         self._scalar_changed_callback = fn
+
+    def _on_dist_patch(self) -> None:
+        """Guided wizard: set timing offset for 3B/7A distributor as AAN cam sensor."""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                                      QDoubleSpinBox, QDialogButtonBox, QFrame,
+                                      QCheckBox)
+
+        dlg = QDialog()
+        dlg.setWindowTitle(
+            "3B/7A Distributor → AAN Cam Sensor Timing Offset")
+        dlg.setMinimumWidth(500)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(12)
+
+        # Title and context
+        ttl = QLabel(
+            "AAN Cam Sensor to 3B/7A Distributor Hall Adapter")
+        ttl.setStyleSheet(
+            f"font-size:13px;font-weight:bold;color:{FG};")
+        lay.addWidget(ttl)
+
+        badge = QLabel("⚠  EXPERIMENTAL  —  reference angle unconfirmed")
+        badge.setStyleSheet(
+            f"color:#c87020;background:#3a2a10;padding:4px 10px;"
+            f"border-radius:3px;font-size:10px;")
+        lay.addWidget(badge)
+
+        ctx_lines = [
+            "The 3B/7A single-vane distributor Hall sender produces the same signal",
+            "pattern as the AAN cam Hall sensor (confirmed by M2.3.2 firmware binary",
+            "analysis). Wire the distributor Hall sender to the AAN cam sensor harness.",
+            "",
+            "The AAN cam sensor fires at a specific crank angle (nominally ~60 BTDC",
+            "cylinder 1). If your distributor is positioned at a different angle,",
+            "this offset corrects the difference without touching the distributor.",
+            "",
+            "Start at 0. Run engine, check timing with a timing light on cyl 1,",
+            "then adjust until commanded = actual timing.",
+        ]
+        ctx = QLabel("\n".join(ctx_lines))
+        ctx.setWordWrap(True)
+        ctx.setStyleSheet(
+            f"color:{FG_DIM};font-size:10px;background:{BG2};"
+            f"padding:10px;border-radius:4px;")
+        lay.addWidget(ctx)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color:{BORDER}"); lay.addWidget(sep)
+
+        # Offset input
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Timing offset:"))
+        self._dist_spin = QDoubleSpinBox()
+        self._dist_spin.setRange(-60.0, 60.0)
+        self._dist_spin.setValue(self._dist_patch_offset)
+        self._dist_spin.setDecimals(1)
+        self._dist_spin.setSingleStep(1.0)
+        self._dist_spin.setSuffix("\u00b0")
+        self._dist_spin.setToolTip(
+            "Positive = more advance (distributor fires later than AAN cam sensor)\n"
+            "Negative = more retard (distributor fires earlier)")
+        self._dist_spin.setFixedWidth(100)
+        self._dist_spin.setStyleSheet(
+            f"QDoubleSpinBox{{background:{BG2};color:{FG};"
+            f"border:1px solid {BORDER};border-radius:3px;"
+            f"padding:3px 6px;font-size:13px;}}")
+
+        preview = QLabel("")
+        preview.setStyleSheet(f"color:{ACCENT};font-size:10px;")
+
+        def _upd():
+            d = self._dist_spin.value()
+            sign = "+" if d >= 0 else ""
+            raw_delta = round(d / 0.6491)
+            preview.setText(
+                f"={sign}{d:.1f}°  →  {sign}{raw_delta:+d} raw on every ign cell"
+                f"  ({abs(raw_delta)} cells × {len([m for m in (self._dist_maps or []) if m.map_type == "ign" and m.confidence == "CONFIRMED" and m.rows > 1])} maps)")
+
+        self._dist_spin.valueChanged.connect(_upd)
+
+        row.addWidget(self._dist_spin)
+        row.addSpacing(12)
+        row.addWidget(preview)
+        row.addStretch()
+        lay.addLayout(row)
+        _upd()
+
+        # Quick preset buttons
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Quick:"))
+        for label, val in [("-20°", -20.0), ("-10°", -10.0), ("0° (reset)", 0.0),
+                           ("+10°", 10.0), ("+20°", 20.0)]:
+            pb = QPushButton(label)
+            pb.setFixedHeight(22)
+            pb.setStyleSheet(
+                f"QPushButton{{background:{BG3};color:{FG};"
+                f"border:1px solid {BORDER};border-radius:3px;"
+                f"padding:0 8px;font-size:10px;}}"
+                f"QPushButton:hover{{border-color:{ACCENT};}}")
+            _val = val
+            pb.clicked.connect(lambda _, v=_val: self._dist_spin.setValue(v))
+            preset_row.addWidget(pb)
+        preset_row.addStretch()
+        lay.addLayout(preset_row)
+
+        warn = QLabel(
+            "This modifies all confirmed ignition maps. "
+            "Undo (Ctrl+Z) or Revert reverses the change. "
+            "Session changelog records every cell.")
+        warn.setStyleSheet(f"color:{AMBER};font-size:9px;")
+        warn.setWordWrap(True)
+        lay.addWidget(warn)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Close)
+        lay.addWidget(btns)
+        btns.rejected.connect(dlg.reject)
+
+        def _apply():
+            if not self._scalar_changed_callback:
+                return
+            # Delegate to MainWindow via callback
+            self._scalar_changed_callback(
+                '__dist_patch__', self._dist_spin.value())
+
+        btns.button(QDialogButtonBox.Apply).clicked.connect(_apply)
+        dlg.exec_()
+
+    def set_dist_maps(self, maps):
+        """Pass the variant's map list so the patch dialog can count ign maps."""
+        self._dist_maps = maps
 
     def _on_open_boost(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -3100,14 +3308,10 @@ class MainWindow(QMainWindow):
         log_act.triggered.connect(self._on_overlay_datalog)
         wb_act = QAction("Overlay wideband AFR on fuel map…", self)
         wb_act.triggered.connect(self._on_overlay_wideband)
-        timing_act = QAction("Global ign timing offset…", self)
-        timing_act.triggered.connect(self._on_global_timing_offset)
         tools_menu.addAction(fpr_act)
         tools_menu.addSeparator()
         tools_menu.addAction(log_act)
         tools_menu.addAction(wb_act)
-        tools_menu.addSeparator()
-        tools_menu.addAction(timing_act)
         help_menu = mb.addMenu("Help")
         shortcuts_act = QAction("Keyboard shortcuts…", self)
         shortcuts_act.triggered.connect(self._on_show_shortcuts)
@@ -3178,14 +3382,10 @@ class MainWindow(QMainWindow):
         log_act.triggered.connect(self._on_overlay_datalog)
         wb_act = QAction("Overlay wideband AFR on fuel map…", self)
         wb_act.triggered.connect(self._on_overlay_wideband)
-        timing_act = QAction("Global ign timing offset…", self)
-        timing_act.triggered.connect(self._on_global_timing_offset)
         tools_menu.addAction(fpr_act)
         tools_menu.addSeparator()
         tools_menu.addAction(log_act)
         tools_menu.addAction(wb_act)
-        tools_menu.addSeparator()
-        tools_menu.addAction(timing_act)
         help_menu = mb.addMenu("Help")
         about_act = QAction("About UrROM", self)
         about_act.triggered.connect(self._on_about)
@@ -3327,11 +3527,18 @@ class MainWindow(QMainWindow):
         ov.update(det, self._boost_det if hasattr(self, "_boost_det") else None)
         self._hardware_tab.update(bytes(wh), det.variant.name if det.variant else "")
         # Wire LC/NLS scalar edits -> dirty flag + ROM write-back
-        def _on_scalar_changed(wh_off: int, raw: int):
-            if self._main_rom and wh_off < len(self._main_rom):
+        def _on_scalar_changed(wh_off, raw):
+            if wh_off == '__dist_patch__':
+                # Distributor timing offset — shift all ign maps
+                deg = raw   # raw is actually a float degree value here
+                self._apply_dist_timing_patch(deg)
+                return
+            if self._main_rom and isinstance(wh_off, int) and wh_off < len(self._main_rom):
                 self._main_rom[wh_off] = raw
                 self._set_dirty()
         self._hardware_tab.set_scalar_changed_callback(_on_scalar_changed)
+        self._hardware_tab.set_dist_maps(
+            self._det.variant.main_maps if self._det and self._det.variant else [])
         self._hardware_tab.set_injector_callback(self._on_injector_scaling)
         self._save_btn.setEnabled(True)
 
@@ -3754,6 +3961,50 @@ class MainWindow(QMainWindow):
             variant.main_maps = variant.main_maps + added
             self._update_status(
                 f"Auto-imported {len(added)} maps from {xdf_path.name} ({sw_id})")
+
+    def _apply_dist_timing_patch(self, deg: float) -> None:
+        """Apply distributor timing offset: shift all confirmed ign map cells by deg."""
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            return
+        v = self._det.variant
+        ign_maps = [m for m in (v.main_maps or [])
+                    if m.map_type == 'ign' and m.confidence == 'CONFIRMED'
+                    and m.rows > 1 and m.decode and m.encode]
+        if not ign_maps or deg == 0.0:
+            return
+
+        from urrom.ecu_profiles import read_map, write_map
+        total_cells = 0
+        for m in ign_maps:
+            data = read_map(bytes(self._main_rom), m)
+            new_data = []
+            for r in range(m.rows):
+                row = []
+                for c in range(m.cols):
+                    raw = data[r][c]
+                    new_raw = max(0, min(255, m.encode(m.decode(raw) + deg)))
+                    row.append(new_raw)
+                    if raw != new_raw:
+                        total_cells += 1
+                new_data.append(row)
+            self._main_rom = bytearray(write_map(bytes(self._main_rom), m, new_data))
+
+        # Update offset label in hardware tab
+        prev = self._hardware_tab._dist_patch_offset
+        self._hardware_tab._dist_patch_offset = deg
+        sign = "+" if deg >= 0 else ""
+        self._hardware_tab._dist_offset_lbl.setText(
+            f"Applied: {sign}{deg:.1f}°  ({total_cells} cells in {len(ign_maps)} maps)")
+        self._hardware_tab._dist_offset_lbl.setStyleSheet(
+            f"color:{'#c87020' if deg != 0 else FG_DIM};font-size:10px;font-weight:bold;")
+
+        self._main_chip_tab.load(self._main_rom, v)
+        self._compare_tab.set_rom_a(bytes(self._main_rom), v)
+        self._set_dirty()
+        sign2 = "+" if deg >= 0 else ""
+        self._update_status(
+            f"Distributor adapter: {sign2}{deg:.1f}° offset applied "
+            f"({total_cells} ign cells across {len(ign_maps)} maps)")
 
     def _on_compare_to_stock(self):
         """Auto-load the matching stock ROM from roms/ and open Compare tab."""
