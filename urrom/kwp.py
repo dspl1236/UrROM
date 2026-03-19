@@ -19,6 +19,7 @@ M2.3.2 group layout (4A0-907-551-AA.lbl, WinlogDriver.cpp confirmed):
 """
 
 import logging
+import threading
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -92,31 +93,56 @@ class LiveValues:
 
         def _cells(grp_key) -> dict:
             g = groups.get(str(grp_key), groups.get(grp_key, {}))
-            return {c["index"]: c for c in g.get("cells", [])}
+            raw = g.get("cells", []) if isinstance(g, dict) else g
+            if not raw:
+                return {}
+            # KWPBridge format: [{index:N, value:X, unit:U}, ...]
+            if isinstance(raw[0], dict):
+                return {c["index"]: c for c in raw}
+            # Mock format: [int, int, int, int]  (1-based index mapping)
+            return {i + 1: {"index": i + 1, "value": float(v)} for i, v in enumerate(raw)}
 
         def _v(cells, idx) -> Optional[float]:
             c = cells.get(idx)
-            return c["value"] if c else None
+            if c is None:
+                return None
+            return c["value"] if isinstance(c, dict) else float(c)
 
-        # Group 1: RPM, ECT, lambda, ignition
-        g1 = _cells(1) or _cells("0")   # mock sends group 1 as "0"
-        self.rpm     = _v(g1, 1)
-        self.ect     = _v(g1, 2)
-        self.lambda_ = _v(g1, 3)
-        self.timing  = _v(g1, 4)
+        # M2.3.2 group decode formulas (confirmed from .lbl / WinlogDriver):
+        # Group 1: cell1=RPM×40, cell2=ECT−70°C, cell3=λ/128, cell4=IGN raw
+        # Group 3: cell1=RPM×40, cell2=load raw, cell3=TPS×0.416%, cell4=IAT−70°C
+        # Group 6: cell1=N75 DC raw, cell3=MAP kPa raw  [prjmod only]
 
-        # Group 3: RPM, load, TPS, IAT
+        def _rpm(v):   return v * 40 if v is not None else None
+        def _ect(v):   return v - 70 if v is not None else None
+        def _lam(v):   return v / 128 if v is not None else None
+        def _ign(v):   return v * 0.6491 - 8.2186 if v is not None else None
+        def _tps(v):   return v * 0.416 if v is not None else None
+        def _iat(v):   return v - 70 if v is not None else None
+
+        g1 = _cells(1)
+        if g1:
+            self.rpm     = _rpm(_v(g1, 1))
+            self.ect     = _ect(_v(g1, 2))
+            self.lambda_ = _lam(_v(g1, 3))
+            self.timing  = _ign(_v(g1, 4))
+
+        # Group 3: RPM, load (raw), TPS, IAT
         g3 = _cells(3)
         if g3:
-            self.load = _v(g3, 2)   # raw /25 already decoded by mock
-            self.tps  = _v(g3, 3)
-            self.iat  = _v(g3, 4)
+            if self.rpm is None:
+                self.rpm = _rpm(_v(g3, 1))
+            self.load = _v(g3, 2)       # raw 0-255, keep raw for map overlay
+            self.tps  = _tps(_v(g3, 3))
+            self.iat  = _iat(_v(g3, 4))
 
         # Group 6: N75/MAP (prjmod firmware — absent on stock)
         g6 = _cells(6)
         if g6:
-            self.n75_dc  = _v(g6, 1)
-            self.map_kpa = _v(g6, 3)
+            n75_raw      = _v(g6, 1)
+            map_raw      = _v(g6, 3)
+            self.n75_dc  = n75_raw / 2.55 if n75_raw is not None else None
+            self.map_kpa = map_raw / 255 * 300 if map_raw is not None else None
 
         # Battery from group 2
         g2 = _cells(2)
@@ -527,3 +553,97 @@ class DashboardWindow:
             self._monitor.connected.disconnect(self._on_connect)
         except Exception: pass
         self._win.close()
+
+
+# ── Mock KWP bridge (for testing without real ECU/KWPBridge) ─────────────────
+
+class MockKWPClient:
+    """
+    Drop-in KWPClient replacement that reads from tools/mock_engine.py
+    over a local TCP socket. Enables KWP overlay testing without hardware.
+
+    Usage:
+        server = MockECUServer(port=50266, scenario=CycleScenario(), ...)
+        server.start()
+        # UrROM KWPMonitor will auto-connect as if KWPBridge were running
+    """
+
+    def __init__(self, port: int = DEFAULT_PORT):
+        self._port     = port
+        self._sock:   Optional[socket.socket] = None
+        self._state:  dict = {}
+        self._connected = False
+        self._on_connect_cb    = None
+        self._on_disconnect_cb = None
+        self._on_state_cb      = None
+        self._thread:  Optional[threading.Thread] = None
+        self._running  = False
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    @property
+    def state(self) -> dict:
+        return self._state
+
+    def on_connect(self, cb):    self._on_connect_cb    = cb
+    def on_disconnect(self, cb): self._on_disconnect_cb = cb
+    def on_state(self, cb):      self._on_state_cb      = cb
+
+    def connect(self, **kw):
+        self._running = True
+        self._thread  = threading.Thread(target=self._recv_loop, daemon=True)
+        self._thread.start()
+
+    def disconnect(self):
+        self._running = False
+        if self._sock:
+            try: self._sock.close()
+            except Exception: pass
+        self._connected = False
+
+    def _recv_loop(self):
+        import socket as _socket, json as _json, time as _time
+        buf = b""
+        while self._running:
+            if not self._connected:
+                try:
+                    s = _socket.create_connection(("127.0.0.1", self._port), timeout=2)
+                    self._sock = s
+                    self._connected = True
+                    if self._on_connect_cb:
+                        self._on_connect_cb()
+                except Exception:
+                    _time.sleep(1)
+                    continue
+            try:
+                chunk = self._sock.recv(4096)
+                if not chunk:
+                    raise ConnectionResetError("server closed")
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    try:
+                        self._state = _json.loads(line)
+                        if self._on_state_cb:
+                            self._on_state_cb(self._state)
+                    except Exception:
+                        pass
+            except Exception:
+                self._connected = False
+                self._sock = None
+                if self._on_disconnect_cb:
+                    self._on_disconnect_cb()
+                _time.sleep(0.5)
+
+
+def mock_kwpbridge_running(port: int = DEFAULT_PORT) -> bool:
+    """Return True if a mock engine server is listening on port."""
+    import socket as _socket
+    try:
+        s = _socket.create_connection(("127.0.0.1", port), timeout=0.3)
+        s.close()
+        return True
+    except Exception:
+        return False

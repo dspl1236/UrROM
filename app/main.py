@@ -212,6 +212,8 @@ class InfoStrip(QFrame):
         self._conf_lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
 
         self._req_lbl = QLabel("")
+        self._pair_lbl = QLabel("")
+        self._pair_lbl.setStyleSheet(f"color: {AMBER}; font-size: 10px;")
         self._req_lbl.setStyleSheet(f"color: {AMBER}; font-size: 10px;")
         self._req_lbl.setWordWrap(True)
         self._req_lbl.setVisible(False)
@@ -222,6 +224,7 @@ class InfoStrip(QFrame):
         layout.addWidget(self._conf_lbl)
         layout.addStretch()
         layout.addWidget(self._req_lbl)
+        layout.addWidget(self._pair_lbl)
 
     def update(self, det: DetectionResult | None, boost_loaded: bool = False):
         if det is None:
@@ -766,12 +769,12 @@ class MapTable(QTableWidget):
                 ann = self._annotations.get((r, c), "")
                 tip_parts = []
                 if decode:
-                    decoded_val = decode(item_raw)
+                    decoded_val = decode(cell_raw)
                     dec_str = (f"{decoded_val:.2f}" if isinstance(decoded_val, float)
                                else str(decoded_val))
-                    tip_parts.append(f"raw: {item_raw}  decoded: {dec_str} {self._map_def.unit or ''}")
+                    tip_parts.append(f"raw: {cell_raw}  decoded: {dec_str} {self._map_def.unit or ''}")
                 else:
-                    tip_parts.append(f"raw: {item_raw}")
+                    tip_parts.append(f"raw: {cell_raw}")
                 if ann:
                     tip_parts.append(f"📝 {ann}")
                     # Add asterisk to annotated cells
@@ -1604,6 +1607,13 @@ class MainChipTab(QWidget):
                 self._sd_bar.setVisible(False)
         else:
             self._sd_bar.setVisible(False)
+
+    def set_session_log_fn(self, fn):
+        """Register fn(map_def, r, c, old_raw, new_raw) for per-cell changelog."""
+        if fn:
+            self._table._log_fn = lambda m, r, c, old, new: fn(m, r, c, old, new)
+        else:
+            self._table._log_fn = None
 
     def set_status_fn(self, fn):
         """Register the status-bar push function from MainWindow."""
@@ -2886,6 +2896,11 @@ class CompareTab(QWidget):
         self._status.setText("Load a ROM A first, then load ROM B to compare.")
         self._clear_tables()
         self._summary.setText("")
+
+    def set_rom_b(self, wh: bytes, variant=None) -> None:
+        """Public alias — set comparison ROM B directly from bytes."""
+        label = variant.name if variant else "ROM B"
+        self.set_rom_b_direct(wh, label)
 
     def set_rom_b_direct(self, wh: bytes, label: str = "stock"):
         """Load ROM B programmatically without a file dialog."""

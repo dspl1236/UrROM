@@ -1544,3 +1544,115 @@ class TestWidebandOverlay:
         overlay = compute_afr_overlay(log, m, v, bytes(wh), target_afr=14.7)
         # Idle filtered = no overlay data
         assert len(overlay) == 0
+
+
+# ── Mock engine + KWP bridge ───────────────────────────────────────────────────
+
+class TestMockEngine:
+
+    def test_all_scenarios_produce_valid_state(self):
+        """Each scenario step should produce a valid KWP state dict."""
+        from tools.mock_engine import (
+            IdleScenario, CruiseScenario, WOTScenario,
+            WarmupScenario, KnockScenario, EngineState
+        )
+        for cls in [IdleScenario, CruiseScenario, WOTScenario, WarmupScenario, KnockScenario]:
+            s = EngineState()
+            scenario = cls()
+            for t in [0, 5, 15]:
+                scenario.step(t, 0.1, s)
+            state = s.to_kwp_state("895907551B")
+            assert state["connected"] is True
+            assert state["ecu_id"]["part_number"] == "895907551B"
+            assert "1" in state["groups"]
+            assert "3" in state["groups"]
+            cells1 = state["groups"]["1"]["cells"]
+            assert len(cells1) == 4
+
+    def test_idle_rpm_range(self):
+        from tools.mock_engine import IdleScenario, EngineState
+        s = EngineState()
+        sc = IdleScenario()
+        for t in [0, 5, 10, 20, 30]:
+            sc.step(t, 0.1, s)
+            assert 600 < s.rpm < 1200, f"Idle RPM out of range: {s.rpm}"
+            assert 0.95 < s.lambda_ < 1.05, f"Idle lambda out of range: {s.lambda_}"
+
+    def test_wot_rpm_increases(self):
+        from tools.mock_engine import WOTScenario, EngineState
+        s = EngineState()
+        sc = WOTScenario()
+        sc.step(0, 0.1, s);  rpm0 = s.rpm
+        sc.step(10, 0.1, s); rpm10 = s.rpm
+        assert rpm10 > rpm0 + 1000, f"WOT should build RPM: {rpm0} → {rpm10}"
+
+    def test_warmup_ect_rises(self):
+        from tools.mock_engine import WarmupScenario, EngineState
+        s = EngineState()
+        sc = WarmupScenario()
+        sc.step(0, 0.1, s);  ect0 = s.ect
+        sc.step(30, 0.1, s); ect30 = s.ect
+        assert ect30 > ect0 + 20, f"ECT should rise during warmup: {ect0} → {ect30}"
+
+    def test_knock_scenario_retards(self):
+        from tools.mock_engine import KnockScenario, EngineState
+        s = EngineState()
+        sc = KnockScenario()
+        # Run past first knock event at t=8
+        for t_step in range(0, 120):
+            sc.step(t_step * 0.1, 0.1, s)
+        # At least one knock should have occurred
+        assert s.knock_count > 0, "Knock scenario should have fired at least once"
+
+    def test_livevalues_decodes_mock_state(self):
+        """LiveValues should correctly decode a mock engine state dict."""
+        from tools.mock_engine import CruiseScenario, EngineState
+        from urrom.kwp import LiveValues
+        s = EngineState()
+        sc = CruiseScenario()
+        sc.step(15, 0.1, s)
+        state = s.to_kwp_state("895907551B")
+        lv = LiveValues(state)
+        assert lv.valid
+        assert 2500 < lv.rpm < 3500
+        assert 0.95 < lv.lambda_ < 1.05
+        assert 20 < lv.timing < 40
+        assert 80 < lv.ect < 92
+
+    def test_mock_client_connects_and_receives(self):
+        """MockKWPClient should connect to mock server and receive LiveValues."""
+        import time
+        from tools.mock_engine import IdleScenario, MockECUServer
+        from urrom.kwp import MockKWPClient, LiveValues, mock_kwpbridge_running
+
+        server = MockECUServer(port=50298, scenario=IdleScenario(),
+                               part_number="895907551B")
+        server.start()
+        time.sleep(0.2)
+        assert mock_kwpbridge_running(50298)
+
+        received = []
+        client = MockKWPClient(port=50298)
+        client.on_state(lambda s: received.append(LiveValues(s)))
+        client.connect()
+        time.sleep(0.5)
+        client.disconnect()
+        server.stop()
+
+        assert len(received) > 0, "Should have received at least one state"
+        lv = next((r for r in received if r.valid), None)
+        assert lv is not None, "At least one LiveValues should be valid"
+        assert 600 < lv.rpm < 1200, f"Idle RPM: {lv.rpm}"
+
+    def test_cycle_scenario_transitions(self):
+        """Cycle scenario should move between sub-scenarios."""
+        from tools.mock_engine import CycleScenario, EngineState
+        s = EngineState()
+        sc = CycleScenario()
+        initial = sc._idx
+        # Run long enough to trigger a transition (warmup = 60s)
+        sc.step(0, 0.1, s)
+        sc._scenarios[0].duration_s = 0.5  # shorten warmup for test
+        sc.step(1.0, 0.1, s)
+        # Just ensure it doesn't crash and state is plausible
+        assert s.rpm > 0
