@@ -4857,6 +4857,9 @@ class MainWindow(QMainWindow):
         if not self.windowTitle().startswith("*"):
             self.setWindowTitle("* " + WINDOW_TITLE)
 
+    # Alias used throughout the codebase
+    _set_dirty = _mark_dirty
+
     def _clear_dirty(self):
         self._unsaved = False
         self._refresh_title()

@@ -2311,7 +2311,45 @@ def detect_rom(rom: bytes) -> DetectionResult:
             checksum_ok=cs_ok, crc32=crc, build_number=build,
         )
 
-    # 2. Build number heuristic
+    # 1.5. ROM ID string match (catches modified ROMs where CRC changed)
+    # ID string format: "895907551B  2,2l R5 MOTR.RHV HS D01PMC ..."
+    # Located at WH 0x7F00 in 5-cyl chips, or WH 0x7F00 in V8 upper half
+    if len(rom) >= 0x7F30:
+        id_raw = rom[0x7F00:0x7F30]
+        id_str = ''.join(chr(b) if 32 <= b <= 126 else ' ' for b in id_raw).strip()
+        # Extract part number — first token that looks like an ECU PN
+        import re as _re
+        pn_match = _re.search(r'(\d[A-Z0-9]{9,14})', id_str)
+        if pn_match:
+            pn = pn_match.group(1)
+            # Look up part number against all known variants
+            for variant in ALL_VARIANTS:
+                if pn in [p.replace('-','').replace(' ','') for p in variant.ecu_pns]:
+                    return DetectionResult(
+                        variant=variant, confidence="MEDIUM",
+                        method=f"ROM ID string match — {pn} in {variant.name}",
+                        checksum_ok=cs_ok, crc32=crc, build_number=build,
+                        warnings=(["Checksum invalid — ROM modified or tuned"]
+                                  if not cs_ok else []),
+                    )
+
+    # 2. ROM ID string match — survives calibration edits (firmware area)
+    #    Format: "895907551B  2,2l R5 MOTR..." at WH 0x7F00
+    if len(rom) >= 0x7F20:
+        id_chunk = rom[0x7F00:0x7F20]
+        id_str   = ''.join(chr(b) if 32 <= b <= 126 else '' for b in id_chunk).strip()
+        for v in ALL_VARIANTS:
+            for pn in (v.ecu_pns or []):
+                pn_clean = pn.replace(' ', '').replace('-', '')
+                if pn_clean and pn_clean in id_str.replace(' ', ''):
+                    return DetectionResult(
+                        variant=variant if (variant := v) else v,
+                        confidence="HIGH",
+                        method=f"ROM ID string match — {id_str[:40].strip()}",
+                        checksum_ok=cs_ok, crc32=crc, build_number=build,
+                    )
+
+    # 3. Build number heuristic
     for sw_id, (lo, hi) in BUILD_RANGES.items():
         if lo <= build <= hi:
             variant = next((v for v in ALL_VARIANTS if v.software_id == sw_id), None)
