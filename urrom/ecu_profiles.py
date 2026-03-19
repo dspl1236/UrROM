@@ -1764,7 +1764,18 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x4EE87833: ("551c_boost","Stock — ADU/RS2 boost chip 32KB, 8A0907551C, build 0x0202 (direct read)"),
     0xA98CB481: ("551B",       "Stock — ABY fuel/ign WH, 895907551B, D01+HS trigger, ROM PN 1267358375"),
     0x97D26DD1: ("551B",       "Stock — ABY fuel/ign full 64KB, 895907551B"),
-    0x0AE3CACD: ("404",       "Stock — 3B 200 20vT (stock fuel.BIN)"),
+    # 3B / RR dual-EPROM ECU
+    # Fuel/ign chip: 32KB 27C256. ROM ID string @ 0x7F00.
+    # Boost chip:     8KB (executable 8051 MCU code — NOT a data ROM).
+    # Correct filenames: 3b_fuel-ign_404aa.bin, 3b_boost_404aa.bin
+    #                    rr_fuel-ign_404b.bin,  rr_boost_404b.bin
+    # NOTE: upload files rr_boost_404b.bin and rr_fuel-ign_404b.bin had
+    #       swapped names — roms/ directory has corrected copies.
+    0x0AE3CACD: ("404",      "Stock — 3B fuel/ign, 447907404AA (Audi 200 20vT / UrQ / S2 early). "
+                              "ROM ID: 447907404 AA  MOTOR  PMC 02. Direct chip read."),
+    0xFBE0A74A: ("404",      "Stock — RR fuel/ign, 857907404B (UrQuattro RR S2 Coupe). "
+                              "ROM ID: 857907404 B  MOTOR  PMC 02. Direct chip read. "
+                              "Firmware identical to 3B (0xF004). Calibration differs ~5976 bytes."),
     0x9245FA10: ("404",       "Stock — 3B Audi S2 (0261200484 MapFinder bin)"),
     # AAN 551A/551AA direct chip reads — 2026-03 RE session
     # 551A = early AAN, D02 trigger (distributor hall, like 3B), 8KB boost chip
@@ -1779,7 +1790,9 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0xB9A49F8A: ("551AA",      "Stock — AAN fuel/ign, 4A0907551AA, D03+HS cam trigger (direct read WH)"),
     0x16707F66: ("551AA_boost","Stock — AAN boost, 4A0907551AA, 32KB, build 0x0202 (direct read)"),
     0xF50660DA: ("404_boost", "Stock — 3B boost chip, 447907404AA, build 0x0254 (direct read)"),
-    0xEA8D46DF: ("404_boost", "Stock — RR boost chip, 857907404B,  build 0x0255 (direct read)"),
+    0xEA8D46DF: ("404_boost", "Stock — RR boost chip, 857907404B, build 0x0255 (direct read). "
+                               "Executable 8051 MCU code — NOT a data-only ROM. "
+                               "Correct filename: rr_boost_404b.bin"),
     0x594F97FB: ("404V8",     "Stock — PT V8 3.6L"),
     0x750A9EB0: ("404V8",     "ABT tune — PT V8 3.6L"),
     # 034EFI Rip Chip / prjmod 0x0202 firmware (confirmed from .034 diff analysis)

@@ -4026,6 +4026,7 @@ class MainWindow(QMainWindow):
             "551AA_0202": "roms/aan_fuel-ign_551aa.bin",    # PRJmod — compare to prjmod base
             "551B_D02":   "roms/rs2_d02_fuel-ign_551b.bin", # RS2 D02 — PARTIAL baseline
             "404":        "roms/3b_fuel-ign_404aa.bin",      # 3B 200 20vT — REAL ✓
+            # Note: rr_fuel-ign_404b.bin is now in roms/ (was mislabelled as rr_boost)
         }
         # Find the app base directory
         app_base = Path(__file__).parent.parent
