@@ -1899,6 +1899,11 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     # Requires: MMS-200 ECU (not MMS-300+), big bore MAF (078 133 471A)
     0x4818FA0B: ("AAH", "034EFI AAH/AKH 12v V6 Stage 1+ R1 — MMS-200 ECU only (8A0 906 266A). Big bore MAF required (Audi 078 133 471A). +12HP / +13ft-lb TQ. MMS300+ ECUs cannot be chipped."),
     # ── V8 confirmed calibration ────────────────────────────────────────────
+    0x976CA7AB: ("557", "Stock — S6 V8 4.2L, 4A0907557C, D02PMC dual distributor. "
+                        "Bosch 0261203599, ROM PN 1267355858. 290HP. "
+                        "Real calibration — confirmed from running S6 4.2. "
+                        "Same cal structure as ABH 557A, ~10-12° more advance throughout. "
+                        "Different firmware build: reset→0x3820 vs ABH 0x81E3."),
     0x5B911FDE: ("557", "Stock — ABH V8 4.2L, 4A0907557A, D02PMC dual distributor. "
                         "Bosch 0261203143, ROM PN 1267357764. "
                         "First confirmed ABH chip with real calibration data. "
