@@ -1737,7 +1737,18 @@ VARIANT_V8_ABH = ROMVariant(
     working_half_offset = 0,
     main_maps           = _MAPS_V8_MAIN,
     boost_maps          = [],
-    notes               = "Single EPROM. Dual distributor. Map addresses UNCONFIRMED.",
+    notes               = (
+        "Bosch Motronic M2.3 — same 8051 CPU family as 5-cyl 404/551x. NOT M3 or M5. "
+        "Single 27C512 EPROM in split-bank configuration: "
+        "lower 32KB (0x0000-0x7FFF) = firmware code (10321 code bytes), "
+        "upper 32KB (0x8000-0xFFFF) = calibration data (3A/3F format, same as 551x). "
+        "Reset→0x1497. INT0→0x2000→0x0431 (bank 1 distributor), "
+        "INT1→0x2030 (bank 2 distributor). "
+        "ABH/S6 share identical INT0 handler at 0x0431. "
+        "Calibration format confirmed compatible with 5-cyl: same 3A/3F headers, "
+        "same ign advance decode (×0.6491-8.22). Map addresses UNCONFIRMED — "
+        "use upper 32KB (0x2D00+) of ISMF file for calibration RE."
+    ),
 )
 
 VARIANT_V8_PT = ROMVariant(
