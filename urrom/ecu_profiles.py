@@ -232,50 +232,38 @@ _MAPS_551C_MAIN = [
            decode=ign_decode, encode=ign_encode,
            confidence="CONFIRMED"),
 
-    # Idle ignition map A (0x3D05) — PROVISIONAL
-    # ABY direct chip read: 25-byte (5×5?) descriptor, RPM axis ~2320 RPM area.
-    # Values 13–22°BTDC — consistent with low-load idle ign advance.
-    # Identical mirror at 0x3E65. Function not confirmed from disassembly.
-    MapDef("Idle Ign map A (3D05)",
-           "Low-RPM ignition map. ABY: values 13–22°BTDC at ~2320 RPM axis. "
-           "Possible idle/off-idle ignition trim. Identical mirror at WH 0x3E65. "
-           "PROVISIONAL — function not confirmed from disassembly.",
-           main_addr=0x3D05, rows=16, cols=16,
+    # Idle ign maps — CONFIRMED 2026-03-19
+    # Binary RE of ABY 551B and ADU 551C:
+    # 3×6 = 18 cells. 3 RPM bands × 6 coolant temp points.
+    # ABY 551B: WH 0x3D04. ADU 551C: WH 0x3D08 (firmware 4B larger → +4B cal offset).
+    # Values confirmed: cold=13.9°, warming=17.7–19.0°, warm=20.3–21.6°, hot=29.4°
+    # Rows 0–1 identical in both ABY and ADU stock (same timing at low/mid idle RPM).
+    # Row 2 ends with 29.4° (elevated advance at high idle temp / higher idle RPM).
+    # Second block at +0x160: AC-on idle condition (same cal values in stock chips).
+    MapDef("Idle Ignition (closed throttle)",
+           "Idle timing vs coolant temperature. 3 RPM bands × 6 coolant temp points. "
+           "Decode: raw × 0.6491 − 8.22 = °BTDC. "
+           "Cold: ~13.9°, warming: ~17.7–19.0°, warm: ~20.3–21.6°, hot: 29.4°. "
+           "ABY 551B: WH 0x3D04. ADU 551C: WH 0x3D08.",
+           main_addr=0x3D08, rows=3, cols=6,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="PROVISIONAL",
-           notes="Mirror map at 0x3E65. Investigate before writing."),
+           confidence="CONFIRMED",
+           notes="Per-variant offset: ABY=0x3D04, ADU=0x3D08. "
+                 "Both chips have identical cal in stock form."),
 
-    MapDef("Idle Ign map B (3E65)",
-           "Low-RPM ignition map (mirror of 0x3D05). "
-           "ABY direct chip read: identical values to 3D05. PROVISIONAL.",
-           main_addr=0x3E65, rows=16, cols=16,
+    MapDef("Idle Ignition (AC on)",
+           "Idle timing — AC compressor active. 3 RPM bands × 6 coolant temp points. "
+           "Identical calibration to closed-throttle block in stock ABY/ADU. "
+           "Located at +0x160 from the closed-throttle block.",
+           main_addr=0x3E68, rows=3, cols=6,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="PROVISIONAL",
-           notes="Mirror of 0x3D05. Do not write unless 3D05 is confirmed."),
+           confidence="CONFIRMED",
+           notes="Per-variant offset: ABY=0x3E64, ADU=0x3E68 (+0x160 from idle A)."),
 
-    # End-of-calibration RPM table (replaces mis-labelled "Rev Limit")
-    MapDef("Idle Ign map A (3D05)",
-           "Low-RPM ignition map. ABY: values 13–22°BTDC at ~2320 RPM axis. "
-           "Possible idle/off-idle ignition trim. Identical mirror at WH 0x3E65. "
-           "PROVISIONAL — function not confirmed from disassembly.",
-           main_addr=0x3D05, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="PROVISIONAL",
-           notes="Mirror map at 0x3E65. Investigate before writing."),
 
-    MapDef("Idle Ign map B (3E65)",
-           "Low-RPM ignition map (mirror of 0x3D05). "
-           "ABY direct chip read: identical values to 3D05. PROVISIONAL.",
-           main_addr=0x3E65, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="PROVISIONAL",
-           notes="Mirror of 0x3D05. Do not write unless 3D05 is confirmed."),
-
-        MapDef("End-of-Cal RPM table",
+    MapDef("End-of-Cal RPM table",
            "32-byte RPM-encoded table at end of working half (WH 0x3FE0–0x3FFF). "
            "ABY direct chip read: values span 1000–8000 RPM (raw × 40). "
            "Pattern suggests tiered RPM thresholds — possibly ignition cut "
@@ -356,6 +344,28 @@ _MAPS_551AA_MAIN = [
            decode=ign_decode, encode=ign_encode,
            confidence="CONFIRMED",
            notes="Verified on ABY: 20-21°BTDC at PT."),
+
+    # Idle ign maps — CONFIRMED 2026-03-19 on ABY 551B direct chip read
+    MapDef("Idle Ignition (closed throttle)",
+           "Idle timing vs coolant temperature. 3 RPM bands × 6 coolant temp points. "
+           "Decode: raw × 0.6491 − 8.22 = °BTDC. "
+           "Cold: 13.9°, warming: 17.7–19.0°, warm: 20.3–21.6°, hot: 29.4°. "
+           "Confirmed on ABY 551B WH 0x3D04. ADU 551C uses 0x3D08 (+4B, see 551C maps).",
+           main_addr=0x3D04, rows=3, cols=6,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="CONFIRMED",
+           notes="ABY 551B address. ADU 551C offset +4B at 0x3D08."),
+
+    MapDef("Idle Ignition (AC on)",
+           "Idle timing with AC compressor active. 3 RPM bands × 6 coolant temp points. "
+           "Same calibration as closed-throttle idle in stock ABY/ADU. "
+           "Located at WH 0x3E64 (+0x160 from closed-throttle block).",
+           main_addr=0x3E64, rows=3, cols=6,
+           map_type="ign", unit="°BTDC",
+           decode=ign_decode, encode=ign_encode,
+           confidence="CONFIRMED",
+           notes="ABY 551B address. ADU 551C offset +4B at 0x3E68."),
 
     MapDef("End-of-Cal RPM table",
            "32-byte RPM table at WH 0x3FE0–0x3FFF. Values × 40 = RPM. "

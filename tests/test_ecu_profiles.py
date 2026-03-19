@@ -1751,3 +1751,107 @@ class TestV8NormalizeAndMaps:
         v8q_avg = avg_ign(v8q_p)
         assert v8q_avg > abh_avg, f"V8Q {v8q_avg:.1f}° should exceed ABH {abh_avg:.1f}°"
         assert 2 < (v8q_avg - abh_avg) < 8, f"Unexpected delta: {v8q_avg-abh_avg:.1f}°"
+
+
+# ── Idle ign map tests ─────────────────────────────────────────────────────────
+
+class TestIdleIgnMaps:
+
+    def test_aby_idle_ign_addresses(self):
+        """ABY 551B has 2 confirmed idle ign maps at the correct addresses."""
+        from urrom.ecu_profiles import VARIANT_551B
+        idle = [m for m in VARIANT_551B.main_maps
+                if 'Idle' in m.name and m.confidence == 'CONFIRMED']
+        assert len(idle) == 2
+        addrs = {m.main_addr for m in idle}
+        assert 0x3D04 in addrs, "Closed-throttle idle map missing at 0x3D04"
+        assert 0x3E64 in addrs, "AC-on idle map missing at 0x3E64"
+
+    def test_adu_idle_ign_addresses(self):
+        """ADU 551C has 2 confirmed idle ign maps at the ADU-specific addresses."""
+        from urrom.ecu_profiles import VARIANT_551C
+        idle = [m for m in VARIANT_551C.main_maps
+                if 'Idle' in m.name and m.confidence == 'CONFIRMED']
+        assert len(idle) == 2
+        addrs = {m.main_addr for m in idle}
+        assert 0x3D08 in addrs, "ADU closed-throttle idle map missing at 0x3D08"
+        assert 0x3E68 in addrs, "ADU AC-on idle map missing at 0x3E68"
+
+    def test_idle_ign_dimensions(self):
+        """Idle ign maps are 3×6 on all 551x variants."""
+        from urrom.ecu_profiles import VARIANT_551B, VARIANT_551C
+        for v in [VARIANT_551B, VARIANT_551C]:
+            for m in v.main_maps:
+                if 'Idle' in m.name and m.confidence == 'CONFIRMED':
+                    assert m.rows == 3 and m.cols == 6, \
+                        f"{v.software_id} {m.name}: expected 3×6, got {m.rows}×{m.cols}"
+
+    def test_aby_idle_ign_values_plausible(self):
+        """ABY idle ign values decode to plausible idle advance angles."""
+        from urrom.ecu_profiles import normalize_rom, read_map, VARIANT_551B
+        from pathlib import Path
+        p = Path('roms/aby_fuel-ign_551aa.bin')
+        if not p.exists():
+            return
+        wh, _ = normalize_rom(p.read_bytes())
+        for m in VARIANT_551B.main_maps:
+            if 'Idle' not in m.name or m.confidence != 'CONFIRMED':
+                continue
+            data = read_map(bytes(wh), m)
+            for r in range(m.rows):
+                for c in range(m.cols):
+                    raw = data[r][c]
+                    deg = m.decode(raw)
+                    assert -10 <= deg <= 40, \
+                        f"ABY {m.name} [{r},{c}] raw={raw} → {deg:.1f}° out of idle range"
+
+    def test_adu_idle_ign_values_plausible(self):
+        """ADU idle ign values decode to plausible idle advance angles."""
+        from urrom.ecu_profiles import normalize_rom, read_map, VARIANT_551C
+        from pathlib import Path
+        p = Path('roms/adu_fuel-ign_551c.bin')
+        if not p.exists():
+            return
+        wh, _ = normalize_rom(p.read_bytes())
+        for m in VARIANT_551C.main_maps:
+            if 'Idle' not in m.name or m.confidence != 'CONFIRMED':
+                continue
+            data = read_map(bytes(wh), m)
+            for r in range(m.rows):
+                for c in range(m.cols):
+                    raw = data[r][c]
+                    deg = m.decode(raw)
+                    assert -10 <= deg <= 40, \
+                        f"ADU {m.name} [{r},{c}] raw={raw} → {deg:.1f}° out of idle range"
+
+    def test_aby_adu_idle_same_calibration(self):
+        """ABY and ADU have identical idle ign calibration in stock form."""
+        from urrom.ecu_profiles import normalize_rom, read_map, VARIANT_551B, VARIANT_551C
+        from pathlib import Path
+        p_aby = Path('roms/aby_fuel-ign_551aa.bin')
+        p_adu = Path('roms/adu_fuel-ign_551c.bin')
+        if not p_aby.exists() or not p_adu.exists():
+            return
+        aby_wh, _ = normalize_rom(p_aby.read_bytes())
+        adu_wh, _ = normalize_rom(p_adu.read_bytes())
+        aby_idle = next(m for m in VARIANT_551B.main_maps
+                        if 'closed throttle' in m.name and m.confidence == 'CONFIRMED')
+        adu_idle = next(m for m in VARIANT_551C.main_maps
+                        if 'closed throttle' in m.name and m.confidence == 'CONFIRMED')
+        aby_data = read_map(bytes(aby_wh), aby_idle)
+        adu_data = read_map(bytes(adu_wh), adu_idle)
+        # All 18 cells should match
+        for r in range(3):
+            for c in range(6):
+                assert aby_data[r][c] == adu_data[r][c], \
+                    f"Idle cal mismatch [{r},{c}]: ABY={aby_data[r][c]} ADU={adu_data[r][c]}"
+
+    def test_all_551x_have_idle_maps(self):
+        """All 551x variants have at least 2 confirmed idle ign maps."""
+        from urrom.ecu_profiles import ALL_VARIANTS
+        for v in ALL_VARIANTS:
+            if v.software_id.startswith('551') and v.software_id != '551AA_0202':
+                idle = [m for m in v.main_maps
+                        if 'Idle' in m.name and m.confidence == 'CONFIRMED']
+                assert len(idle) >= 2, \
+                    f"{v.software_id} has only {len(idle)} confirmed idle ign maps"
