@@ -1915,6 +1915,11 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                         "Real calibration — confirmed from running S6 4.2. "
                         "Same cal structure as ABH 557A, ~10-12° more advance throughout. "
                         "Different firmware build: reset→0x3820 vs ABH 0x81E3."),
+    0xDECDF5C4: ("557", "Stock/tune — V8Q 441907557E, D01PMC cam trigger. "
+                        "Bosch 0261203226, ROM PN 1267357441. "
+                        "441 prefix = V8 Quattro body (Type 44 V8Q, not 4A/100/A6). "
+                        "4175 cal bytes differ vs ABH 557A — this is a tuned calibration. "
+                        "V8Q uses D01PMC cam trigger, ABH uses D02PMC distributor."),
     0x5B911FDE: ("557", "Stock — ABH V8 4.2L, 4A0907557A, D02PMC dual distributor. "
                         "Bosch 0261203143, ROM PN 1267357764. "
                         "First confirmed ABH chip with real calibration data. "
