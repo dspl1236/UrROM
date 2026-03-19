@@ -1781,11 +1781,12 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     # 551A = early AAN, D02 trigger (distributor hall, like 3B), 8KB boost chip
     # 551AA = late AAN, D03+HS trigger (cam pulley hall), 32KB boost chip
     0xF7432BB5: ("551A",
-                           "Stock — AAN fuel/ign, 4A0907551A, D02 distributor trigger. "
-                           "Calibration area all 0x02 (factory-erased/blank). "
-                           "Firmware code present: 6376 bytes, reset vector 0x0400. "
-                           "Also used as PRJmod 551A D02PMC base ROM. "
-                           "NOT a tuning baseline — calibration is blank."),
+                           "Stock — AAN fuel/ign, 4A0907551A, D02 distributor trigger (direct read). "
+                           "Calibration all 0x02 (factory-erased). "
+                           "Firmware: 6376 code bytes, reset→0x0400. "
+                           "NOTE: The 65536B file in roms/ contains TWO different 32KB images: "
+                           "upper=this stock blank, lower=PRJmod D02PMC base ROM (reset→0x117A). "
+                           "NOT a usable calibration baseline."),
     0xBBAFE260: ("551A_boost", "Stock — AAN boost, 4A0907551A,  8KB, build 0xA04B (direct read)"),
     0xB9A49F8A: ("551AA",      "Stock — AAN fuel/ign, 4A0907551AA, D03+HS cam trigger (direct read WH)"),
     0x16707F66: ("551AA_boost","Stock — AAN boost, 4A0907551AA, 32KB, build 0x0202 (direct read)"),
