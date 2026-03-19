@@ -1828,7 +1828,12 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                                "Executable 8051 MCU code — NOT a data-only ROM. "
                                "Correct filename: rr_boost_404b.bin"),
     0x594F97FB: ("404V8",     "Stock — PT V8 3.6L"),
-    0x750A9EB0: ("404V8",     "ABT tune — PT V8 3.6L"),
+    0x750A9EB0: ("404V8",     "ABT tune — PT V8 3.6L manual. "
+                               "Part 441907404 (no suffix), Bosch 0261200183, ROM PN 1267355684. "
+                               "Different base firmware from PT stock (reset→0x11EF vs 0x128B). "
+                               "32KB single chip, real calibration. "
+                               "Main cal block 0x6201-0x7650 — blank in PT stock, populated here. "
+                               "Sought-after tune swapped into auto ABH 4.2L V8Q cars."),
     # 034EFI Rip Chip / prjmod 0x0202 firmware (confirmed from .034 diff analysis)
     0x956BFC9C: ("551AA_0202", "034EFI Stock Rip Chip — 4A0907551AA reconstructed stock. Fuel chip. PAIR with stock 551AA boost chip 0x16707F66. No hardware mods required."),
     0xA47011AB: ("551AA_0202", "034EFI K24/Stage 1+ — Fuel chip. PAIR with GT2871 boost 0x69156B3A or GT3071 boost 0x39DC67DA. Requires: 3.0 BAR MAP, RS2 replica injectors, 4.0 BAR FPR, stock MAF. 20psi OB / 14psi / 7200rpm / ~+40whp"),
