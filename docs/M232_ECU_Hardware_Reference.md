@@ -901,3 +901,122 @@ that accepts any trigger pattern and drives coil packs natively.
 The binary RE confirms: **the signal is the easy part**. The real work is adding the
 cam trigger wheel and fitting coil packs physically.
 
+
+---
+
+## 3B/7A Head on AAN Block: Distributor-as-Cam-Sensor Adapter
+
+### The scenario
+
+AAN heads are becoming scarce. The 3B and 7A heads (which use camshafts with a
+distributor drive) can be fitted to an AAN block. With a full AAN ECU/harness/coil
+pack retrofit, the question is how to provide the cam position reference signal the
+AAN ECU expects.
+
+**The solution:** use the 3B/7A distributor body as a pure cam sensor housing.
+Wire its Hall sender directly to the AAN cam sensor harness.
+
+---
+
+### Why it works: binary RE confirmation
+
+The 3B and 7A use a **single-vane** Hall sender — one vane, one trigger pulse per
+cam revolution. This is **not** the same as the older 10v Audi multi-vane (5-window)
+system. The single-vane signal is electrically and functionally identical to the
+AAN cam sensor output.
+
+From the INT0/INT1 handler comparison:
+
+```
+3B   INT0: c0 e0 c0 d0 | c0 83 e8 c0 e0 c0 82 ...
+551AA INT0: c0 e0 c0 d0 | 00 00 c0 83 e8 c0 e0 c0 82 ...
+                           ^^^^ only 2 NOP bytes inserted
+CJNE at +186: b5 79 00 50  ← IDENTICAL in both
+INT1 handlers: 57/60 bytes identical (differ only by RAM slot: 0xA3 vs 0xA4)
+```
+
+The trigger algorithms are functionally the same. The AAN firmware does not know
+or care whether the single vane is on a cam nose or inside a distributor housing.
+
+---
+
+### The adapter
+
+**Electrically:** Both the 3B/7A distributor Hall sender and the AAN cam sensor
+are Bosch 3-wire Hall effect sensors with the same electrical characteristics:
+- +5V supply (from ECU)
+- Ground
+- Signal: 5V square wave, active-low or active-high depending on variant
+
+Wire the AAN cam sensor harness plug to the distributor Hall sender connector.
+A 3-pin adapter may be needed if the connector bodies differ (Bosch sensor pigtail
+adapters are readily available). Verify pin assignment from wiring diagrams of both
+donor and host vehicles.
+
+**Mechanically:** The distributor body stays in the head and continues to be driven
+by the camshaft. The Hall sender inside fires once per cam revolution exactly as
+designed. The HV rotor continues to spin — simply remove the distributor cap (or fit
+a blanking cover) since the coil packs handle firing. No HV secondary wiring needed.
+
+---
+
+### Setting the timing phase
+
+The AAN cam sensor is positioned to fire at approximately **60° BTDC** on cylinder 1.
+This reference point is where the ECU starts its timing calculation. If the
+distributor fires at a different crank angle, the computed timing will be offset.
+
+The distributor housing has a clamping bolt — it can be rotated within a range of
+approximately ±15–20° (more with the clamp body modified). Use this to phase the
+Hall trigger to the correct position.
+
+**Procedure:**
+
+1. Bring engine to TDC cylinder 1 (align crank pulley mark with timing pointer)
+2. Loosen distributor clamp
+3. Connect a voltmeter or oscilloscope to the Hall signal wire
+4. Rotate distributor until the Hall output just transitions (rising edge at TDC)
+5. Note that position, then advance (rotate toward leading) by 30° on the
+   *distributor body* — which equals 60° crank angle, since the distributor runs
+   at cam speed (half crank speed)
+6. Tighten clamp at this position
+7. The AAN ECU now receives its reference pulse at 60° BTDC as expected
+
+> **Note:** The exact AAN cam sensor reference point (nominally 60° BTDC) should
+> be confirmed from Audi factory documentation or verified with a scope on a running
+> AAN engine. If using ABY or ADU firmware, the reference point may be
+> slightly different.
+
+---
+
+### Calibration
+
+Start with ABY 551B calibration (WH 0x2E17 fuel, WH 0x30AC–0x3931 ignition).
+The map layout is identical across all 551x variants. The 3B and AAN are closely
+related architecturally but will need retuning for:
+- Actual displacement (3B displacement vs AAN 2.2L)
+- Compression ratio differences
+- Turbo characteristics and boost pressure
+- Injector size
+
+The ABY stock calibration gives safe starting values for road testing before dyno
+tuning. The ignition maps are conservative enough to start on without risk.
+
+---
+
+### Summary
+
+| Item | Needed? | Notes |
+|------|---------|-------|
+| AAN ECU (551AA or 551B) | ✓ Yes | Provides coil pack output hardware |
+| AAN wiring harness | ✓ Yes | Full harness swap |
+| AAN coil packs (5×) | ✓ Yes | One per cylinder |
+| AAN cam sensor wheel | ✗ No | Distributor replaces this |
+| AAN cam sensor | ✗ No | Distributor Hall sender replaces this |
+| Adapter harness (3-pin) | Maybe | If connector bodies differ |
+| Distributor cap | ✗ Remove | No longer needed for HV |
+| Distributor body + Hall sender | ✓ Retain | Now the cam position sensor |
+
+The adapter is elegant: one 3-pin connector remap, rotate the distributor body to
+phase correctly, and the AAN ECU sees exactly what it expects.
+
