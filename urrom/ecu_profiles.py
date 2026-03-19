@@ -1706,6 +1706,27 @@ VARIANT_404 = ROMVariant(
     ),
 )
 
+VARIANT_551D = ROMVariant(
+    name                = "AAN/ADU — A6 C4 2.2T (551D)",
+    software_id         = "551D",
+    engine_codes        = ["AAN", "ADU"],
+    ecu_pns             = ["4A0907551D"],
+    bosch_pns           = ["0261203603"],
+    dual_eprom          = True,
+    working_half_offset = 32768,
+    main_maps           = _MAPS_551C_MAIN,   # same layout as 551C — confirmed same family
+    boost_maps          = _MAPS_BOOST_551,
+    notes               = (
+        "Audi A6 C4 2.2T AAN application. "
+        "4A0907551D — previously undocumented variant discovered 2026-03. "
+        "ROM ID: '4A0907551D  2,2l R5 MOTR.RHV AT D01PMC 0261203603 1267358374'. "
+        "Trigger: D01PMC cam+Hall (same as ABY 551B). "
+        "Calibration blank in collected sample. "
+        "Map layout assumed identical to 551A/AA/B/C (same ECU family). "
+        "UNCONFIRMED — map addresses need verification from real calibration chip."
+    ),
+)
+
 VARIANT_V8_ABH = ROMVariant(
     name                = "ABH — V8 4.2L 32v",
     software_id         = "557",
@@ -1740,6 +1761,7 @@ ALL_VARIANTS: list[ROMVariant] = [
     VARIANT_551B_D02,   # early RS2, distributor trigger (D02), 32KB boost chip
     VARIANT_551AA_0202,
     VARIANT_404,
+    VARIANT_551D,
     VARIANT_V8_ABH,
     VARIANT_V8_PT,
 ]
@@ -1811,6 +1833,41 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     # vwnut8392/M232-Firmware
     0x9DD68BD3: ("551AA_0202", "PRJmod AAN D03PMC (vwnut8392/M232-Firmware TMS27C512)"),
     # 0xF7432BB5 = 551A stock D02 — listed above in direct-read section
+
+
+    # ── Additional 404 variants ─────────────────────────────────────────────
+    0xE66098C8: ("404",      "Stock — 3B fuel/ign earlier revision, 447907404A (no AA suffix), "
+                              "ROM PN 1267356259. Bosch 0261200451 (same as 404AA). "
+                              "Different calibration AND firmware vs 404AA (4862 byte diff). "
+                              "Direct chip read with real calibration."),
+
+    # ── 551x blank chips — documented variants without calibration data ──────
+    # All have factory-erased calibration (0x02 fill) but different firmware/hardware
+    # The trigger type (D01/D02/D03/RS2) in the ROM ID string is the key differentiator
+    0x37B475FF: ("551A",     "Stock blank — 895907551A, D02PMC distributor trigger. "
+                              "Bosch 0261203145, ROM PN 1267358022. "
+                              "Early RS2 / S2 Avant variant. Calibration erased."),
+    0xE392CCBC: ("551C",     "Stock blank — 4A0907551C, D01PMC cam trigger. "
+                              "Bosch 0261203601, ROM PN 1267358373. "
+                              "Audi S6 C4 Turbo — DIFFERENT from ADU/RS2 551C (8A0907551C). "
+                              "Calibration erased. '551C' covers multiple applications."),
+    0x138957FE: ("551B_D02", "Stock blank — 8A0907551B, RS2D03PMC cam trigger. "
+                              "Bosch 0261203478, ROM PN 1267358289. "
+                              "Later RS2 with cam trigger — different from early RS2 D02. "
+                              "Calibration erased."),
+    0xC906D08C: ("551D",     "Stock blank — 4A0907551D, D01PMC cam trigger. "
+                              "Bosch 0261203603, ROM PN 1267358374. "
+                              "Audi A6 C4 2.2T AAN — PREVIOUSLY UNDOCUMENTED VARIANT. "
+                              "Calibration erased. Likely shares map layout with 551A/AA/B/C."),
+    0x4DD34924: ("551AA",    "Stock blank — 4A0907551AA, D01PMC cam trigger. "
+                              "Bosch 0261200465, ROM PN 1267356711. "
+                              "AAN cam trigger build. Calibration erased."),
+    0x0DF3620A: ("551AA",    "Stock blank — 4A0907551AA, D02PMC distributor trigger. "
+                              "Bosch 0261200465, ROM PN 1267357248. "
+                              "AAN distributor trigger build. Calibration erased."),
+    0x742F4983: ("551B",     "Stock blank — 4A0907551B, D01PMC cam trigger AT. "
+                              "Bosch 0261203005, ROM PN 1267357249. "
+                              "AAN 230HP Avant AT application. Calibration erased."),
 
     # ── 034EFI additional fuel chips (from 034_Files.zip, 2026-03) ────────────
     # GT3071 Stage 1 R9 440cc Siemens — paired with GT3071 boost chip below
