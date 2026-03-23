@@ -3,6 +3,17 @@
 Open-source ROM editor for **Bosch Motronic M2.3 / M2.3.2** — the ECU family
 used in Audi's 5-cylinder 2.2 20v turbo and V8 engines.
 
+> **⚠ Work in Progress — Use at Your Own Risk**
+>
+> This tool is under active development. Features may be incomplete, map
+> addresses may be unverified, and patches may not have been tested on all
+> hardware variants. **Always read and back up your original ROM before making
+> any changes.** Read it twice, compare the files, keep both copies safe.
+>
+> If you find a bug, incorrect address, or have a ROM dump to contribute,
+> please [open an issue](https://github.com/dspl1236/UrROM/issues).
+
+
 **130 tests passing** · Python 3.12 + PyQt5 · Windows / Linux / macOS
 
 ---
