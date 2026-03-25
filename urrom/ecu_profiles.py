@@ -748,6 +748,11 @@ VARIANT_551B_D02 = ROMVariant(
     bosch_pns           = ["0261203478"],
     dual_eprom          = True,
     working_half_offset = 0x8000,
+    # TODO(WRONG MAPS): _MAPS_551AA_MAIN is INCORRECT for this variant.
+    #   XDF-confirmed addresses from the notes below (vwnut8392 / Matt@S&M 2013)
+    #   show fuel at WH 0x0E13, ign at 0x125F/0x159F/0x16C3/0x1809/0x192D/0x108C.
+    #   These differ from the _MAPS_551AA_MAIN definitions.  A dedicated
+    #   _MAPS_551B_D02_MAIN list needs to be created from the XDF data.
     main_maps           = _MAPS_551AA_MAIN,
     boost_maps          = _MAPS_BOOST_551,
     notes               = (
@@ -774,7 +779,11 @@ VARIANT_551A = ROMVariant(
     dual_eprom          = True,
     working_half_offset = 0x8000,
     main_maps           = _MAPS_551AA_MAIN,   # same address layout, different cal values
-    boost_maps          = _MAPS_BOOST_551,
+    # TODO: _MAPS_BOOST_551 addresses (0x2218, 0x2480, 0x2520, etc.) exceed the
+    #   8KB (0x2000) chip size of the 27C64 used by this variant.  No 8KB boost
+    #   map list has been reverse-engineered yet.  Set to empty until correct
+    #   addresses are determined for the 8KB boost chip layout.
+    boost_maps          = [],
     notes               = (
         "Early AAN — distributor-referenced hall sensor trigger (D02 in ID string). "
         "Same hardware as 551AA (Bosch ECU PN 0261200465), different firmware. "
@@ -1828,11 +1837,11 @@ VARIANT_V8_PT = ROMVariant(
 
 ALL_VARIANTS: list[ROMVariant] = [
     VARIANT_551C,
-    VARIANT_551A,       # early AAN, distributor trigger (D02), 8KB boost chip
-    VARIANT_551AA,      # late AAN, cam trigger (D03+HS), 32KB boost chip
-    VARIANT_551B,       # ABY S2 Coupe, cam trigger (D01), 32KB boost chip
-    VARIANT_551B_D02,   # early RS2, distributor trigger (D02), 32KB boost chip
+    VARIANT_551AA,      # late AAN, cam trigger (D03+HS), 32KB boost chip — before 551A (longer PN)
     VARIANT_551AA_0202,
+    VARIANT_551A,       # early AAN, distributor trigger (D02), 8KB boost chip
+    VARIANT_551B_D02,   # early RS2, distributor trigger (D02), 32KB boost chip — before 551B (longer PN)
+    VARIANT_551B,       # ABY S2 Coupe, cam trigger (D01), 32KB boost chip
     VARIANT_404,
     VARIANT_551D,
     VARIANT_V8_ABH,
@@ -1994,79 +2003,6 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
 
 }
 
-# ── Hardware requirements per chip CRC ───────────────────────────────────────
-# Maps WH CRC → (sensor_kpa, injector_cc, fpr_bar, notes)
-# Used by Overview and Hardware tabs to surface install requirements.
-CHIP_REQUIREMENTS: dict[int, dict] = {
-    # 034EFI AAN/ABY/ADU tunes — all require MAP swap + matched injectors
-    0x956BFC9C: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": None,
-                 "turbo": "K24 (stock)",  "notes": "Stock Rip Chip — 034EFI baseline. No hardware mods beyond 300kPa MAP."},
-    0xA47011AB: {"map_kpa": 300, "injector_cc": None, "fpr_bar": 5.0,
-                 "turbo": "K24 (stock)",
-                 "notes": "Stage 1+ K24 — 20psi overboost, 14psi to redline, 7200rpm. "
-                          "RS2/replica injectors (550cc), 5.0 BAR FPR, 300kPa MAP, stock MAF."},
-    0x16FD8953: {"map_kpa": 300, "injector_cc": None, "fpr_bar": 5.0,
-                 "turbo": "K24 (stock)",
-                 "notes": "Stage 1 variant — 300kPa MAP, 5.0 BAR FPR, stock MAF."},
-    0x9A8A6B4E: {"map_kpa": 300, "injector_cc": 550,  "fpr_bar": 4.0,
-                 "turbo": "GT28RS",
-                 "notes": "GT28RS Stage 1 R2 — 27psi overboost, 16psi redline, 7000rpm, 285whp. "
-                          "550cc injectors + adapters, 300kPa MAP, 4.0 BAR FPR, stock MAF. "
-                          "Recommend 7A cams for +20whp at top end."},
-    0x28C04D7B: {"map_kpa": 300, "injector_cc": None, "fpr_bar": None,
-                 "turbo": "RS2 (stock)",
-                 "notes": "034EFI RS2 Rip Chip 91Oct — stock RS2 turbo, 300kPa MAP, stock MAF."},
-    0x6F3AE675: {"map_kpa": 300, "injector_cc": 440,   "fpr_bar": 4.0,
-                 "turbo": "GT3071",       "notes": "GT3071 R8 — 42lb green tops, 7200rpm, 346whp"},
-    0x07DA1752: {"map_kpa": 300, "injector_cc": 550,   "fpr_bar": 4.0,
-                 "turbo": "GT3071",       "notes": "GT3071 R9.1 — 550cc 91Oct, 7200rpm, 346whp, 300kPa MAP required"},
-    0x2EB58546: {"map_kpa": 300, "injector_cc": 550,   "fpr_bar": 4.0,
-                 "turbo": "GT2871",       "notes": "GT2871 R9.1 — 550cc EV14, 7200rpm, 330whp, 300kPa MAP required"},
-    0xA77BB88E: {"map_kpa": 300, "injector_cc": 440,   "fpr_bar": 4.0,
-                 "turbo": "GT2871 AAN",   "notes": "GT2871 R9 — AAN spec, 440cc Siemens, 300kPa MAP required"},
-    0xB9F0FD51: {"map_kpa": 300, "injector_cc": 440,   "fpr_bar": 4.0,
-                 "turbo": "GT3071",       "notes": "GT3071 R9 — 440cc Siemens, 300kPa MAP required"},
-    # 034EFI boost chips — always paired with matching fuel chip
-    0x69156B3A: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": None,
-                 "turbo": "GT2871",
-                 "boost_chip": True,
-                 "paired_fuel_crc": None,  # paired with GT2871 fuel chips
-                 "notes": "BOOST CHIP — GT2871 Stage 1. MUST use with matched fuel chip. "
-                          "034EFI custom firmware build 0x0054 (not stock 0x0202). "
-                          "26psi overboost, 22psi to redline, 7200rpm. 330whp. "
-                          "3.0 BAR MAP sensor REQUIRED (300kPa). Stock MAF."},
-    0x39DC67DA: {"map_kpa": 300, "injector_cc": None,  "fpr_bar": None,
-                 "turbo": "GT3071",
-                 "boost_chip": True,
-                 "paired_fuel_crc": None,
-                 "notes": "BOOST CHIP — GT3071 Stage 1. MUST use with matched fuel chip. "
-                          "034EFI custom firmware build 0x0054 (not stock 0x0202). "
-                          "26psi overboost, 23psi to redline, 7200rpm. 346whp. "
-                          "3.0 BAR MAP sensor REQUIRED (300kPa). Stock MAF."},
-    # 7A Hitachi chips
-    0x84B0504E: {"map_kpa": None, "injector_cc": None,  "fpr_bar": None,
-                 "turbo": "NA",
-                 "notes": "7A NA Big MAF — 034EFI billet MAF housing + stock element, "
-                          "893906266B (2-connector ECU). No turbo."},
-    0xC075767F: {"map_kpa": None, "injector_cc": None,  "fpr_bar": None,
-                 "turbo": "NA",
-                 "notes": "7A Stage 1 — direct upgrade, stock components, 893906266B"},
-    0xA01C4EDA: {"map_kpa": None, "injector_cc": 550,   "fpr_bar": None,
-                 "turbo": "T3/T4",
-                 "notes": "7A Turbo Stage 2 550cc — 893906266D (4-connector ECU), "
-                          "034EFI T3/T4 turbo kit, big MAF, 9.5:1 head gasket"},
-    0x55177DDB: {"map_kpa": None, "injector_cc": None,  "fpr_bar": None,
-                 "turbo": "T3/T4",
-                 "notes": "7A Turbo Kit Stage 1 — 893906266B (2-connector ECU), "
-                          "034EFI T3/T4 turbo kit, big MAF housing"},
-    # AAH
-    0x4818FA0B: {"map_kpa": None, "injector_cc": None,  "fpr_bar": None,
-                 "turbo": "NA",
-                 "notes": "AAH/AKH 12v V6 Stage 1+ — MMS-200 ECU required (8A0906266A). "
-                          "Big bore MAF required (Audi 078 133 471A). "
-                          "MMS-300+ ECUs CANNOT be chipped — must retrofit MMS-200."},
-}
-
 # ── Boost chip pairing table ─────────────────────────────────────────────────
 #
 # Maps a fuel chip CRC to its required/recommended boost chip CRC(s).
@@ -2158,7 +2094,11 @@ def get_chip_requirements(crc: int) -> Optional[dict]:
 BUILD_RANGES: dict[str, tuple[int, int]] = {
     "551AA_0202": (0x0202, 0x0202),  # exact build number for prjmod/034EFI
     "551AA":      (0x0000, 0x6FFF),  # AAN + ABY; CRC match takes priority
-    "551C":       (0x7000, 0x9FFF),  # ADU known build 0x4533 — CRC match used
+    # NOTE: 551C known builds (0x0274, 0x4533) overlap with the 551AA range.
+    # Build-number heuristic alone cannot distinguish 551C from 551AA —
+    # CRC fingerprint (step 1) or ROM ID string (step 2) must be used instead.
+    # Leaving this entry disabled until a non-overlapping range is confirmed.
+    # "551C":       (0x7000, 0x9FFF),
     "404":        (0xE000, 0xFFFF),
     "404V8":      (0xA000, 0xCFFF),
 }

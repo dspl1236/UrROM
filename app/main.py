@@ -1064,8 +1064,12 @@ class MapTable(QTableWidget):
                 if r >= self.rowCount() or c >= self.columnCount():
                     continue
                 try:
-                    raw_val = int(float(val_str.strip()))
                     raw_r = self._disp_to_raw(r)
+                    encode = self._map_def.encode
+                    if encode and getattr(self, "_display_decode", None) is not None:
+                        raw_val = encode(float(val_str.strip()))
+                    else:
+                        raw_val = int(float(val_str.strip()))
                     self._current_raw[raw_r][c] = max(0, min(255, raw_val))
                 except (ValueError, IndexError):
                     pass
@@ -1658,6 +1662,9 @@ class MainChipTab(QWidget):
     def _on_map_selected_by_real_idx(self, real_idx: int):
         """Load map by its real index in self._maps (not combo index)."""
         if 0 <= real_idx < len(self._maps):
+            # Flush current map edits back to ROM before switching
+            if self._table._map_def is not None:
+                self._table.commit_to_rom(self._rom)
             # Temporarily update _on_map_selected to use real idx
             m = self._maps[real_idx]
             from urrom.ecu_profiles import get_axes
@@ -1730,6 +1737,10 @@ class MainChipTab(QWidget):
             return
         if idx >= len(self._maps):
             return
+        # Flush current map edits back to ROM before switching
+        if self._table._map_def is not None:
+            self._table.commit_to_rom(self._rom)
+
         m = self._maps[idx]
         v = self._variant
 
@@ -3316,25 +3327,6 @@ class MainWindow(QMainWindow):
             f"QMenuBar::item:selected {{ background: {BG3}; }}"
             f"QMenu {{ background: {BG2}; color: {FG}; border: 1px solid {BORDER}; }}"
             f"QMenu::item:selected {{ background: {BG3}; }}")
-        tools_menu = mb.addMenu("Tools")
-        fpr_act = QAction("Fuel pressure calculator…", self)
-        fpr_act.triggered.connect(self._on_fpr_calculator)
-        log_act = QAction("Overlay data log on map…", self)
-        log_act.triggered.connect(self._on_overlay_datalog)
-        wb_act = QAction("Overlay wideband AFR on fuel map…", self)
-        wb_act.triggered.connect(self._on_overlay_wideband)
-        tools_menu.addAction(fpr_act)
-        tools_menu.addSeparator()
-        tools_menu.addAction(log_act)
-        tools_menu.addAction(wb_act)
-        help_menu = mb.addMenu("Help")
-        shortcuts_act = QAction("Keyboard shortcuts…", self)
-        shortcuts_act.triggered.connect(self._on_show_shortcuts)
-        about_act = QAction("About UrROM", self)
-        about_act.triggered.connect(self._on_about)
-        help_menu.addAction(shortcuts_act)
-        help_menu.addSeparator()
-        help_menu.addAction(about_act)
 
         # ── File ─────────────────────────────────────────────────────────────
         file_menu = mb.addMenu("File")
@@ -3384,24 +3376,31 @@ class MainWindow(QMainWindow):
         act_dash.triggered.connect(self._toggle_dashboard)
         tools_menu.addAction(act_dash)
 
+        tools_menu.addSeparator()
+
+        fpr_act = QAction("Fuel pressure calculator…", self)
+        fpr_act.triggered.connect(self._on_fpr_calculator)
+        tools_menu.addAction(fpr_act)
+
+        log_act = QAction("Overlay data log on map…", self)
+        log_act.triggered.connect(self._on_overlay_datalog)
+        tools_menu.addAction(log_act)
+
+        wb_act = QAction("Overlay wideband AFR on fuel map…", self)
+        wb_act.triggered.connect(self._on_overlay_wideband)
+        tools_menu.addAction(wb_act)
+
         # 2-second timer keeps the menu label current
         self._kwp_menu_timer = QTimer(self)
         self._kwp_menu_timer.timeout.connect(self._refresh_kwp_menu_label)
         self._kwp_menu_timer.start(2000)
 
         # ── Help ─────────────────────────────────────────────────────────────
-        tools_menu = mb.addMenu("Tools")
-        fpr_act = QAction("Fuel pressure calculator…", self)
-        fpr_act.triggered.connect(self._on_fpr_calculator)
-        log_act = QAction("Overlay data log on map…", self)
-        log_act.triggered.connect(self._on_overlay_datalog)
-        wb_act = QAction("Overlay wideband AFR on fuel map…", self)
-        wb_act.triggered.connect(self._on_overlay_wideband)
-        tools_menu.addAction(fpr_act)
-        tools_menu.addSeparator()
-        tools_menu.addAction(log_act)
-        tools_menu.addAction(wb_act)
         help_menu = mb.addMenu("Help")
+        shortcuts_act = QAction("Keyboard shortcuts…", self)
+        shortcuts_act.triggered.connect(self._on_show_shortcuts)
+        help_menu.addAction(shortcuts_act)
+        help_menu.addSeparator()
         about_act = QAction("About UrROM", self)
         about_act.triggered.connect(self._on_about)
         help_menu.addAction(about_act)
@@ -4307,40 +4306,6 @@ class MainWindow(QMainWindow):
         self._update_status(
             f"XDF imported: {len(new_maps)} maps added from {Path(path).name}")
 
-    def _on_kwp_connected(self, ecu_pn: str):
-        self._kwp_matched = self._kwp_monitor.is_matched()
-        self._refresh_kwp_badge()
-        if self._kwp_matched:
-            self._main_chip_tab.attach_kwp()
-            self._update_status(
-                f"KWPBridge connected  ·  {ecu_pn}  ·  ECU matches ROM  ·  live overlay active")
-        else:
-            variant = self._det.variant if self._det else None
-            rom_pn = (variant.ecu_pns[0] if variant and variant.ecu_pns else "?")
-            self._update_status(
-                f"KWPBridge connected  ·  ECU {ecu_pn}  ≠  ROM {rom_pn}  ·  overlay locked")
-
-    def _on_kwp_disconnected(self):
-        self._kwp_matched = False
-        self._main_chip_tab.detach_kwp()
-        self._refresh_kwp_badge()
-        self._update_status("KWPBridge disconnected")
-
-    def _on_kwp_mismatch(self, ecu_pn: str, rom_pn: str):
-        self._kwp_matched = False
-        self._main_chip_tab.detach_kwp()
-        self._refresh_kwp_badge()
-        self._update_status(
-            f"KWPBridge: ECU {ecu_pn} does not match loaded ROM {rom_pn}  ·  overlay locked")
-
-    def _on_kwp_live_data(self, lv):
-        if not self._kwp_matched:
-            return
-        self._main_chip_tab.update_overlay(lv)
-        summary = kwp_live_summary(lv)
-        if summary:
-            self._update_status(f"🟢  {summary}")
-
     def _on_show_shortcuts(self):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
         dlg = QDialog(self)
@@ -4385,445 +4350,6 @@ class MainWindow(QMainWindow):
         btns.accepted.connect(dlg.accept)
         lay.addWidget(btns)
         dlg.exec_()
-
-    def _on_overlay_datalog(self):
-        """Load a CSV data log and overlay cell coverage on the current map."""
-        if self._main_rom is None or self._det is None or not self._det.variant:
-            QMessageBox.information(self, "Data log overlay", "Load a ROM first.")
-            return
-        tab = self._main_chip_tab
-        if not tab._maps or tab._map_combo.currentIndex() < 0:
-            QMessageBox.information(self, "Data log overlay",
-                "Select a map first (Main Chip Maps tab).")
-            return
-
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Load data log CSV", "",
-            "CSV files (*.csv *.CSV *.txt);;All files (*.*)")
-        if not path:
-            return
-
-        try:
-            from urrom.datalog import load_log, compute_coverage, coverage_stats
-            log = load_log(Path(path))
-        except Exception as e:
-            QMessageBox.critical(self, "Error loading log", str(e))
-            return
-
-        if not log.rows:
-            QMessageBox.warning(self, "Data log", "No data rows parsed from log.")
-            return
-
-        m = tab._maps[tab._map_combo.currentIndex()]
-        v = self._det.variant
-        hits = compute_coverage(log, m, v, bytes(self._main_rom))
-        stats = coverage_stats(hits, m)
-
-        if not hits:
-            QMessageBox.information(self, "Data log overlay",
-                "No matching data points found.\n"
-                "Check that the log contains RPM data in the expected column name.")
-            return
-
-        # Show summary dialog and apply overlay
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"Data log coverage — {m.name}")
-        dlg.setMinimumWidth(420)
-        dlg.setStyleSheet(f"background:{BG};color:{FG};")
-        lay = QVBoxLayout(dlg)
-
-        pct = stats['pct_covered']
-        n_zero = len(stats['unvisited'])
-        rpm_lo, rpm_hi = log.rpm_range
-
-        summary_parts = [
-            f"Log: {Path(path).name}  ({log.duration_s:.1f}s)",
-            f"Format: {log.format}  |  {len(log.rows)} rows",
-            f"RPM range: {log.rpm_range[0]:.0f} - {log.rpm_range[1]:.0f}",
-            "",
-            f"Map coverage: {pct:.0f}%  ({stats['hit_cells']}/{stats['total_cells']} cells)",
-            f"Never visited: {n_zero} cells  |  Max hits: {stats['max_hits']}",
-            f"Under-sampled (<5 hits): {len(stats['sparse_cells'])} cells",
-        ]
-        summary = QLabel("\n".join(summary_parts))
-        summary.setStyleSheet(
-            f"background:{BG2};padding:12px;border-radius:4px;font-size:11px;")
-        summary.setWordWrap(True)
-        lay.addWidget(summary)
-
-        if n_zero > 0:
-            warn = QLabel(
-                f"⚠ {n_zero} cells were never driven — those map regions "
-                "may need more data logging.")
-            warn.setStyleSheet(f"color:{AMBER};font-size:10px;margin-top:4px;")
-            warn.setWordWrap(True)
-            lay.addWidget(warn)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.button(QDialogButtonBox.Ok).setText("Apply overlay to map")
-        btns.rejected.connect(dlg.reject)
-        lay.addWidget(btns)
-
-        def _apply_overlay():
-            # Apply hit-count overlay to the MapTable as cell annotations
-            tbl = tab._table
-            if not tbl._map_def:
-                return
-            max_h = stats['max_hits'] or 1
-            for (raw_r, c), count in hits.items():
-                # Annotate — bright for high coverage, dim for low
-                intensity = count / max_h
-                if intensity >= 0.5:
-                    note = f"✓ {count} hits"
-                elif intensity >= 0.1:
-                    note = f"~ {count} hits"
-                else:
-                    note = f"⚠ {count} hit{'s' if count!=1 else ''}"
-                tbl._annotations[(raw_r, c)] = note
-            for (raw_r, c) in stats['unvisited']:
-                tbl._annotations[(raw_r, c)] = "✗ never logged"
-            tbl._redraw()
-            self._tabs.setCurrentWidget(self._main_chip_tab)
-            self._update_status(
-                f"Log overlay applied: {pct:.0f}% coverage — "
-                f"{n_zero} unvisited cells — hover cells for hit count")
-            dlg.accept()
-
-        btns.accepted.connect(_apply_overlay)
-        dlg.exec_()
-
-    def _on_global_timing_offset(self):
-        """Shift ALL confirmed ignition map cells by a fixed degree offset.
-
-        Useful for distributor-as-cam-sensor setups where the physical trigger
-        point differs from the AAN cam sensor reference (nominally ~60 BTDC).
-        A positive offset advances timing globally; negative retards.
-        """
-        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
-                                      QDoubleSpinBox, QDialogButtonBox, QFrame,
-                                      QGroupBox)
-        if self._main_rom is None or self._det is None or not self._det.variant:
-            QMessageBox.information(self, "Timing offset", "Load a ROM first.")
-            return
-
-        v = self._det.variant
-        ign_maps = [m for m in getattr(v, 'main_maps', [])
-                    if m.map_type == 'ign' and m.confidence == 'CONFIRMED'
-                    and m.rows > 1 and m.decode and m.encode]
-        if not ign_maps:
-            QMessageBox.information(self, "Timing offset",
-                "No confirmed ignition maps with encode function for this variant.")
-            return
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Global ignition timing offset")
-        dlg.setMinimumWidth(430)
-        dlg.setStyleSheet(f"background:{BG};color:{FG};")
-        lay = QVBoxLayout(dlg)
-        lay.setSpacing(10)
-
-        ctx_lbl = QLabel(
-            "Shifts all ignition map values by a fixed degree offset."
-            "\n"
-            "\nUse case: distributor-as-cam-sensor adapter where the Hall"
-            "\nsender fires at a different crank angle than the AAN cam"
-            "\nsensor (nominally ~60 BTDC). Correct in software rather than"
-            "\nphysically repositioning the distributor."
-            "\n"
-            "\n+ offset = more advance  |  - offset = more retard")
-        ctx_lbl.setStyleSheet(
-            f"color:{FG_DIM};font-size:10px;background:{BG2};"
-            f"padding:8px;border-radius:4px;")
-        ctx_lbl.setWordWrap(True)
-        lay.addWidget(ctx_lbl)
-
-        form = QFormLayout(); form.setSpacing(8)
-        offset_spin = QDoubleSpinBox()
-        offset_spin.setRange(-60.0, 60.0)
-        offset_spin.setValue(0.0)
-        offset_spin.setDecimals(1)
-        offset_spin.setSingleStep(0.5)
-        offset_spin.setSuffix("  ° (BTDC positive)")
-        offset_spin.setStyleSheet(
-            f"background:{BG2};color:{FG};border:1px solid {BORDER};"
-            f"border-radius:3px;padding:2px 4px;font-size:12px;")
-        form.addRow("Timing offset:", offset_spin)
-        lay.addLayout(form)
-
-        # Live preview
-        preview_lbl = QLabel("")
-        preview_lbl.setStyleSheet(f"color:{ACCENT};font-size:11px;")
-        lay.addWidget(preview_lbl)
-
-        def _update_preview():
-            deg = offset_spin.value()
-            if not ign_maps[0].decode or not ign_maps[0].encode:
-                return
-            # raw delta = floor(deg / 0.6491) approximately
-            sample_raw = 64  # ~33° BTDC
-            sample_dec = ign_maps[0].decode(sample_raw)
-            new_dec = sample_dec + deg
-            new_raw = ign_maps[0].encode(new_dec)
-            raw_delta = new_raw - sample_raw
-            sign = "+" if deg >= 0 else ""
-            preview_lbl.setText(
-                f"Example: {sample_dec:.1f} BTDC → {new_dec:.1f} BTDC  "
-                f"(raw {sign}{raw_delta:+d} per cell across {len(ign_maps)} maps)")
-
-        offset_spin.valueChanged.connect(_update_preview)
-        _update_preview()
-
-        warn = QLabel(
-            "This modifies ALL confirmed ign maps. Use Undo (Ctrl+Z) or"
-            "\nRevert to roll back. Session changelog records every cell change.")
-        warn.setStyleSheet(f"color:{AMBER};font-size:10px;")
-        warn.setWordWrap(True)
-        lay.addWidget(warn)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.rejected.connect(dlg.reject)
-        lay.addWidget(btns)
-
-        def _apply():
-            deg = offset_spin.value()
-            if deg == 0.0:
-                dlg.accept()
-                return
-            from urrom.ecu_profiles import read_map, write_map
-            total_cells = 0
-            for m in ign_maps:
-                data = read_map(bytes(self._main_rom), m)
-                new_data = []
-                for r in range(m.rows):
-                    row = []
-                    for c in range(m.cols):
-                        raw = data[r][c]
-                        decoded = m.decode(raw)
-                        new_decoded = decoded + deg
-                        new_raw = max(0, min(255, m.encode(new_decoded)))
-                        row.append(new_raw)
-                        if raw != new_raw:
-                            total_cells += 1
-                    new_data.append(row)
-                self._main_rom = bytearray(write_map(bytes(self._main_rom), m, new_data))
-            self._main_chip_tab.load(self._main_rom, v)
-            self._compare_tab.set_rom_a(bytes(self._main_rom), v)
-            self._set_dirty()
-            sign = "+" if deg >= 0 else ""
-            self._update_status(
-                f"Timing offset {sign}{deg:.1f} applied: {total_cells} cells across "
-                f"{len(ign_maps)} ign maps")
-            dlg.accept()
-
-        btns.accepted.connect(_apply)
-        dlg.exec_()
-
-    def _on_overlay_wideband(self):
-        """Load a CSV with AFR data and overlay deviation from target on the fuel map."""
-        if self._main_rom is None or self._det is None or not self._det.variant:
-            QMessageBox.information(self, "Wideband overlay", "Load a ROM first.")
-            return
-        tab = self._main_chip_tab
-        # Find the primary fuel map
-        v = self._det.variant
-        fuel_maps = [m for m in tab._maps if m.map_type == 'fuel' and m.rows > 1]
-        if not fuel_maps:
-            QMessageBox.information(self, "Wideband overlay",
-                "No fuel map available. Open Main Chip Maps tab first.")
-            return
-
-        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
-                                      QDoubleSpinBox, QDialogButtonBox)
-        # Get target AFR
-        cfg_dlg = QDialog(self)
-        cfg_dlg.setWindowTitle("Wideband overlay settings")
-        cfg_dlg.setMinimumWidth(320)
-        cfg_dlg.setStyleSheet(f"background:{BG};color:{FG};")
-        cfg_lay = QVBoxLayout(cfg_dlg)
-        form = QFormLayout()
-        target_spin = QDoubleSpinBox()
-        target_spin.setRange(10.0, 20.0); target_spin.setValue(14.7); target_spin.setDecimals(1)
-        target_spin.setSuffix("  AFR target")
-        target_spin.setStyleSheet(
-            f"background:{BG2};color:{FG};border:1px solid {BORDER};border-radius:3px;padding:2px 4px;")
-        form.addRow("Target AFR (stoich=14.7):", target_spin)
-        cfg_lay.addLayout(form)
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.rejected.connect(cfg_dlg.reject)
-        btns.accepted.connect(cfg_dlg.accept)
-        cfg_lay.addWidget(btns)
-        if cfg_dlg.exec_() != QDialog.Accepted:
-            return
-        target_afr = target_spin.value()
-
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Load wideband log CSV", "",
-            "CSV files (*.csv *.CSV *.txt);;All files (*.*)")
-        if not path:
-            return
-        try:
-            from urrom.datalog import load_log, compute_afr_overlay
-            log = load_log(Path(path))
-        except Exception as e:
-            QMessageBox.critical(self, "Error loading log", str(e))
-            return
-        if not log.rows or not any(r.afr for r in log.rows if r.afr):
-            QMessageBox.warning(self, "Wideband log",
-                "No AFR data found in log.\n"
-                "Check that the file has a column named 'AFR', 'WBO2', or 'Lambda'.")
-            return
-
-        m = fuel_maps[0]
-        # Switch to fuel map in editor
-        if m in tab._maps:
-            tab._map_combo.setCurrentIndex(tab._maps.index(m))
-
-        overlay = compute_afr_overlay(log, m, v, bytes(self._main_rom), target_afr)
-        if not overlay:
-            QMessageBox.information(self, "Wideband overlay",
-                "No matching data points with AFR measurements found.")
-            return
-
-        # Apply as colour-coded annotations
-        tbl = tab._table
-        lean_count = sum(1 for d in overlay.values() if d['delta'] > 1.0)
-        rich_count = sum(1 for d in overlay.values() if d['delta'] < -1.0)
-        on_target  = len(overlay) - lean_count - rich_count
-
-        for (raw_r, c), data in overlay.items():
-            d = data['delta']
-            afr = data['afr_mean']
-            count = data['count']
-            if d > 2.0:
-                prefix = "⚠ LEAN"
-            elif d > 1.0:
-                prefix = "↑ lean"
-            elif d < -2.0:
-                prefix = "⚠ RICH"
-            elif d < -1.0:
-                prefix = "↓ rich"
-            else:
-                prefix = "✓ ok"
-            tbl._annotations[(raw_r, c)] = (
-                f"{prefix} {afr:.1f} AFR  Δ{d:+.1f}  n={count}")
-
-        tbl._redraw()
-        self._tabs.setCurrentWidget(self._main_chip_tab)
-        self._update_status(
-            f"Wideband overlay: {len(overlay)} cells logged  —  "
-            f"lean: {lean_count}  rich: {rich_count}  on-target: {on_target}  "
-            f"target={target_afr} AFR")
-
-    def _on_fpr_calculator(self):
-        """Standalone fuel pressure / injector sizing calculator."""
-        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
-                                      QDoubleSpinBox, QDialogButtonBox, QFrame)
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Fuel pressure & injector calculator")
-        dlg.setMinimumWidth(380)
-        dlg.setStyleSheet(f"background:{BG};color:{FG};")
-        lay = QVBoxLayout(dlg)
-
-        def _make_spin(lo, hi, val, dec, suffix):
-            s = QDoubleSpinBox()
-            s.setRange(lo, hi); s.setDecimals(dec); s.setValue(val)
-            s.setSuffix(f"  {suffix}")
-            s.setStyleSheet(f"background:{BG2};color:{FG};border:1px solid {BORDER};"
-                            f"border-radius:3px;padding:2px 4px;")
-            return s
-
-        form = QFormLayout(); form.setSpacing(8); lay.addLayout(form)
-        inj_stock = _make_spin(50, 2000, 293, 0, "cc/min  stock injectors")
-        inj_new   = _make_spin(50, 2000, 440, 0, "cc/min  new injectors")
-        fpr_stock = _make_spin(0.5, 10, 3.0, 1, "bar  stock FPR")
-        fpr_new   = _make_spin(0.5, 10, 5.0, 1, "bar  new FPR")
-        form.addRow("Stock injectors:", inj_stock)
-        form.addRow("New injectors:",   inj_new)
-
-        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"color:{BORDER}"); lay.addWidget(sep)
-
-        form2 = QFormLayout(); form2.setSpacing(8); lay.addLayout(form2)
-        form2.addRow("Stock FPR:", fpr_stock)
-        form2.addRow("New FPR:",   fpr_new)
-
-        result_lbl = QLabel("")
-        result_lbl.setStyleSheet(
-            f"background:{BG2};padding:10px;border-radius:4px;"
-            f"font-size:12px;color:{ACCENT};border:1px solid {BORDER};")
-        result_lbl.setWordWrap(True)
-        lay.addWidget(result_lbl)
-
-        def _calc():
-            import math
-            si, ni = inj_stock.value(), inj_new.value()
-            sp, np_ = fpr_stock.value(), fpr_new.value()
-            if ni == 0 or np_ == 0: return
-            # Injector scaling: new_cc_effective = ni * sqrt(np_/sp)
-            ni_eff = ni * math.sqrt(np_ / sp)
-            # Fuel scale factor to maintain same AFR
-            factor = si / ni_eff
-            # Duty cycle at max (assuming 85% at stock)
-            dc = 0.85 * factor * 100
-            parts = [
-                f"Effective injector flow: {ni_eff:.0f} cc/min",
-                f"Fuel map scale factor:   {factor:.4f}x  ({factor*100:.1f}%)",
-                f"Max duty cycle estimate: {dc:.0f}%",
-                ("\u26a0 Duty cycle > 90% - may be marginal"
-                 if dc > 90 else "\u2713 Duty cycle acceptable"),
-            ]
-            result_lbl.setText("\n".join(parts))
-        for w in (inj_stock, inj_new, fpr_stock, fpr_new):
-            w.valueChanged.connect(_calc)
-        _calc()
-
-        btns = QDialogButtonBox(QDialogButtonBox.Close)
-        btns.rejected.connect(dlg.reject)
-        lay.addWidget(btns)
-        dlg.exec_()
-
-    def _add_recent(self, path: Path) -> None:
-        """Add a file to the recent list, keeping max 8 unique entries."""
-        p = str(path)
-        if p in self._recent_files:
-            self._recent_files.remove(p)
-        self._recent_files.insert(0, p)
-        self._recent_files = self._recent_files[:8]
-        self._settings.setValue("recent_files", self._recent_files)
-
-    def _refresh_recent_menu(self) -> None:
-        """Rebuild the Recent files submenu."""
-        self._recent_menu.clear()
-        if not self._recent_files:
-            self._recent_menu.addAction("(no recent files)").setEnabled(False)
-            return
-        for p_str in self._recent_files:
-            p = Path(p_str)
-            act = self._recent_menu.addAction(p.name)
-            act.setToolTip(p_str)
-            act.triggered.connect(lambda checked, pp=p: self._load_main(pp))
-        self._recent_menu.addSeparator()
-        self._recent_menu.addAction("Clear recent files").triggered.connect(
-            lambda: (self._recent_files.clear(),
-                     self._settings.setValue("recent_files", []),
-                     self._update_status("Recent files cleared")))
-
-    def _on_about(self):
-        from PyQt5.QtWidgets import QMessageBox
-        from urrom.version import APP_VERSION
-        QMessageBox.about(self, "About UrROM",
-            f"<b>UrROM v{APP_VERSION}</b><br>"
-            "<br>"
-            "Open-source ROM editor for Bosch Motronic M2.3 / M2.3.2<br>"
-            "Audi 5-cylinder 20v turbo and V8 engines<br>"
-            "<br>"
-            "Supported variants: 551A/AA/B/C, 551B_D02, 551AA_0202,<br>"
-            "404 (3B), 404V8 (PT), 557 (ABH)<br>"
-            "<br>"
-            "Built with Python + PyQt5<br>"
-            '<a href="https://github.com/dspl1236/UrROM">'
-            "github.com/dspl1236/UrROM</a>")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -4939,6 +4465,16 @@ class MainWindow(QMainWindow):
         n_zero = len(stats['unvisited'])
         rpm_lo, rpm_hi = log.rpm_range
 
+        summary_parts = [
+            f"Log: {Path(path).name}  ({log.duration_s:.1f}s)",
+            f"Format: {log.format}  |  {len(log.rows)} rows",
+            f"RPM range: {log.rpm_range[0]:.0f} - {log.rpm_range[1]:.0f}",
+            "",
+            f"Map coverage: {pct:.0f}%  ({stats['hit_cells']}/{stats['total_cells']} cells)",
+            f"Never visited: {n_zero} cells  |  Max hits: {stats['max_hits']}",
+            f"Under-sampled (<5 hits): {len(stats['sparse_cells'])} cells",
+        ]
+        summary = QLabel("\n".join(summary_parts))
         summary.setStyleSheet(
             f"background:{BG2};padding:12px;border-radius:4px;font-size:11px;")
         summary.setWordWrap(True)

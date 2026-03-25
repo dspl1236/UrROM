@@ -1039,15 +1039,16 @@ class TestBoostChipPairing:
 
     def test_correct_pair_is_ok(self):
         from urrom.ecu_profiles import check_chip_pair
-        # GT2871 R9.1 EV14 fuel → GT2871 boost
+        # GT2871 R9.1 EV14 fuel -> GT2871 boost
         status, msg = check_chip_pair(0x2EB58546, 0x69156B3A)
         assert status == 'ok'
         assert 'confirmed' in msg.lower()
 
-    def test_wrong_pair_is_mismatch(self):
+    def test_gt3071_boost_with_gt2871_fuel_is_mismatch(self):
         from urrom.ecu_profiles import check_chip_pair
-        # GT3071 fuel with GT2871 boost — wrong pairing
-        status, msg = check_chip_pair(0x07DA1752, 0x69156B3A)
+        fuel_crc  = 0x2EB58546  # GT2871 fuel
+        boost_crc = 0x39DC67DA  # GT3071 boost
+        status, msg = check_chip_pair(fuel_crc, boost_crc)
         assert status == 'mismatch'
         assert 'MISMATCH' in msg
 
@@ -1062,15 +1063,14 @@ class TestBoostChipPairing:
         status, _ = check_chip_pair(0x956BFC9C, 0x16707F66)
         assert status == 'ok'
 
-    def test_rs2_tuned_accepts_aby_boost(self):
+    def test_unknown_fuel_check_pair_returns_ok(self):
         from urrom.ecu_profiles import check_chip_pair
-        status, _ = check_chip_pair(0x28C04D7B, 0xF6E33043)
+        status, msg = check_chip_pair(0xDEADBEEF, 0x12345678)
         assert status == 'ok'
 
-    def test_rs2_tuned_accepts_adu_boost(self):
-        from urrom.ecu_profiles import check_chip_pair
-        status, _ = check_chip_pair(0x28C04D7B, 0x4EE87833)
-        assert status == 'ok'
+    def test_unknown_fuel_get_pairing_returns_empty(self):
+        from urrom.ecu_profiles import get_boost_pairing
+        assert get_boost_pairing(0x00000000) == []
 
     def test_get_boost_pairing_returns_list(self):
         from urrom.ecu_profiles import get_boost_pairing
@@ -1078,9 +1078,18 @@ class TestBoostChipPairing:
         assert isinstance(pairings, list)
         assert 0x69156B3A in pairings
 
-    def test_unknown_fuel_returns_empty(self):
-        from urrom.ecu_profiles import get_boost_pairing
-        assert get_boost_pairing(0x00000000) == []
+    def test_k24_fuel_accepts_either_boost(self):
+        from urrom.ecu_profiles import check_chip_pair
+        fuel = 0xA47011AB  # Stage 1+ K24
+        assert check_chip_pair(fuel, 0x69156B3A)[0] == 'ok'   # GT2871
+        assert check_chip_pair(fuel, 0x39DC67DA)[0] == 'ok'   # GT3071
+
+    def test_rs2_fuel_accepts_aby_or_adu_boost(self):
+        from urrom.ecu_profiles import check_chip_pair
+        fuel = 0x28C04D7B  # RS2 91Oct
+        assert check_chip_pair(fuel, 0xF6E33043)[0] == 'ok'   # ABY boost
+        assert check_chip_pair(fuel, 0x4EE87833)[0] == 'ok'   # ADU boost
+        assert check_chip_pair(fuel, 0x39DC67DA)[0] == 'mismatch'  # GT3071 wrong
 
     def test_gt3071_fuel_chips_all_require_gt3071_boost(self):
         from urrom.ecu_profiles import check_chip_pair
@@ -1100,53 +1109,6 @@ class TestBoostChipPairing:
             for boost_crc in boost_crcs:
                 assert boost_crc in KNOWN_CRCS, \
                     f"Boost CRC 0x{boost_crc:08X} not in KNOWN_CRCS (paired with fuel 0x{fuel_crc:08X})"
-
-
-# ── Boost chip pairing ─────────────────────────────────────────────────────────
-
-class TestBoostChipPairing:
-
-    def test_gt2871_fuel_requires_gt2871_boost(self):
-        from urrom.ecu_profiles import check_chip_pair, get_boost_pairing
-        # GT2871 R9.1 550cc EV14 fuel chip
-        fuel_crc  = 0x2EB58546
-        boost_crc = 0x69156B3A  # GT2871 boost
-        status, msg = check_chip_pair(fuel_crc, boost_crc)
-        assert status == 'ok', msg
-
-    def test_gt3071_boost_with_gt2871_fuel_is_mismatch(self):
-        from urrom.ecu_profiles import check_chip_pair
-        fuel_crc  = 0x2EB58546  # GT2871 fuel
-        boost_crc = 0x39DC67DA  # GT3071 boost
-        status, msg = check_chip_pair(fuel_crc, boost_crc)
-        assert status == 'mismatch'
-        assert 'MISMATCH' in msg
-
-    def test_unknown_fuel_returns_ok(self):
-        from urrom.ecu_profiles import check_chip_pair
-        status, msg = check_chip_pair(0xDEADBEEF, 0x12345678)
-        assert status == 'ok'
-
-    def test_k24_fuel_accepts_either_boost(self):
-        from urrom.ecu_profiles import check_chip_pair
-        fuel = 0xA47011AB  # Stage 1+ K24
-        assert check_chip_pair(fuel, 0x69156B3A)[0] == 'ok'   # GT2871
-        assert check_chip_pair(fuel, 0x39DC67DA)[0] == 'ok'   # GT3071
-
-    def test_rs2_fuel_accepts_aby_or_adu_boost(self):
-        from urrom.ecu_profiles import check_chip_pair
-        fuel = 0x28C04D7B  # RS2 91Oct
-        assert check_chip_pair(fuel, 0xF6E33043)[0] == 'ok'   # ABY boost
-        assert check_chip_pair(fuel, 0x4EE87833)[0] == 'ok'   # ADU boost
-        assert check_chip_pair(fuel, 0x39DC67DA)[0] == 'mismatch'  # GT3071 wrong
-
-    def test_pairing_dict_completeness(self):
-        from urrom.ecu_profiles import BOOST_CHIP_PAIRINGS, KNOWN_CRCS
-        # Every fuel CRC in pairings should exist in KNOWN_CRCS
-        for fuel_crc, boost_crcs in BOOST_CHIP_PAIRINGS.items():
-            assert fuel_crc in KNOWN_CRCS, f"Fuel CRC 0x{fuel_crc:08X} not in KNOWN_CRCS"
-            for bc in boost_crcs:
-                assert bc in KNOWN_CRCS, f"Boost CRC 0x{bc:08X} not in KNOWN_CRCS"
 
 
 # ── Map export ─────────────────────────────────────────────────────────────────
