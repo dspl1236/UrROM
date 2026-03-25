@@ -2720,9 +2720,11 @@ class HardwareTab(QWidget):
             d = self._dist_spin.value()
             sign = "+" if d >= 0 else ""
             raw_delta = round(d / 0.6491)
+            ign_count = len([m for m in (self._dist_maps or [])
+                           if m.map_type == "ign" and m.confidence == "CONFIRMED" and m.rows > 1])
             preview.setText(
-                f"={sign}{d:.1f}°  →  {sign}{raw_delta:+d} raw on every ign cell"
-                f"  ({abs(raw_delta)} cells × {len([m for m in (self._dist_maps or []) if m.map_type == "ign" and m.confidence == "CONFIRMED" and m.rows > 1])} maps)")
+                f"={sign}{d:.1f}\u00b0  \u2192  {sign}{raw_delta:+d} raw on every ign cell"
+                f"  ({abs(raw_delta)} cells \u00d7 {ign_count} maps)")
 
         self._dist_spin.valueChanged.connect(_upd)
 
