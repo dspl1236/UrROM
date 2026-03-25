@@ -136,6 +136,18 @@ Full documentation: `docs/UrROM_Master_Reference.md`
 
 ---
 
+## Known Limitations
+
+The following items are known and tracked for future work:
+
+| Area | Issue | Status |
+|------|-------|--------|
+| **551AA_0202 maps** | DTC Classes 60×60 definition overlaps fuel/ign map addresses — may be a container or wrong dimensions | Needs investigation |
+| **551B_D02 variant** | Currently using 551AA map addresses — needs its own verified address list | TODO |
+| **Boost chip save** | Boost chip edits are not written to disk on save — only main EPROM is saved | Not implemented |
+| **V8 split-bank save** | Save writes both halves but architecture is fragile if bank sizes change | Works, needs hardening |
+| **KWP overlay colours** | `_text_colour` called with string instead of QColor — crashes on some Qt versions | Bug |
+
 ## Community Resources
 
 - **S2Forum** — hardware threads, schematic discussions
