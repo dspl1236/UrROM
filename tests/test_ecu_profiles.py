@@ -613,6 +613,15 @@ class TestDecodeFunctions:
 
 # ── MapTable editing operations (headless) ─────────────────────────────────────
 
+try:
+    from app.main import MapTable
+    _HAS_QT = True
+except ImportError:
+    _HAS_QT = False
+
+import pytest
+
+@pytest.mark.skipif(not _HAS_QT, reason="PyQt5 not installed")
 class TestMapTableEditing:
     """
     Test MapTable bulk-edit operations without a QApplication.
@@ -966,6 +975,7 @@ class TestKnownCRCsFingerprinting:
 
 # ── MapTable nudge / offset tests ─────────────────────────────────────────────
 
+@pytest.mark.skipif(not _HAS_QT, reason="PyQt5 not installed")
 class TestMapTableNudgeOffset:
     """Test arrow-key nudge and offset operations."""
 
