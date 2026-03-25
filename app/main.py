@@ -1428,7 +1428,7 @@ class MapTable(QTableWidget):
                     bg = QColor(255, 255, 255)  # white hot-spot
 
                 item.setBackground(QBrush(bg))
-                item.setForeground(QBrush(_text_colour(bg.name())))
+                item.setForeground(QBrush(_text_colour(bg)))
 
 
 # ── Main chip maps tab ────────────────────────────────────────────────────────
@@ -2119,6 +2119,23 @@ class BoostTab(QWidget):
         self._note.setVisible(False)
         self._status.setText(
              f"Boost chip  —  {m.name}  [{m.rows}×{m.cols}  {m.confidence}]")
+    def commit_to_rom(self, rom: bytearray) -> bytearray:
+        """Write current boost chip edits back into the boost ROM bytearray."""
+        # Flush the currently visible map's edits
+        return self._table.commit_to_rom(rom)
+
+    def has_changes(self) -> bool:
+        return self._table.has_changes() if self._boost_rom is not None else False
+
+    def get_boost_rom(self) -> bytearray | None:
+        """Return the boost ROM with all edits applied, or None if not loaded."""
+        if self._boost_rom is None:
+            return None
+        # Flush current map edits into the boost ROM bytearray
+        rom = bytearray(self._boost_rom)
+        rom = self.commit_to_rom(rom)
+        return rom
+
     def clear(self):
         self._boost_rom = None
         self._maps = []
@@ -3698,6 +3715,22 @@ class MainWindow(QMainWindow):
         if cs_changed:     notes.append("checksum updated")
         elif needs_checksum: notes.append("checksum ok")
         if path.lower().endswith(".034"): notes.append(".034 scrambled")
+
+        # Save boost chip if it has edits
+        if (hasattr(self, '_boost_tab') and self._boost_tab.has_changes()):
+            boost_rom = self._boost_tab.get_boost_rom()
+            if boost_rom is not None:
+                boost_stem = Path(path).stem.replace("_edited", "") + "_boost_edited.bin"
+                boost_path, _ = QFileDialog.getSaveFileName(
+                    self, "Save Boost Chip", boost_stem,
+                    "Binary ROM (*.bin *.BIN);;All files (*.*)")
+                if boost_path:
+                    try:
+                        Path(boost_path).write_bytes(bytes(boost_rom))
+                        notes.append(f"boost chip saved")
+                    except OSError as e:
+                        QMessageBox.warning(self, "Boost Save Error", str(e))
+
         note_str = f"  ({', '.join(notes)})" if notes else ""
         self._main_chip_tab._table.accept_current_as_baseline()
         self._unsaved = False
