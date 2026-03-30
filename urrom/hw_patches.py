@@ -183,29 +183,72 @@ def detect_map_sensor_from_boost(boost_bytes: bytes) -> tuple[str, str, str]:
 # All offsets are working-half (WH) offsets, valid for the 0x0202 prjmod firmware.
 # Do NOT apply these to the aftermarket 0x6450/0x4533 build (different base).
 
-# Confirmed from disassembly posted in the LC/NLS forum thread:
-LC_NLS_SIGNATURE = (0x0610, bytes([0xC0, 0x82, 0xC0, 0x83]))
-# push DPL; push DPH — entry of Motorsport_Features_Code
+# Confirmed from 551AA ROM disassembly (0x0202 firmware):
+# PUSH DPL; PUSH DPH at entry of Motorsport_Features_Code
+# NOTE: originally documented as 0x0610 (forum post), confirmed at 0x062E
+# via binary analysis of aan_fuel-ign_551aa.bin.
+LC_NLS_SIGNATURE = (0x062E, bytes([0xC0, 0x82, 0xC0, 0x83]))
 
 # Speed Density VE table (0x0202 firmware, WH[0x2074]).
 # Stock map is filled with 0x02 (blank).  A tuned SD file has varied values.
 SD_VE_TABLE_OFFSET  = 0x2074
 SD_VE_TABLE_SIZE    = 256  # 16×16
 
-# MFTS boost-cut bypass: replaces conditional with unconditional NOP/SJMP
-# Exact signature TBD (requires Ghidra analysis of MFTS check routine)
-# From forum: "MFTS input boost cut patch enabled — need to disable for full boost"
-# Placeholder: scan for known bypass pattern
+# ── MFTS Boost Cut Bypass ────────────────────────────────────────────────────
+# Confirmed from 551AA disassembly:
+#   WH 0x1240–0x1292: MFTS/ECT boost cut routine
+#   0x1248: JNB 01h, 0x1287  (if flag clear, skip entire check)
+#   0x124B: LCALL 0x1726 with DPTR=0xBE00  (read MAP sensor, AN0)
+#   0x1251: CJNE A, #0xFC   (is MAP < 252?)
+#   0x1254: JC 0x1287        (if MAP < 252, skip — no boost cut)
+#   0x1256: LCALL 0x1726 with DPTR=0xBE03  (read MFTS, AN3)
+#   0x125C: CJNE A, #0x06   (is MFTS signal >= 6?)
+#   ... if all checks fail: decrements timer, eventually clears boost enable bit
+#   0x1287: "OK" path — sets timer, enables boost
+#
+# Patch: change JC (0x40) at 0x1254 to SJMP (0x80) — unconditional "OK"
+MFTS_BYPASS_OFFSET = 0x1254
+MFTS_BYPASS_STOCK  = bytes([0x40, 0x31])   # JC +0x31 (to 0x1287)
+MFTS_BYPASS_PATCH  = bytes([0x80, 0x31])   # SJMP +0x31 (unconditional)
 
-# Load-decap patch: prevents uint8 overflow at load=255
-# From forum: "when load hits 255 it rolls over to 0 and scraps the engine"
-# This is a 1–2 byte code change near the load accumulation routine
-# Placeholder until confirmed offset
+# ── Load Overflow Decap ──────────────────────────────────────────────────────
+# Confirmed from 551AA disassembly:
+#   WH 0x3662–0x3689: Load calculation, first path (output to XRAM 0xA008)
+#   0x3662: MOV B, #0xE0    (multiplier = 224)
+#   0x3665: MOV A, 2Fh      (load factor from RAM)
+#   0x3667: MUL AB
+#   0x3668: MOV A, B         (take high byte)
+#   0x366A: ADD A, #0x10     (add offset — OVERFLOW POINT)
+#   0x366C: MOV B, A
+#   0x3678: CJNE A, #0xF0   (stock: compare against 240)
+#   0x367D: MOV B, #0xF0    (stock: clamp to 240)
+#
+# Bug: ADD A, #0x10 wraps uint8 past 255. Result gets clamped to min (0x10)
+# instead of max. Engine sees idle load at full boost — catastrophic.
+# The second load path at 0x36D6 HAS overflow protection; this one doesn't.
+#
+# Patch: raise comparison and clamp from 0xF0 to 0xFF
+LOAD_DECAP_PATCHES = [
+    (0x3679, bytes([0xF0]), bytes([0xFF])),  # CJNE compare: 0xF0 → 0xFF
+    (0x367F, bytes([0xF0]), bytes([0xFF])),  # MOV B clamp:  0xF0 → 0xFF
+]
 
-# Lambda delay patch (prjmod): delays use of lambda sensor on cold start
-# Prj: "I hardcoded a delay from start for which lambda is not used"
-# Inserted as a fixed byte counter at the start of the lambda routine
-# Placeholder
+# ── Lambda Cold-Start Delay ──────────────────────────────────────────────────
+# Confirmed from 551AA disassembly:
+#   WH 0x5EF8–0x5F1E: Lambda sensor warmup/enable logic
+#   0x5EF8: MOV 30h, #0x9F  (init warmup counter to 159 cycles)
+#   0x5EFB: MOV 35h, SBUF   (reads sensor serial data)
+#   0x5F00: CJNE A, #0x11   (compare reading to 17)
+#   0x5F03: JC 0x5F16        (if < 17, lambda not ready)
+#   Counter at RAM 30h decremented at WH 0x6ADB (DEC 30h),
+#   but only when ECT (RAM 36h) >= 0x85 (engine warm).
+#
+# Patch: change init counter from 0x9F (159) to user-selectable value
+# Default extended: 0xFF (255 cycles, ~60% longer warmup delay)
+LAMBDA_DELAY_OFFSET = 0x5EFA   # immediate operand of MOV 30h, #imm
+LAMBDA_DELAY_STOCK  = 0x9F     # 159 cycles
+LAMBDA_DELAY_EXTENDED = 0xFF   # 255 cycles (maximum single-byte)
+LAMBDA_DELAY_MINIMAL  = 0x01   # near-instant lambda enable
 
 
 def _match_sig(wh: bytes, offset: int, sig: bytes) -> bool:
@@ -420,47 +463,93 @@ def detect_patches(
         ))
 
     # ── 5. MFTS Boost Cut Bypass ─────────────────────────────────────────
-    # From forum: stock prjmod files have MFTS boost cut active.
-    # Patch status: check for a known NOP or SJMP replacing the conditional.
-    # Exact offset TBD — placeholder using build number heuristic.
+    # Confirmed: WH 0x1254, JC 0x31 → SJMP 0x31
+    mfts_current = wh[MFTS_BYPASS_OFFSET: MFTS_BYPASS_OFFSET + 2]
+    if mfts_current == MFTS_BYPASS_PATCH:
+        mfts_status, mfts_detail = "PATCHED", (
+            "MFTS boost cut bypass is ACTIVE. The conditional jump at "
+            f"WH 0x{MFTS_BYPASS_OFFSET:04X} has been replaced with an "
+            "unconditional SJMP — ECU will never cut boost based on "
+            "coolant sensor signal. Use Revert to restore stock behaviour.")
+    elif mfts_current == MFTS_BYPASS_STOCK:
+        mfts_status, mfts_detail = "STOCK", (
+            "MFTS boost cut is ACTIVE (stock). ECU will limit boost if "
+            "coolant sensor signal is out of range (MFTS < 6 on AN3). "
+            "Apply this patch to bypass the check — required if using "
+            "aftermarket coolant sensor or non-standard MFTS location.")
+    else:
+        mfts_status, mfts_detail = "UNKNOWN", (
+            f"Unexpected bytes at WH 0x{MFTS_BYPASS_OFFSET:04X}: "
+            f"{mfts_current.hex()}. Expected stock {MFTS_BYPASS_STOCK.hex()} "
+            f"or patched {MFTS_BYPASS_PATCH.hex()}. May be a different firmware base.")
     results.append(PatchResult(
         name="MFTS Boost Cut Bypass",
         category="firmware",
-        status="UNKNOWN",
-        detail="MFTS (coolant temperature sensor) boost cut: the ECU will limit "
-               "boost if it detects an out-of-range coolant sensor signal. "
-               "This patch bypasses that check. Required if using aftermarket "
-               "coolant sensor locations or non-standard sensor values. "
-               "Exact detection signature not yet confirmed — use VCDS to check "
-               "for Fault Code 00561 (coolant temp implausible) before disabling.",
-        confidence="LOW",
-        recommended=False,
+        status=mfts_status,
+        detail=mfts_detail,
+        confidence="HIGH" if mfts_status != "UNKNOWN" else "LOW",
+        wh_offset=MFTS_BYPASS_OFFSET,
+        recommended=mfts_status == "STOCK",
     ))
 
-    # ── 6. Load Decap Patch ──────────────────────────────────────────────
+    # ── 6. Load Overflow Decap ───────────────────────────────────────────
+    # Confirmed: WH 0x3679 compare byte + WH 0x367F clamp byte
+    cmp_byte = wh[LOAD_DECAP_PATCHES[0][0]] if len(wh) > LOAD_DECAP_PATCHES[0][0] else 0
+    clamp_byte = wh[LOAD_DECAP_PATCHES[1][0]] if len(wh) > LOAD_DECAP_PATCHES[1][0] else 0
+    if cmp_byte == 0xFF and clamp_byte == 0xFF:
+        load_status, load_detail = "PATCHED", (
+            "Load overflow decap is ACTIVE. Comparison and clamp raised to 0xFF. "
+            "Load value will saturate at 255 instead of wrapping to 0 at high boost.")
+    elif cmp_byte == 0xF0 and clamp_byte == 0xF0:
+        load_status, load_detail = "STOCK", (
+            "Load overflow decap is NOT applied (stock). Load value is clamped at 240 "
+            "(0xF0). At high boost (>~1.5 bar), ADD A, #0x10 at WH 0x366A can wrap "
+            "past 255 → load drops to minimum → catastrophic lean/timing condition. "
+            "STRONGLY RECOMMENDED for any build capable of >1.5 bar boost.")
+    else:
+        load_status, load_detail = "MODIFIED", (
+            f"Load compare=0x{cmp_byte:02X}, clamp=0x{clamp_byte:02X}. "
+            "Neither stock (0xF0) nor standard patch (0xFF). Custom modification.")
     results.append(PatchResult(
         name="Load Overflow Decap",
         category="firmware",
-        status="UNKNOWN",
-        detail="Without this patch, if engine load exceeds 255 (uint8 overflow) "
-               "the value wraps to 0 — causing the ECU to see idle load at full "
-               "boost, with catastrophic fuelling and ignition errors. "
-               "Essential for big turbo builds capable of >~1.5 bar boost. "
-               "Detection signature not yet confirmed from disassembly.",
-        confidence="LOW",
-        recommended=True,
+        status=load_status,
+        detail=load_detail,
+        confidence="HIGH" if load_status != "MODIFIED" else "MEDIUM",
+        wh_offset=LOAD_DECAP_PATCHES[0][0],
+        recommended=load_status == "STOCK",
     ))
 
-    # ── 7. Lambda Delay Patch ────────────────────────────────────────────
+    # ── 7. Lambda Cold-Start Delay ───────────────────────────────────────
+    # Confirmed: WH 0x5EFA, immediate operand of MOV 30h, #imm
+    lambda_val = wh[LAMBDA_DELAY_OFFSET] if len(wh) > LAMBDA_DELAY_OFFSET else 0
+    if lambda_val == LAMBDA_DELAY_STOCK:
+        lam_status, lam_detail = "STOCK", (
+            f"Lambda warmup counter = 0x{lambda_val:02X} ({lambda_val} cycles). "
+            "This is the stock prjmod value. Lambda sensor is disabled for ~159 "
+            "engine cycles after cold start to allow wideband signal to stabilise.")
+    elif lambda_val == LAMBDA_DELAY_EXTENDED:
+        lam_status, lam_detail = "EXTENDED", (
+            f"Lambda warmup counter = 0x{lambda_val:02X} ({lambda_val} cycles). "
+            "Extended delay — maximum single-byte value. Lambda disabled for ~255 "
+            "engine cycles after cold start.")
+    elif lambda_val == LAMBDA_DELAY_MINIMAL:
+        lam_status, lam_detail = "MINIMAL", (
+            f"Lambda warmup counter = 0x{lambda_val:02X} ({lambda_val} cycle). "
+            "Near-instant lambda enable. Only safe if wideband controller has "
+            "fast warmup (e.g. Bosch LSU 4.9 with internal heater).")
+    else:
+        lam_status, lam_detail = "CUSTOM", (
+            f"Lambda warmup counter = 0x{lambda_val:02X} ({lambda_val} cycles). "
+            f"Custom value (stock=0x{LAMBDA_DELAY_STOCK:02X}, "
+            f"extended=0x{LAMBDA_DELAY_EXTENDED:02X}).")
     results.append(PatchResult(
         name="Lambda Cold-Start Delay",
         category="firmware",
-        status="UNKNOWN",
-        detail="prjmod includes a hardcoded delay at startup before the narrowband "
-               "lambda sensor is used. This prevents 25%+ fuel trim errors while "
-               "a simulated 0–1V wideband signal is still stabilising. "
-               "Detection signature pending disassembly confirmation.",
-        confidence="LOW",
+        status=lam_status,
+        detail=lam_detail,
+        confidence="HIGH",
+        wh_offset=LAMBDA_DELAY_OFFSET,
         recommended=False,
     ))
 
@@ -494,6 +583,59 @@ def detect_patches(
             ))
 
     return results
+
+
+# ── Apply / revert functions ──────────────────────────────────────────────────
+#
+# Each function operates on the full ROM bytearray (32KB or 64KB).
+# For 64KB doubled ROMs, patches are applied to both halves.
+# Returns (modified_rom, original_bytes) for revert support.
+
+
+def _write_wh(rom: bytearray, offset: int, data: bytes) -> None:
+    """Write bytes at working-half offset, mirroring to upper half if doubled."""
+    rom[offset: offset + len(data)] = data
+    if len(rom) >= 0x10000:
+        rom[offset + 0x8000: offset + 0x8000 + len(data)] = data
+
+
+def apply_mfts_bypass(rom: bytearray) -> bytes:
+    """Apply MFTS boost cut bypass. Returns original bytes for revert."""
+    original = bytes(rom[MFTS_BYPASS_OFFSET: MFTS_BYPASS_OFFSET + 2])
+    _write_wh(rom, MFTS_BYPASS_OFFSET, MFTS_BYPASS_PATCH)
+    return original
+
+
+def revert_mfts_bypass(rom: bytearray) -> None:
+    """Revert MFTS boost cut bypass to stock."""
+    _write_wh(rom, MFTS_BYPASS_OFFSET, MFTS_BYPASS_STOCK)
+
+
+def apply_load_decap(rom: bytearray) -> list[bytes]:
+    """Apply load overflow decap. Returns list of original bytes for revert."""
+    originals = []
+    for offset, stock, patch in LOAD_DECAP_PATCHES:
+        originals.append(bytes(rom[offset: offset + len(patch)]))
+        _write_wh(rom, offset, patch)
+    return originals
+
+
+def revert_load_decap(rom: bytearray) -> None:
+    """Revert load overflow decap to stock."""
+    for offset, stock, _patch in LOAD_DECAP_PATCHES:
+        _write_wh(rom, offset, stock)
+
+
+def apply_lambda_delay(rom: bytearray, value: int = LAMBDA_DELAY_EXTENDED) -> int:
+    """Set lambda cold-start delay counter. Returns original value for revert."""
+    original = rom[LAMBDA_DELAY_OFFSET]
+    _write_wh(rom, LAMBDA_DELAY_OFFSET, bytes([value & 0xFF]))
+    return original
+
+
+def revert_lambda_delay(rom: bytearray) -> None:
+    """Revert lambda delay to stock value."""
+    _write_wh(rom, LAMBDA_DELAY_OFFSET, bytes([LAMBDA_DELAY_STOCK]))
 
 
 # ── QLCC / Ben Swann note ─────────────────────────────────────────────────────

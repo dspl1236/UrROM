@@ -36,6 +36,11 @@ from urrom.kwp import (
     status_label as kwp_status_label,
     live_summary as kwp_live_summary,
 )
+from urrom.hw_patches import (
+    apply_mfts_bypass, revert_mfts_bypass,
+    apply_load_decap, revert_load_decap,
+    apply_lambda_delay, revert_lambda_delay,
+)
 
 # ── Palette ──────────────────────────────────────────────────────────────────
 
@@ -2327,6 +2332,8 @@ class HardwareTab(QWidget):
         self._boost_bytes: bytes | None = None
         self._wh: bytes | None = None
         self._variant_name: str = ""
+        self._patch_apply_callback = None   # fn(patch_name, action, value)
+        self._lambda_spin = None            # spinbox for lambda delay value
 
     # ── Distributor conversion patch card ─────────────────────────────────
 
@@ -2519,7 +2526,142 @@ class HardwareTab(QWidget):
             rec_lbl.setStyleSheet(f"color:{AMBER};font-size:10px;")
             layout.addWidget(rec_lbl)
 
+        # ── Toggle buttons for toggleable firmware patches ────────────
+        TOGGLEABLE = {
+            "MFTS Boost Cut Bypass",
+            "Load Overflow Decap",
+            "Lambda Cold-Start Delay",
+        }
+        if result.name in TOGGLEABLE and result.category == "firmware":
+            btn_row = QHBoxLayout()
+            btn_row.setSpacing(6)
+
+            if result.name == "Lambda Cold-Start Delay":
+                # Spinbox for lambda delay value
+                from PyQt5.QtWidgets import QSpinBox
+                lam_spin = QSpinBox()
+                lam_spin.setRange(1, 255)
+                lam_spin.setValue(0xFF)
+                lam_spin.setPrefix("delay: 0x")
+                lam_spin.setDisplayIntegerBase(16)
+                lam_spin.setFixedWidth(110)
+                lam_spin.setStyleSheet(
+                    f"QSpinBox{{background:{BG2};color:{FG};border:1px solid {BORDER};"
+                    f"border-radius:3px;padding:1px 4px;font-size:10px;}}"
+                    f"QSpinBox:disabled{{color:{FG_DIM};}}")
+                # Pre-fill with current value if known
+                if self._wh and result.wh_offset is not None and result.wh_offset < len(self._wh):
+                    lam_spin.setValue(self._wh[result.wh_offset])
+                self._lambda_spin = lam_spin
+                btn_row.addWidget(lam_spin)
+
+            if result.status in ("STOCK", "CUSTOM", "MINIMAL"):
+                # Show Apply button
+                apply_btn = QPushButton("Apply \u25b6")
+                apply_btn.setFixedHeight(24)
+                apply_btn.setStyleSheet(
+                    f"QPushButton{{background:#1a3a1a;color:{GREEN};"
+                    f"border:1px solid #2a5a2a;border-radius:3px;"
+                    f"padding:0 10px;font-size:10px;font-weight:bold;}}"
+                    f"QPushButton:hover{{background:#2a5a2a;border-color:{GREEN};}}")
+                _name = result.name
+                apply_btn.clicked.connect(lambda _, n=_name: self._on_patch_apply(n))
+                btn_row.addWidget(apply_btn)
+
+            if result.status in ("PATCHED", "EXTENDED"):
+                # Show Revert button
+                revert_btn = QPushButton("Revert \u25c0")
+                revert_btn.setFixedHeight(24)
+                revert_btn.setStyleSheet(
+                    f"QPushButton{{background:#3a2a10;color:{AMBER};"
+                    f"border:1px solid #6a4a20;border-radius:3px;"
+                    f"padding:0 10px;font-size:10px;font-weight:bold;}}"
+                    f"QPushButton:hover{{background:#5a3a10;border-color:{AMBER};}}")
+                _name = result.name
+                revert_btn.clicked.connect(lambda _, n=_name: self._on_patch_revert(n))
+                btn_row.addWidget(revert_btn)
+
+            if result.status in ("UNKNOWN", "MODIFIED"):
+                # Show both buttons grayed, or just Apply
+                apply_btn = QPushButton("Apply \u25b6")
+                apply_btn.setFixedHeight(24)
+                apply_btn.setStyleSheet(
+                    f"QPushButton{{background:{BG3};color:{FG_DIM};"
+                    f"border:1px solid {BORDER};border-radius:3px;"
+                    f"padding:0 10px;font-size:10px;font-weight:bold;}}"
+                    f"QPushButton:hover{{background:{BG2};border-color:{FG_DIM};}}")
+                _name = result.name
+                apply_btn.clicked.connect(lambda _, n=_name: self._on_patch_apply(n))
+                btn_row.addWidget(apply_btn)
+
+            btn_row.addStretch()
+            layout.addLayout(btn_row)
+
         return card
+
+    # ── Firmware patch apply / revert handlers ──────────────────────────
+
+    def set_patch_apply_callback(self, fn):
+        """Register fn(patch_name, action, value) called when a firmware patch is toggled.
+        action is 'apply' or 'revert'.  value is the lambda delay spinbox value (or None)."""
+        self._patch_apply_callback = fn
+
+    def _on_patch_apply(self, patch_name: str):
+        """Confirmation dialog, then apply a firmware patch."""
+        msgs = {
+            "MFTS Boost Cut Bypass": (
+                "Apply MFTS Bypass",
+                "This will modify 2 bytes at WH 0x1254.\n"
+                "The ECU will no longer cut boost based on coolant sensor signal.\n\n"
+                "Apply patch?"),
+            "Load Overflow Decap": (
+                "Apply Load Overflow Decap",
+                "This will modify 2 bytes at WH 0x3679 and 0x367F.\n"
+                "Load comparison and clamp raised from 0xF0 to 0xFF.\n"
+                "Prevents catastrophic load wrap at high boost.\n\n"
+                "Apply patch?"),
+            "Lambda Cold-Start Delay": (
+                "Apply Lambda Cold-Start Delay",
+                "This will modify 1 byte at WH 0x5EFA.\n"
+                "Lambda warmup counter set to the value in the spinbox.\n\n"
+                "Apply patch?"),
+        }
+        title, text = msgs.get(patch_name, (patch_name, f"Apply {patch_name}?"))
+        reply = QMessageBox.question(self, title, text,
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        value = None
+        if patch_name == "Lambda Cold-Start Delay" and self._lambda_spin is not None:
+            value = self._lambda_spin.value()
+        if self._patch_apply_callback:
+            self._patch_apply_callback(patch_name, "apply", value)
+
+    def _on_patch_revert(self, patch_name: str):
+        """Confirmation dialog, then revert a firmware patch."""
+        msgs = {
+            "MFTS Boost Cut Bypass": (
+                "Revert MFTS Bypass",
+                "This will restore the stock conditional jump at WH 0x1254.\n"
+                "ECU will resume cutting boost based on coolant sensor signal.\n\n"
+                "Revert to stock?"),
+            "Load Overflow Decap": (
+                "Revert Load Overflow Decap",
+                "This will restore the stock load clamp at 0xF0.\n"
+                "WARNING: At high boost (>1.5 bar), load can wrap to zero.\n\n"
+                "Revert to stock?"),
+            "Lambda Cold-Start Delay": (
+                "Revert Lambda Cold-Start Delay",
+                "This will restore the stock lambda warmup counter (0x9F = 159 cycles).\n\n"
+                "Revert to stock?"),
+        }
+        title, text = msgs.get(patch_name, (patch_name, f"Revert {patch_name}?"))
+        reply = QMessageBox.question(self, title, text,
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        if self._patch_apply_callback:
+            self._patch_apply_callback(patch_name, "revert", None)
 
     # ── Public update method ──────────────────────────────────────────────
 
@@ -3570,6 +3712,31 @@ class MainWindow(QMainWindow):
                 self._main_rom[wh_off] = raw
                 self._set_dirty()
         self._hardware_tab.set_scalar_changed_callback(_on_scalar_changed)
+
+        # Wire firmware patch apply/revert callback
+        def _on_patch_toggle(patch_name, action, value):
+            if self._main_rom is None:
+                return
+            if action == "apply":
+                if patch_name == "MFTS Boost Cut Bypass":
+                    apply_mfts_bypass(self._main_rom)
+                elif patch_name == "Load Overflow Decap":
+                    apply_load_decap(self._main_rom)
+                elif patch_name == "Lambda Cold-Start Delay":
+                    apply_lambda_delay(self._main_rom, value if value is not None else 0xFF)
+            elif action == "revert":
+                if patch_name == "MFTS Boost Cut Bypass":
+                    revert_mfts_bypass(self._main_rom)
+                elif patch_name == "Load Overflow Decap":
+                    revert_load_decap(self._main_rom)
+                elif patch_name == "Lambda Cold-Start Delay":
+                    revert_lambda_delay(self._main_rom)
+            self._set_dirty()
+            # Refresh hardware tab with updated ROM bytes
+            v_name = self._det.variant.name if self._det and self._det.variant else ""
+            self._hardware_tab.update(bytes(self._main_rom), v_name)
+        self._hardware_tab.set_patch_apply_callback(_on_patch_toggle)
+
         self._hardware_tab.set_dist_maps(
             self._det.variant.main_maps if self._det and self._det.variant else [])
         self._hardware_tab.set_injector_callback(self._on_injector_scaling)
