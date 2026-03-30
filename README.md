@@ -33,14 +33,14 @@ used in Audi's 5-cylinder 2.2 20v turbo and V8 engines.
 | ADU RS2 Avant | 8A0907551C | 551C | Cam+Hall+RS2 | ✓ Real calibration confirmed |
 | AAN/ABY/ADU (034EFI) | 4A0907551AA | 551AA_0202 | Any | PRJmod firmware, 136 maps |
 
-### 3B / RR — Single EPROM
+### 3B / RR — Dual EPROM (32KB fuel/ign + 8KB boost)
 
 | Engine | ECU Part Number | Software | Application |
 |--------|----------------|----------|-------------|
 | 3B | 447907404AA | 404 | Audi 200 20vT / UrQuattro / S2 early |
 | 3B/RR | 857907404B | 404 | RR S2 Coupe |
 
-### V8 32v — Single EPROM (map addresses unconfirmed, need ROMs)
+### V8 32v — Single EPROM, no boost chip (map addresses unconfirmed, need ROMs)
 
 | Engine | ECU Part Number | Software | Application |
 |--------|----------------|----------|-------------|

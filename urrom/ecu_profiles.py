@@ -16,7 +16,8 @@ Architecture overview
 
 V8 ECUs have a single 32KB EPROM (flat file, no mirroring needed).
 
-3B / RR ECUs use a flat 32KB file layout (not doubled).
+3B / RR ECUs are DUAL EPROM (32KB fuel/ign + 8KB boost). The fuel/ign
+file is a flat 32KB layout (not doubled like 551x 64KB files).
 Maps use Bosch embedded descriptor format: header [descriptor, count, axis...]
 precedes the map data. MapFinder and our tools store the HEADER address,
 data starts 36 bytes later (2 + 16 axis bytes + 2 + 16 axis bytes).
