@@ -144,12 +144,12 @@ The following items are known and tracked for future work:
 
 | Area | Issue | Status |
 |------|-------|--------|
-| **551AA_0202 maps** | DTC Classes 60×60 definition overlaps fuel/ign map addresses — may be a container or wrong dimensions | Needs investigation |
+| **Ign Maps 1-7** | Addresses 0x30AC–0x3931 contain 8051 firmware code, not ignition data (confirmed via binary analysis). Downgraded to UNVERIFIED. Real ign addresses: 0x125F/0x1594/0x10A8 for prjmod 0x0202; stock Bosch addresses TBD | UNVERIFIED |
 | **551B_D02 variant** | Currently using 551AA map addresses — needs its own verified address list | TODO |
 | **Boost chip save** | ~~Not saved~~ — Fixed. Boost chip now saved alongside main EPROM when edits detected | Fixed |
 | **V8 split-bank save** | Save writes both halves but architecture is fragile if bank sizes change | Works, needs hardening |
 | **KWP overlay colours** | `_text_colour` called with string instead of QColor — crashes on some Qt versions | Bug |
-| **Firmware patches** | MFTS bypass, load decap, lambda delay — apply/revert from Hardware tab (551AA_0202 only) | New |
+| **Firmware patches** | MFTS bypass, load decap, lambda delay — apply/revert from Hardware tab. Variant-gated: each patch only enabled on confirmed firmware bases (551AA_0202 for load decap/lambda, broader for MFTS) | New |
 | **LC/NLS offset** | Entry point corrected from 0x0610 to 0x062E (confirmed via binary analysis) | Fixed |
 
 ## Community Resources

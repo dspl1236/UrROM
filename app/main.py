@@ -2555,41 +2555,60 @@ class HardwareTab(QWidget):
                 self._lambda_spin = lam_spin
                 btn_row.addWidget(lam_spin)
 
+            # Variant compatibility gate
+            can_apply = getattr(result, 'applicable', True)
+
             if result.status in ("STOCK", "CUSTOM", "MINIMAL"):
-                # Show Apply button
                 apply_btn = QPushButton("Apply \u25b6")
                 apply_btn.setFixedHeight(24)
-                apply_btn.setStyleSheet(
-                    f"QPushButton{{background:#1a3a1a;color:{GREEN};"
-                    f"border:1px solid #2a5a2a;border-radius:3px;"
-                    f"padding:0 10px;font-size:10px;font-weight:bold;}}"
-                    f"QPushButton:hover{{background:#2a5a2a;border-color:{GREEN};}}")
+                if can_apply:
+                    apply_btn.setStyleSheet(
+                        f"QPushButton{{background:#1a3a1a;color:{GREEN};"
+                        f"border:1px solid #2a5a2a;border-radius:3px;"
+                        f"padding:0 10px;font-size:10px;font-weight:bold;}}"
+                        f"QPushButton:hover{{background:#2a5a2a;border-color:{GREEN};}}")
+                else:
+                    apply_btn.setEnabled(False)
+                    apply_btn.setToolTip("Patch offsets not confirmed for this firmware variant")
+                    apply_btn.setStyleSheet(
+                        f"QPushButton{{background:{BG3};color:{FG_DIM};"
+                        f"border:1px solid {BORDER};border-radius:3px;"
+                        f"padding:0 10px;font-size:10px;font-weight:bold;}}")
                 _name = result.name
                 apply_btn.clicked.connect(lambda _, n=_name: self._on_patch_apply(n))
                 btn_row.addWidget(apply_btn)
 
             if result.status in ("PATCHED", "EXTENDED"):
-                # Show Revert button
                 revert_btn = QPushButton("Revert \u25c0")
                 revert_btn.setFixedHeight(24)
-                revert_btn.setStyleSheet(
-                    f"QPushButton{{background:#3a2a10;color:{AMBER};"
-                    f"border:1px solid #6a4a20;border-radius:3px;"
-                    f"padding:0 10px;font-size:10px;font-weight:bold;}}"
-                    f"QPushButton:hover{{background:#5a3a10;border-color:{AMBER};}}")
+                if can_apply:
+                    revert_btn.setStyleSheet(
+                        f"QPushButton{{background:#3a2a10;color:{AMBER};"
+                        f"border:1px solid #6a4a20;border-radius:3px;"
+                        f"padding:0 10px;font-size:10px;font-weight:bold;}}"
+                        f"QPushButton:hover{{background:#5a3a10;border-color:{AMBER};}}")
+                else:
+                    revert_btn.setEnabled(False)
+                    revert_btn.setToolTip("Patch offsets not confirmed for this firmware variant")
+                    revert_btn.setStyleSheet(
+                        f"QPushButton{{background:{BG3};color:{FG_DIM};"
+                        f"border:1px solid {BORDER};border-radius:3px;"
+                        f"padding:0 10px;font-size:10px;font-weight:bold;}}")
                 _name = result.name
                 revert_btn.clicked.connect(lambda _, n=_name: self._on_patch_revert(n))
                 btn_row.addWidget(revert_btn)
 
             if result.status in ("UNKNOWN", "MODIFIED"):
-                # Show both buttons grayed, or just Apply
                 apply_btn = QPushButton("Apply \u25b6")
                 apply_btn.setFixedHeight(24)
+                apply_btn.setEnabled(can_apply)
                 apply_btn.setStyleSheet(
                     f"QPushButton{{background:{BG3};color:{FG_DIM};"
                     f"border:1px solid {BORDER};border-radius:3px;"
                     f"padding:0 10px;font-size:10px;font-weight:bold;}}"
                     f"QPushButton:hover{{background:{BG2};border-color:{FG_DIM};}}")
+                if not can_apply:
+                    apply_btn.setToolTip("Patch offsets not confirmed for this firmware variant")
                 _name = result.name
                 apply_btn.clicked.connect(lambda _, n=_name: self._on_patch_apply(n))
                 btn_row.addWidget(apply_btn)

@@ -120,6 +120,7 @@ class PatchResult:
     detail: str            # human-readable explanation
     confidence: str        # "HIGH" | "MEDIUM" | "LOW"
     wh_offset: Optional[int] = None   # where the patch was found
+    applicable: bool = False           # can this patch be applied via UI?
     recommended: bool = False          # is this patch recommended?
 
 
@@ -193,6 +194,14 @@ LC_NLS_SIGNATURE = (0x062E, bytes([0xC0, 0x82, 0xC0, 0x83]))
 # Stock map is filled with 0x02 (blank).  A tuned SD file has varied values.
 SD_VE_TABLE_OFFSET  = 0x2074
 SD_VE_TABLE_SIZE    = 256  # 16×16
+
+# ── Patch variant compatibility ──────────────────────────────────────────────
+# Each patch is only safe on firmware bases where the offsets have been
+# confirmed via disassembly. Applying a patch to the wrong firmware base
+# would modify arbitrary bytes with potentially catastrophic results.
+MFTS_COMPATIBLE_VARIANTS  = {"551AA_0202", "551AA", "551B", "551C"}
+LOAD_DECAP_COMPATIBLE     = {"551AA_0202"}  # Only confirmed on prjmod firmware
+LAMBDA_DELAY_COMPATIBLE   = {"551AA_0202"}  # Only confirmed on prjmod firmware
 
 # ── MFTS Boost Cut Bypass ────────────────────────────────────────────────────
 # Confirmed from 551AA disassembly:
@@ -482,6 +491,11 @@ def detect_patches(
             f"Unexpected bytes at WH 0x{MFTS_BYPASS_OFFSET:04X}: "
             f"{mfts_current.hex()}. Expected stock {MFTS_BYPASS_STOCK.hex()} "
             f"or patched {MFTS_BYPASS_PATCH.hex()}. May be a different firmware base.")
+    mfts_applicable = variant_name in MFTS_COMPATIBLE_VARIANTS
+    if not mfts_applicable and mfts_status != "UNKNOWN":
+        mfts_detail += (f" NOTE: Patch offsets only confirmed for "
+                        f"{', '.join(sorted(MFTS_COMPATIBLE_VARIANTS))}. "
+                        f"Current variant '{variant_name}' is not in the compatibility list.")
     results.append(PatchResult(
         name="MFTS Boost Cut Bypass",
         category="firmware",
@@ -490,6 +504,7 @@ def detect_patches(
         confidence="HIGH" if mfts_status != "UNKNOWN" else "LOW",
         wh_offset=MFTS_BYPASS_OFFSET,
         recommended=mfts_status == "STOCK",
+        applicable=mfts_applicable,
     ))
 
     # ── 6. Load Overflow Decap ───────────────────────────────────────────
@@ -510,6 +525,11 @@ def detect_patches(
         load_status, load_detail = "MODIFIED", (
             f"Load compare=0x{cmp_byte:02X}, clamp=0x{clamp_byte:02X}. "
             "Neither stock (0xF0) nor standard patch (0xFF). Custom modification.")
+    load_applicable = variant_name in LOAD_DECAP_COMPATIBLE
+    if not load_applicable:
+        load_detail += (f" NOTE: Patch offsets only confirmed for "
+                        f"{', '.join(sorted(LOAD_DECAP_COMPATIBLE))}. "
+                        f"Current variant '{variant_name}' is not in the compatibility list.")
     results.append(PatchResult(
         name="Load Overflow Decap",
         category="firmware",
@@ -518,6 +538,7 @@ def detect_patches(
         confidence="HIGH" if load_status != "MODIFIED" else "MEDIUM",
         wh_offset=LOAD_DECAP_PATCHES[0][0],
         recommended=load_status == "STOCK",
+        applicable=load_applicable,
     ))
 
     # ── 7. Lambda Cold-Start Delay ───────────────────────────────────────
@@ -543,6 +564,11 @@ def detect_patches(
             f"Lambda warmup counter = 0x{lambda_val:02X} ({lambda_val} cycles). "
             f"Custom value (stock=0x{LAMBDA_DELAY_STOCK:02X}, "
             f"extended=0x{LAMBDA_DELAY_EXTENDED:02X}).")
+    lam_applicable = variant_name in LAMBDA_DELAY_COMPATIBLE
+    if not lam_applicable:
+        lam_detail += (f" NOTE: Patch offsets only confirmed for "
+                       f"{', '.join(sorted(LAMBDA_DELAY_COMPATIBLE))}. "
+                       f"Current variant '{variant_name}' is not in the compatibility list.")
     results.append(PatchResult(
         name="Lambda Cold-Start Delay",
         category="firmware",
@@ -551,6 +577,7 @@ def detect_patches(
         confidence="HIGH",
         wh_offset=LAMBDA_DELAY_OFFSET,
         recommended=False,
+        applicable=lam_applicable,
     ))
 
     # ── 8. Boost chip socket type ────────────────────────────────────────

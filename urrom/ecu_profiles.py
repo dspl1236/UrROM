@@ -179,58 +179,58 @@ _MAPS_551C_MAIN = [
            confidence="CONFIRMED",
            notes="Verified: values 128-145 at light load, RS2 stock"),
 
-    # Seven 16×16 ignition maps — part throttle variants
-    # Multiple copies selected by throttle position / conditions
+    # ── Ignition maps — UNVERIFIED (see _MAPS_551AA_MAIN comment block) ──────
+    # Same addresses, same problem: 0x30AC–0x3931 contain 8051 firmware code
+    # in all tested ROM files (AAN 551AA, ABY 551AA, ADU 551C).
     MapDef("Ign Map 1 (PT primary)",
-           "Primary part-throttle ignition map. Decode: raw×0.6491−8.2186=°BTDC",
+           "UNVERIFIED — address 0x30AC may contain firmware code, not ign data.",
            main_addr=0x30AC, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="Verified: 22-24°BTDC at PT. Most-used ign map."),
+           confidence="UNVERIFIED",
+           notes="2026-03-30: Binary analysis shows 8051 opcodes. Original claim incorrect."),
 
     MapDef("Ign Map 2",
-           "Part-throttle ignition map variant 2.",
+           "UNVERIFIED — address 0x3263 contains firmware code in tested ROMs.",
            main_addr=0x3263, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="Same axis as Map 1. Slight variation in advance values."),
+           confidence="UNVERIFIED"),
 
     MapDef("Ign Map 3",
-           "Part-throttle ignition map variant 3.",
+           "UNVERIFIED — address 0x3387 contains firmware code in tested ROMs.",
            main_addr=0x3387, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED"),
+           confidence="UNVERIFIED"),
 
     MapDef("Ign Map 4",
-           "Part-throttle ignition map variant 4.",
+           "UNVERIFIED — address 0x3598 contains firmware code (load calc routine).",
            main_addr=0x3598, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED"),
+           confidence="UNVERIFIED"),
 
     MapDef("Ign Map 5",
-           "Part-throttle ignition map variant 5.",
+           "UNVERIFIED — address 0x36BC contains firmware code in tested ROMs.",
            main_addr=0x36BC, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED"),
+           confidence="UNVERIFIED"),
 
     MapDef("Ign Map 6",
-           "Part-throttle ignition map variant 6.",
+           "UNVERIFIED — address 0x380D contains firmware code in tested ROMs.",
            main_addr=0x380D, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED"),
+           confidence="UNVERIFIED"),
 
     MapDef("Ign Map 7",
-           "Part-throttle ignition map variant 7.",
+           "UNVERIFIED — address 0x3931 contains firmware code in tested ROMs.",
            main_addr=0x3931, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED"),
+           confidence="UNVERIFIED"),
 
     # Idle ign maps — CONFIRMED 2026-03-19
     # Binary RE of ABY 551B and ADU 551C:
@@ -291,59 +291,75 @@ _MAPS_551AA_MAIN = [
            confidence="CONFIRMED",
            notes="Same address as 551C. Verified on ABY bin."),
 
+    # ── Ignition maps — UNVERIFIED ──────────────────────────────────────────
+    # 2026-03-30: Binary analysis of AAN 551AA, ABY 551AA, and ADU 551C ROMs
+    # shows these addresses (0x30AC–0x3931) contain 8051 firmware code, NOT
+    # ignition calibration data. Opcode analysis: 15-30% 8051 opcodes per
+    # block, <50% sensible ignition values. The "Verified on ABY" claims were
+    # incorrect — likely sourced from an XDF with a base address offset error.
+    #
+    # For prjmod 0x0202 firmware, the REAL ign maps are at 0x125F, 0x1594,
+    # 0x10A8 (see _MAPS_0202_MAIN above, CONFIRMED from PRJ XDF).
+    #
+    # For stock Bosch firmware (551B/551C), the ign map addresses need
+    # verification via direct chip read + Ghidra disassembly of MOVC lookup.
+    #
+    # DANGER: Editing these "maps" would overwrite firmware code and could
+    # brick the ECU. Downgraded to UNVERIFIED until addresses are confirmed.
     MapDef("Ign Map 1 (PT primary)",
-           "Primary part-throttle ignition map.",
+           "UNVERIFIED — address 0x30AC may contain firmware code, not ign data. "
+           "Do NOT edit until verified by direct chip read.",
            main_addr=0x30AC, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="Verified on ABY: 20-22°BTDC at PT."),
+           confidence="UNVERIFIED",
+           notes="2026-03-30: Binary analysis shows 8051 opcodes at this address "
+                 "in AAN/ABY/ADU ROMs. Original 'Verified on ABY' claim incorrect."),
 
     MapDef("Ign Map 2",
-           "Part-throttle ignition map variant 2.",
+           "UNVERIFIED — address 0x3263 contains firmware code in tested ROMs.",
            main_addr=0x3263, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED"),
+           confidence="UNVERIFIED"),
 
     MapDef("Ign Map 3",
-           "Part-throttle ignition map variant 3.",
+           "UNVERIFIED — address 0x3387 contains firmware code in tested ROMs.",
            main_addr=0x3387, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED"),
+           confidence="UNVERIFIED"),
 
     MapDef("Ign Map 4",
-           "Part-throttle ignition map variant 4.",
+           "UNVERIFIED — address 0x3598 contains firmware code in tested ROMs. "
+           "Overlaps with load accumulation routine (0x3662–0x3689).",
            main_addr=0x3598, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="Verified on ABY: 20-22°BTDC at PT."),
+           confidence="UNVERIFIED",
+           notes="Load decap patch at 0x3679/0x367F falls within this range — "
+                 "those bytes are confirmed 8051 code, not calibration data."),
 
     MapDef("Ign Map 5",
-           "Part-throttle ignition map variant 5.",
+           "UNVERIFIED — address 0x36BC contains firmware code in tested ROMs.",
            main_addr=0x36BC, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="Verified on ABY: 20-21°BTDC at PT."),
+           confidence="UNVERIFIED"),
 
     MapDef("Ign Map 6",
-           "Part-throttle ignition map variant 6.",
+           "UNVERIFIED — address 0x380D contains firmware code in tested ROMs.",
            main_addr=0x380D, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="Verified on ABY: 20-22°BTDC at PT."),
+           confidence="UNVERIFIED"),
 
     MapDef("Ign Map 7",
-           "Part-throttle ignition map variant 7.",
+           "UNVERIFIED — address 0x3931 contains firmware code in tested ROMs.",
            main_addr=0x3931, rows=16, cols=16,
            map_type="ign", unit="°BTDC",
            decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="Verified on ABY: 20-21°BTDC at PT."),
+           confidence="UNVERIFIED"),
 
     # Idle ign maps — CONFIRMED 2026-03-19 on ABY 551B direct chip read
     MapDef("Idle Ignition (closed throttle)",
