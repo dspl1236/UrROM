@@ -2018,6 +2018,35 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                         "First confirmed ABH chip with real calibration data. "
                         "Reset → 0x81E3, different firmware family from 5-cyl."),
 
+    # ── Audi bin collection scan (2026-04) ───────────────────────────────────
+
+    # 5-cyl 20vT — new CRCs from chiptuning bin archive
+    0xF77B35C7: ("551A", "S4 C4 2.2T 260HP — 4A0907551A (0261200465). "
+                          "Early AAN, D02PMC distributor trigger. LJMP=0x117A. "
+                          "Lower-half CRC. Real calibration."),
+    0x641493DF: ("551AA", "S4 C4 2.2T 260HP — 4A0907551AA (0261200465) cal 356711. "
+                           "Lower-half CRC. LJMP=0x1218. Real calibration."),
+    0x10E1F5F2: ("551AA", "S4 C4 2.2T AAN — 4A0907551AA/4A0907551B shared cal. "
+                           "(0261200465 / 0261203005) cal 357248/357249. "
+                           "LJMP=0x1218. 551B has same lower-half CRC as 551AA. "
+                           "Real calibration."),
+    0x2E6459F3: ("551A", "RS2 2.2T — 895907551A (0261203145). "
+                          "LJMP=0x1329. Lower-half CRC. Real calibration. "
+                          "Different firmware from 551B/C RS2 variants."),
+
+    # V8 4.2L — new CRCs
+    0x36E9989E: ("557", "Audi 100 4.2 V8 280HP — 4A0907557A (0261203143). "
+                         "LJMP=0x1497. Lower-half CRC."),
+    0x558B1990: ("557", "V8 4.2L — 4A0907557A (0261203143). "
+                         "Misfiled as 'S2 ABH 220HP' but ROM ID is 4A0907557A = V8. "
+                         "LJMP=0x1497. Different cal from 0x36E9989E (same PN)."),
+    0x673D81A4: ("557", "S6 4.2 V8 290HP — 4A0907557B/4A0907557C shared cal. "
+                         "(0261203645 / 0261203599). LJMP=0x14E2. "
+                         "557B and 557C have identical lower-half calibration."),
+    0xAF026007: ("557", "A8 4.2 V8 — 4D0907557B (0261203300). "
+                         "128KB ROM, FF-padded start. May be M3.8.x platform. "
+                         "Full-file CRC (not half). Maps TBD."),
+
 }
 
 # ── Boost chip pairing table ─────────────────────────────────────────────────
