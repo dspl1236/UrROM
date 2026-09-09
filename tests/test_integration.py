@@ -1344,3 +1344,62 @@ class TestPublishedImages:
             assert n == copies and folded == o, img
             if len(o) == 32768:
                 assert verify_checksum_404(o), img
+
+
+# -- Heat-map / 3D map views (2026-09-09) ---------------------------------------
+
+class TestMapPlotView:
+    @pytest.fixture(autouse=True)
+    def _qt(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        pytest.importorskip("matplotlib")
+        from PyQt5.QtWidgets import QApplication
+        self.app = QApplication.instance() or QApplication([])
+
+    def test_renders_3b_ignition_both_modes(self):
+        from urrom.ui.map_view import MapPlotView, plotting_available
+        from urrom.ecu_profiles import VARIANT_404, read_map, get_axes
+        assert plotting_available()
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x71F8)
+        rows, cols = get_axes(rom, m, VARIANT_404)
+        vals = [[m.decode(v) for v in r] for r in read_map(rom, m)]
+        v = MapPlotView(); v.resize(640, 480)
+        for mode in ("heat", "3d"):
+            v.set_mode(mode)
+            v.set_map(rows, cols, vals, unit="°BTDC", title=m.name, changed=None)
+            v.set_cursor(3, 5)
+            v._canvas.draw()          # force a real render, not just draw_idle
+        assert v.mode() == "3d"
+
+    def test_table_snapshot_and_edit_signal(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        from urrom.ecu_profiles import VARIANT_404, get_axes
+        rom = bytearray(load_rom("3b_fuel-ign_404aa.bin"))
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x71F8)
+        rows, cols = get_axes(bytes(rom), m, VARIANT_404)
+        t = mod.MapTable(); t.load(rom, m, rows, cols)
+        snap = t.plot_snapshot()
+        assert snap["rows"] == list(rows) and len(snap["values"]) == m.rows
+        assert snap["unit"] == m.unit and not any(any(r) for r in snap["changed"])
+        fired = []
+        t.dataEdited.connect(lambda: fired.append(1))
+        item = t.item(m.rows - 1, 0)         # display row 0 = logical row 0 inverted
+        item.setText("20.0")
+        assert fired and t.plot_snapshot()["changed"][0][0]
+
+    def test_tabs_switch_views(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main2", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        from urrom.ecu_profiles import VARIANT_404
+        tab = mod.MainChipTab(); tab.load(bytearray(load_rom("3b_fuel-ign_404aa.bin")), VARIANT_404)
+        tab._set_view("3d", persist=False)
+        assert tab._plot.isVisibleTo(tab) and not tab._table.isVisibleTo(tab) and tab._plot.mode() == "3d"
+        tab._set_view("table", persist=False)
+        assert tab._table.isVisibleTo(tab) and not tab._plot.isVisibleTo(tab)
+        bt = mod.BoostTab(); bt.load(bytearray(load_rom("3b_boost_404aa.bin")), VARIANT_404)
+        bt._set_view("heat", persist=False)
+        assert bt._plot.isVisibleTo(bt) and bt._plot.mode() == "heat"

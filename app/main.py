@@ -597,6 +597,23 @@ class MapTable(QTableWidget):
     Rows = RPM axis (index 0 = lowest RPM at bottom, displayed inverted).
     Cols = Load axis (index 0 = lowest load at left).
     """
+    from PyQt5.QtCore import pyqtSignal as _sig
+    dataEdited = _sig()          # a cell value was edited by the user
+
+    def plot_snapshot(self) -> dict | None:
+        """Rows/cols/values/changed-mask as the heat-map and 3D views need them."""
+        if self._map_def is None or not self._current_raw:
+            return None
+        decode = getattr(self, "_display_decode", self._map_def.decode)
+        raw = self._current_raw
+        vals = [[(decode(v) if decode else v) for v in row] for row in raw]
+        changed = [[raw[r][c] != self._original_raw[r][c] for c in range(len(raw[0]))]
+                   for r in range(len(raw))]
+        return {"rows": list(self._row_axis), "cols": list(self._col_axis), "values": vals,
+                "changed": changed,
+                "unit": (self._map_def.unit or "raw") if decode else "raw",
+                "title": self._map_def.name,
+                "cursor": (getattr(self, "_kwp_row", None), getattr(self, "_kwp_col", None))}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -768,6 +785,7 @@ class MapTable(QTableWidget):
         item.setForeground(QBrush(_text_colour(bg)))
         item.setData(Qt.UserRole, "changed" if changed else None)
         self._loading = False
+        self.dataEdited.emit()
 
     def commit_to_rom(self, rom: bytearray) -> bytearray:
         """Write current edits back into a ROM bytearray."""
@@ -1417,6 +1435,9 @@ class MainChipTab(QWidget):
 
         toolbar.addStretch()
 
+        self._view_btns = _make_view_switch(self, toolbar)
+        toolbar.addSpacing(8)
+
         self._grid_btn = QPushButton("⊞ Grid")
         self._grid_btn.setCheckable(True)
         self._grid_btn.setChecked(False)
@@ -1482,9 +1503,17 @@ class MainChipTab(QWidget):
         self._sd_bar.setVisible(False)
         layout.addWidget(self._sd_bar)
 
-        # Map table
+        # Map table + the heat-map / 3D views of the same data
         self._table = MapTable()
         layout.addWidget(self._table)
+        from urrom.ui.map_view import MapPlotView
+        self._plot = MapPlotView()
+        self._plot.setVisible(False)
+        self._plot.setMinimumHeight(420)
+        layout.addWidget(self._plot, 1)
+        self._view_mode = "table"
+        self._table.dataEdited.connect(self._refresh_plot)
+        QTimer.singleShot(0, self._restore_view)
 
         # Statistics strip — updates on selection change
         stats_row = QHBoxLayout()
@@ -1655,6 +1684,7 @@ class MainChipTab(QWidget):
                 f"font-size:10px;padding:2px 6px;border-radius:3px;"
                 f"color:{conf_colour};background:{BG3};border:1px solid {conf_colour};")
             self._revert_btn.setEnabled(False)
+            self._refresh_plot()
             self._update_sd_bar(m)
             if hasattr(self, "_title_fn"):
                 self._title_fn(m.name)
@@ -1867,6 +1897,7 @@ class MainChipTab(QWidget):
                 # Show raw bytes
                 self._table._display_decode = None
             self._table._redraw()
+        self._refresh_plot()
 
     def _on_edit_axis(self):
         """Open axis editor to view/modify the RPM and load axis values."""
@@ -2012,9 +2043,48 @@ class MainChipTab(QWidget):
 
     def detach_kwp(self):
         self._table.detach_kwp()
+        self._plot.set_cursor(None)
 
     def update_overlay(self, lv):
         self._table.update_overlay(lv)
+        if self._view_mode != "table":
+            self._plot.set_cursor(getattr(self._table, "_kwp_row", None),
+                                  getattr(self._table, "_kwp_col", None))
+
+    # ── Table / Heat / 3D views ───────────────────────────────────────────
+
+    def _restore_view(self):
+        from PyQt5.QtCore import QSettings
+        mode = QSettings("UrROM", "UrROM").value(_view_setting_key(self), "table", type=str)
+        self._set_view(mode if mode in ("table", "heat", "3d") else "table", persist=False)
+
+    def _set_view(self, mode: str, persist: bool = True):
+        self._view_mode = mode
+        for m, b in self._view_btns.items():
+            b.setChecked(m == mode)
+        self._table.setVisible(mode == "table")
+        self._plot.setVisible(mode != "table")
+        if mode != "table":
+            self._plot.set_mode(mode)
+            self._refresh_plot()
+        if persist:
+            from PyQt5.QtCore import QSettings
+            QSettings("UrROM", "UrROM").setValue(_view_setting_key(self), mode)
+
+    def _refresh_plot(self):
+        if getattr(self, "_view_mode", "table") == "table":
+            return
+        snap = self._table.plot_snapshot()
+        if snap is None:
+            self._plot.clear(); return
+        m = self._table._map_def
+        row_label = "rpm" if m.map_type in ("fuel", "ign") else "row"
+        col_label = "load" if m.map_type in ("fuel", "ign") else "col"
+        self._plot.set_map(snap["rows"], snap["cols"], snap["values"], unit=snap["unit"],
+                           title=snap["title"], row_label=row_label, col_label=col_label,
+                           changed=snap["changed"])
+        r, c = snap["cursor"]
+        self._plot.set_cursor(r, c)
 
 
 # ── Boost chip tab ────────────────────────────────────────────────────────────
@@ -2060,6 +2130,8 @@ class BoostTab(QWidget):
         self._unit_combo.addItem("bar gauge", "bar")
         self._unit_combo.currentIndexChanged.connect(self._on_unit_changed)
         tb.addWidget(self._unit_combo)
+        tb.addSpacing(8)
+        self._view_btns = _make_view_switch(self, tb)
         layout.addLayout(tb)
 
         self._peak_lbl = QLabel("")
@@ -2083,6 +2155,14 @@ class BoostTab(QWidget):
         self._table = MapTable()
         self._table.setVisible(False)
         layout.addWidget(self._table)
+        from urrom.ui.map_view import MapPlotView
+        self._plot = MapPlotView()
+        self._plot.setVisible(False)
+        self._plot.setMinimumHeight(420)
+        layout.addWidget(self._plot, 1)
+        self._view_mode = "table"
+        self._table.dataEdited.connect(self._refresh_plot)
+        QTimer.singleShot(0, self._restore_view)
 
         layout.addStretch()
         self._boost_rom = None
@@ -2268,8 +2348,10 @@ class BoostTab(QWidget):
         from urrom.ecu_profiles import get_axes
         rpm_axis, load_axis = get_axes(bytes(self._boost_rom), m, self._variant)
         self._table.load(self._boost_rom, m, rpm_axis, load_axis)
-        self._table.setVisible(True)
+        self._table.setVisible(self._view_mode == "table")
+        self._plot.setVisible(self._view_mode != "table")
         self._note.setVisible(False)
+        self._refresh_plot()
         from urrom import boost_sensor
         unit = boost_sensor.unit(self._family) if m.map_type == "boost" else m.unit
         is_pressure = m.map_type == "boost"
@@ -2288,6 +2370,42 @@ class BoostTab(QWidget):
     def use_external_selector(self, external: bool = True):
         self._map_combo.setVisible(not external)
         self._map_title.setVisible(external)
+
+    # ── Table / Heat / 3D views ───────────────────────────────────────────
+
+    def _restore_view(self):
+        from PyQt5.QtCore import QSettings
+        mode = QSettings("UrROM", "UrROM").value(_view_setting_key(self), "table", type=str)
+        self._set_view(mode if mode in ("table", "heat", "3d") else "table", persist=False)
+
+    def _set_view(self, mode: str, persist: bool = True):
+        self._view_mode = mode
+        for m, b in self._view_btns.items():
+            b.setChecked(m == mode)
+        loaded = self._table._map_def is not None
+        self._table.setVisible(mode == "table" and loaded)
+        self._plot.setVisible(mode != "table" and loaded)
+        if mode != "table":
+            self._plot.set_mode(mode)
+            self._refresh_plot()
+        if persist:
+            from PyQt5.QtCore import QSettings
+            QSettings("UrROM", "UrROM").setValue(_view_setting_key(self), mode)
+
+    def _refresh_plot(self):
+        if getattr(self, "_view_mode", "table") == "table":
+            return
+        snap = self._table.plot_snapshot()
+        if snap is None:
+            self._plot.clear(); return
+        from urrom import boost_sensor
+        m = self._table._map_def
+        unit = snap["unit"]
+        if m.map_type == "boost" and unit != "raw":
+            unit = boost_sensor.unit(self._family)
+        self._plot.set_map(snap["rows"], snap["cols"], snap["values"], unit=unit,
+                           title=snap["title"], row_label="TPS (raw)", col_label="rpm",
+                           changed=snap["changed"])
 
     def current_index(self) -> int:
         m = self._table._map_def
@@ -2326,6 +2444,34 @@ class BoostTab(QWidget):
         self._status.setText("No boost chip loaded")
         self._note.setVisible(True)
         self._table.setVisible(False)
+
+
+# ── Map view switch (Table / Heat / 3D) shared by the editor tabs ─────────────
+
+def _make_view_switch(owner, toolbar) -> dict:
+    """Three checkable buttons; owner._set_view(mode) is called on click."""
+    btns = {}
+    for mode, label, tip in (("table", "Table", "Editable cell grid"),
+                             ("heat", "Heat", "2D heat map of the decoded values"),
+                             ("3d", "3D", "Rotatable surface (drag to orbit)")):
+        b = QPushButton(label)
+        b.setCheckable(True)
+        b.setFixedWidth(52)
+        b.setToolTip(tip)
+        b.setStyleSheet(
+            f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+            f"border-radius:3px;padding:0 6px;font-size:10px;}}"
+            f"QPushButton:checked{{background:{ACCENT}30;border-color:{ACCENT};}}"
+            f"QPushButton:hover{{border-color:{ACCENT};}}")
+        b.clicked.connect(lambda _c, m=mode: owner._set_view(m))
+        toolbar.addWidget(b)
+        btns[mode] = b
+    btns["table"].setChecked(True)
+    return btns
+
+
+def _view_setting_key(owner) -> str:
+    return f"view/{type(owner).__name__}"
 
 
 # ── Hardware / Patch tab ──────────────────────────────────────────────────────

@@ -101,6 +101,9 @@ python -m urrom.cli coding rom.bin --volts 2.5   # coding-plug bands → ignitio
 # Boost editor: Sensor selector (200 / MPX4250 / 300 / MPXH6400A / custom) + kPa abs or bar gauge — see docs/3B_boost_chip_RE.md
 ```
 
+### Map views
+Every map in the editor and boost tabs has **Table / Heat / 3D** buttons: the table stays the place to edit; Heat is a 2D heat map of the decoded values with changed cells outlined; 3D is a rotatable surface (drag to orbit) with the contour projected on the floor. Both follow edits, the Decoded/Raw toggle, the boost-sensor scale and the live KWPBridge cursor. Rendered with matplotlib, no OpenGL needed. The choice persists per tab.
+
 ### Tools Menu
 - **Injector scaling wizard** — rescale all fuel maps for new cc size + FPR
 - **Fuel pressure calculator** — effective flow + duty cycle estimate
