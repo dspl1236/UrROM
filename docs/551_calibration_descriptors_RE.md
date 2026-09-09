@@ -155,6 +155,43 @@ S2 differs in the main maps 2 / 5 / 6 / 7 (~90 cells each) and massively in
 the map-3 correction (251 cells). Which of maps 2 / 5 / 6 / 7 the car
 actually runs depends on the coding plug and on the boost-board flag.
 
+## 3d. What the main ECU does with the boost board's knock line (traced 2026-09-09)
+
+The boost MCU's **P5.5 = knock recognised** reaches the main ECU as bit 1 of
+the second latch byte: `21h = XRAM 0xA041 XOR 0x03` (`0x1386–0x138B`,
+`0x4A3B`). Bit 0 of that byte (`21h.0`) is a configuration line — it only
+selects between two identical diagnostic ID lists (`0x3408`: 0x6407 vs
+0x64DE), a coding-variant offset (`0x3657`) and a per-map scalar in
+IGN_CALC (`0x16B1`) — so **`21h.1` is the knock event** (assuming, as for
+the nibble, that the latch hardware inverts the bits the firmware XORs).
+
+The handler is the routine entered at `0x27B4` (via `LCALL 0x361F` →
+DPTR = parameter block **0x63F5**, then `LJMP 0x27B4` from `0x2169`). It
+keeps eight state bytes in XRAM (`0x0D3F` loads them into RAM 2Eh–35h,
+`0x0D35` stores them back at `0x287F`):
+
+| RAM | Role |
+|---|---|
+| 2Fh | timeout counter, reloaded from block[0] |
+| 30h | RPM at last event; `30h − 3Ah` vs block[1] → `2Eh.0` = "revs rising" |
+| 31h | hold counter, loaded from block[2] when `21h.1` fires |
+| 32h | ramp accumulator, += 255 / block[3 or 4] per event |
+| 33h / 62h | current (retarded) ignition value, decays toward `54h` (base timing) |
+| 34h / 35h | the two retard target values; `62h` picks one by `2Eh.0` |
+
+Sequence on `21h.1`: capture RPM (XRAM 5Eh), load the hold counter, pick the
+retard value, set `2Ah.2`; while the counter runs the retarded value is
+held; then `32h` ramps and `33h` steps back toward `54h`. `2Eh = 33h`
+(`0x2A1A`) and `R0 = 32h / R1 = 31h` (`0x2E56`) hand the result to the
+ignition output path. Parameter block `0x63F5` = `06 02 FF 05 1E 07 05 3D`
+on 3B, RR and S2 alike: timeout 6, RPM-delta 2 (×40 rpm), hold 255 events,
+ramp divisors 5 (revs rising) / 30, RPM offset 7.
+
+So on the 3B the knock strategy is: boost board decides (adaptive
+reference, ratio thresholds at boost `0x1817`), main board applies a global
+retard-hold-ramp with the block at `0x63F5`. No per-cylinder retard and no
+knock map on the fuel chip.
+
 ## 4. Open items
 
 - Which of the seven ignition maps is active under which condition

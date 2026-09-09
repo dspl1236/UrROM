@@ -880,3 +880,14 @@ class TestChipImages:
             # 0x02FC: MOV 34h,6Ch (knock integrator sample) ; 0x0086: MOV 69h,ADDAT
             assert rom[0x02FC:0x02FF] == bytes.fromhex("856c34"), name
             assert rom[0x0086:0x0089] == bytes.fromhex("85d969"), name
+
+    def test_main_ecu_knock_handler_bytes(self):
+        """Pin the main-ECU knock path: 21h <- XRAM A041 ^ 03, JB 21h.1 in the handler,
+        LCALL 361F/LJMP 27B4 entry, and the retard-hold-ramp parameter block at 0x63F5."""
+        for name in ("3b_fuel-ign_404aa.bin", "rr_fuel-ign_404b.bin", "s2_fuel-ign_404.bin"):
+            rom = bytes(load_rom(name))
+            assert rom[0x1386:0x138D] == bytes.fromhex("7841e26403f521"), name   # MOV R0,#41;MOVX;XRL #03;MOV 21h,A
+            assert rom[0x27F6:0x27F9] == bytes.fromhex("200921"), name           # JB 21h.1,281A
+            assert rom[0x2166:0x216C] == bytes.fromhex("12361f0227b4"), name     # LCALL 361F ; LJMP 27B4
+            assert rom[0x361F:0x3622] == bytes.fromhex("9063f5"), name           # MOV DPTR,#63F5
+            assert rom[0x63F5:0x63FD] == bytes.fromhex("0602ff051e07053d"), name
