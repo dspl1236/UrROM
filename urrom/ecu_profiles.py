@@ -63,8 +63,12 @@ def load_decode(raw: int) -> float:
     return raw * 0.05
 
 def temp_decode(raw: int) -> float:
-    """Coolant / IAT descriptor 0x38/0x37: raw × 0.75 − 48 = °C."""
-    return raw * 0.75 - 48.0
+    """
+    Coolant / IAT RAM 38h/37h -> degC.  The ECU's own KW1281 reporting (ABY E7
+    group 1 cell 2: formula 5, a=7, b=raw+30) is 0.7*(raw-70); the older
+    0.75*raw-48 guess put a warm engine 10 degC too high (2026-09-09).
+    """
+    return 0.7 * (raw - 70)
 
 def ign_decode(raw: int) -> float:
     """

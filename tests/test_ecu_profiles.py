@@ -573,8 +573,9 @@ class TestDecodeFunctions:
         assert 5.0 < val < 8.0
 
     def test_temp_decode_cold(self):
-        # 0 raw → -48°C (cold start temperature)
-        assert temp_decode(0) == pytest.approx(-48.0)
+        # ECU formula 0.7*(raw-70): 0 raw -> -49 degC, 184 raw -> 79.8 (tester warm idle)
+        assert temp_decode(0) == pytest.approx(-49.0)
+        assert temp_decode(184) == pytest.approx(79.8)
 
     def test_temp_decode_warm(self):
         # ~90°C should be reachable

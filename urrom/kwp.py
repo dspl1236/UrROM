@@ -84,6 +84,7 @@ class LiveValues:
         self.battery:  Optional[float] = None   # V
         self.knock:    Optional[list]  = None   # [V × 5 cylinders] from group 5
         self.lambda_ctrl: Optional[float] = None  # 3B block cell 8 (128 = centre)
+        self.ign_raw53: Optional[float] = None    # 3B block cell 10, ECU units
         self.family:   str = "551"
         self.ecu_pn:   str = ""
 
@@ -150,12 +151,18 @@ class LiveValues:
                 self.ect     = _v(g100, 3)
                 self.rpm     = _v(g100, 4)
                 self.load    = _v(g100, 5)
-                self.timing  = _v(g100, 6)
+                # cells 6-8 are raw 53h / 54h / XRAM 5Fh; cell 9 (KWPBridge-derived)
+                # is the ECU's own formula 0.75*|54h + max(0,127-5Fh) - 127|.
+                self.timing = _v(g100, 9)
+                if self.timing is None:
+                    b54, x5f = _v(g100, 7), _v(g100, 8)
+                    if b54 is not None and x5f is not None:
+                        self.timing = round(0.75 * abs(min(255, b54 + max(0, 127 - x5f)) - 127), 2)
             if g0:
                 if self.ect is None:    self.ect    = _v(g0, 1)
                 if self.load is None:   self.load   = _v(g0, 2)
                 if self.rpm is None:    self.rpm    = _v(g0, 3)
-                if self.timing is None: self.timing = _v(g0, 10)
+                self.ign_raw53 = _v(g0, 10)      # ECU units (idle 35-37); not degrees
                 lc = _v(g0, 8)
                 self.lambda_ctrl = lc                       # 128 = no correction
                 # the 3B has no wideband/lambda-factor cell; approximate the

@@ -1203,12 +1203,14 @@ class TestKWPLiveValues3B:
                                          c(4, 0), c(5, 100), c(6, 128), c(7, 0), c(8, 131.0),
                                          c(9, 126), c(10, 20.0, "° BTDC")]},
                          "100": {"cells": [c(1, 13.9, "V"), c(2, 36.0, "°C"), c(3, 92.0, "°C"),
-                                           c(4, 5800.0, "RPM"), c(5, 185.0), c(6, 17.0, "° BTDC"),
-                                           c(7, 18.5, "° BTDC")]}}}
+                                           c(4, 5800.0, "RPM"), c(5, 185.0), c(6, 32.0), c(7, 57.0),
+                                           c(8, 80.0)]}}}
         lv = LiveValues(st)
         assert lv.family == "404" and lv.valid
         assert lv.rpm == 5800 and lv.load == 185 and lv.ect == 92 and lv.iat == 36
-        assert lv.timing == 17 and lv.battery == 13.9
+        # no derived cell: computed 0.75*|57+47-127| = 17.25
+        assert abs(lv.timing - 17.25) < 0.01 and lv.battery == 13.9
+        assert lv.ign_raw53 == 20
         assert lv.lambda_ctrl == 131 and abs(lv.lambda_ - 1.0117) < 0.001
 
     def test_block_only_fallback(self):
@@ -1219,7 +1221,8 @@ class TestKWPLiveValues3B:
                                          c(4, 0), c(5, 0), c(6, 0), c(7, 0), c(8, 128.0),
                                          c(9, 0), c(10, 10.0, "° BTDC")]}}}
         lv = LiveValues(st)
-        assert lv.family == "404" and lv.rpm == 800 and lv.load == 24 and lv.timing == 10
+        assert lv.family == "404" and lv.rpm == 800 and lv.load == 24
+        assert lv.timing is None and lv.ign_raw53 == 10     # block alone cannot give degrees
         assert lv.lambda_ == 1.0
 
     def test_551_untouched(self):
@@ -1229,3 +1232,9 @@ class TestKWPLiveValues3B:
               "groups": {"1": {"cells": [c(1, 3000.0, "RPM"), c(2, 92.0, "°C"), c(3, 1.0, "λ"), c(4, 24.0)]}}}
         lv = LiveValues(st)
         assert lv.family == "551" and lv.rpm == 3000
+
+
+class TestTempDecode:
+    def test_ecu_formula(self):
+        from urrom.ecu_profiles import temp_decode
+        assert abs(temp_decode(184) - 79.8) < 0.01 and abs(temp_decode(215) - 101.5) < 0.01
