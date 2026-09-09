@@ -91,15 +91,25 @@ class LiveValues:
         self.ecu_pn = state.get("ecu_id", {}).get("part_number", "")
         groups = state.get("groups", {})
 
+        # KWPBridge cells are dicts whose "value" is ALREADY DECODED by the
+        # bridge's KWP1281 formula table (RPM in rpm, ECT in °C, λ as a ratio,
+        # timing in °BTDC; load stays the raw 1..255 byte because its formula
+        # is "no units").  Only the legacy tools/mock_engine.py list-of-ints
+        # format carries raw bytes, so the raw decode formulas apply to that
+        # format alone.  (2026-09-09: previously both were decoded, which made
+        # the bridge's 3000 rpm read as 120000.)
+        self._raw_format = False
+
         def _cells(grp_key) -> dict:
             g = groups.get(str(grp_key), groups.get(grp_key, {}))
             raw = g.get("cells", []) if isinstance(g, dict) else g
             if not raw:
                 return {}
-            # KWPBridge format: [{index:N, value:X, unit:U}, ...]
+            # KWPBridge format: [{index:N, value:X, unit:U}, ...]  (decoded)
             if isinstance(raw[0], dict):
                 return {c["index"]: c for c in raw}
-            # Mock format: [int, int, int, int]  (1-based index mapping)
+            # Legacy mock format: [int, int, int, int]  (raw bytes, 1-based)
+            self._raw_format = True
             return {i + 1: {"index": i + 1, "value": float(v)} for i, v in enumerate(raw)}
 
         def _v(cells, idx) -> Optional[float]:
@@ -108,17 +118,19 @@ class LiveValues:
                 return None
             return c["value"] if isinstance(c, dict) else float(c)
 
-        # M2.3.2 group decode formulas (confirmed from .lbl / WinlogDriver):
+        # Raw-byte decode formulas, used ONLY for the legacy int-list format
+        # (confirmed from .lbl / WinlogDriver):
         # Group 1: cell1=RPM×40, cell2=ECT−70°C, cell3=λ/128, cell4=IGN raw
         # Group 3: cell1=RPM×40, cell2=load raw, cell3=TPS×0.416%, cell4=IAT−70°C
         # Group 6: cell1=N75 DC raw, cell3=MAP kPa raw  [prjmod only]
+        raw = lambda: self._raw_format   # evaluated after _cells() ran
 
-        def _rpm(v):   return v * 40 if v is not None else None
-        def _ect(v):   return v - 70 if v is not None else None
-        def _lam(v):   return v / 128 if v is not None else None
-        def _ign(v):   return v * 0.6491 - 8.2186 if v is not None else None
-        def _tps(v):   return v * 0.416 if v is not None else None
-        def _iat(v):   return v - 70 if v is not None else None
+        def _rpm(v):   return None if v is None else (v * 40 if raw() else v)
+        def _ect(v):   return None if v is None else (v - 70 if raw() else v)
+        def _lam(v):   return None if v is None else (v / 128 if raw() else v)
+        def _ign(v):   return None if v is None else (v * 0.6491 - 8.2186 if raw() else v)
+        def _tps(v):   return None if v is None else (v * 0.416 if raw() else v)
+        def _iat(v):   return None if v is None else (v - 70 if raw() else v)
 
         g1 = _cells(1)
         if g1:
@@ -141,8 +153,12 @@ class LiveValues:
         if g6:
             n75_raw      = _v(g6, 1)
             map_raw      = _v(g6, 3)
-            self.n75_dc  = n75_raw / 2.55 if n75_raw is not None else None
-            self.map_kpa = map_raw / 255 * 300 if map_raw is not None else None
+            if self._raw_format:
+                self.n75_dc  = n75_raw / 2.55 if n75_raw is not None else None
+                self.map_kpa = map_raw / 255 * 300 if map_raw is not None else None
+            else:
+                self.n75_dc  = n75_raw
+                self.map_kpa = map_raw
 
         # Battery from group 2
         g2 = _cells(2)

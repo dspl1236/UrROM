@@ -166,3 +166,35 @@ therefore **provisional** until confirmed against a logged boost gauge.
 - `0x1649` / `0x1671` PWM-fraction tables and the 5Fh → P4 nibble output.
 - Exact meaning of `0x1C60–0x1DFC` (S2-only differences; likely altitude /
   IAT corrections indexed by F6h).
+
+
+## Sensor scale and the kPa editor (2026-09-09)
+
+A table byte on the boost chip is a sensor **voltage** (raw/255 × 5 V), not a
+pressure; kPa follows from the sensor's transfer function, which the ROM does
+not carry. `urrom/boost_sensor.py` holds that per family (404 = this board,
+551 = the AAN/ABY/ADU/RS2 boost chip):
+
+| key | sensor | kPa = raw/255 × span + offset | Vout at 100 kPa |
+|---|---|---|---|
+| `bosch200` | Bosch 200 kPa, 3B/RR/S2 board (assumed linear) | span 200, offset 0 | 2.50 V |
+| `mpx4250` | MPX4250A (AAN/ABY stock, QLCC) | span 250, offset 10 (Vout = Vs(0.004P − 0.04)) | 1.80 V |
+| `lin250` | generic linear 250 kPa | span 250, offset 0 | 2.00 V |
+| `lin300` | generic linear 300 kPa (RS2 / 034 "3 bar") | span 300, offset 0 | 1.67 V |
+| `mpxh6400` | MPXH6400A (prjmod SD) | span 413.05, offset 3.48 (Vout = Vs(0.002421P − 0.00842)) | 1.17 V |
+
+The Boost editor's *Sensor* selector switches the decode of the pressure
+tables (404: Boost Target A/B/C; 551: Boost Pressure Target and Limit) live,
+keeping unsaved edits; *kPa abs* / *bar gauge* switches the display and the
+edit unit (gauge = (kPa − 100)/100). Selections persist per family. "Identify
+from a voltage reading…" ranks the sensors against the output measured key-on
+engine-off (≈ atmospheric): 2.5 V says linear 200 kPa, 1.8 V says MPX4250A,
+1.67 V says linear 300 kPa, 1.17 V says MPXH6400A. That is how to identify a
+swapped 250 kPa sensor once one is in hand — the same table applies to the
+551 chips, where the AAN/ABY stock part is the MPX4250A and every 034EFI Rip
+Chip tune requires a "3.0 BAR" sensor (the editor pre-selects 300 kPa for
+those from the chip's catalogue entry).
+
+Stock 3B target peak (raw 0xED) reads 186 kPa abs / +0.86 bar gauge at the
+assumed 200 kPa scale, or 242 kPa / +1.42 bar if the board were an MPX4250A —
+the logged boost reading from the car decides between them.

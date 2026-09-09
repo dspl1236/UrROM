@@ -1091,3 +1091,101 @@ class TestHardwareScope:
         res = {r.name: r for r in detect_patches(fw, "551C")}
         assert res["Speed Density (SD) Mode"].in_scope
         assert res["LC / NLS Motorsport Code"].in_scope
+
+
+# -- Boost sensor scale for the pressure tables (2026-09-09) --------------------
+
+class TestBoostSensor:
+    def setup_method(self):
+        from urrom import boost_sensor as bs
+        bs.set_sensor("404", "bosch200"); bs.set_display("404", "kpa")
+        bs.set_sensor("551", "mpx4250"); bs.set_display("551", "kpa")
+
+    def teardown_method(self):
+        self.setup_method()
+
+    def test_transfer_functions(self):
+        from urrom import boost_sensor as bs
+        b200 = bs.set_sensor("404", "bosch200")
+        assert b200.kpa(255) == 200 and b200.kpa(0) == 0
+        mpx = bs.set_sensor("551", "mpx4250")
+        assert abs(mpx.kpa(255) - 260) < 0.01 and mpx.kpa(0) == 10       # datasheet: 10 kPa at 0 V
+        assert abs(mpx.volts_at(100) - 1.8) < 0.01                        # Vs(0.004*100-0.04)
+        m400 = next(s for s in bs.sensors() if s.key == "mpxh6400")
+        assert abs(m400.volts_at(100) - 1.17) < 0.01                      # Vs(0.2421-0.00842)
+        for s in bs.sensors():
+            for raw in (0, 37, 128, 200, 255):
+                assert s.raw(s.kpa(raw)) == raw, (s.key, raw)             # round trip
+
+    def test_3b_target_follows_selected_sensor(self):
+        from urrom import boost_sensor as bs
+        from urrom.ecu_profiles import VARIANT_404, read_map
+        rom = bytes(load_rom("3b_boost_404aa.bin"))
+        m = next(x for x in VARIANT_404.boost_maps if x.main_addr == 0x1934)
+        raw = read_map(rom, m)
+        flat = [v for row in raw for v in row]
+        assert max(flat) == 0xED
+        assert m.decode(0xED) == round(0xED / 255 * 200, 1)                # 185.9 kPa @ 200 linear
+        bs.set_sensor("404", "mpx4250")
+        assert m.decode(0xED) == round(0xED / 255 * 250 + 10, 1)           # 242.3 kPa @ MPX4250
+        bs.set_display("404", "bar")
+        assert m.decode(0xED) == round((0xED / 255 * 250 + 10 - 100) / 100, 2)
+        assert m.encode(1.42) == 0xED                                      # bar gauge edit round-trips
+        bs.set_display("404", "kpa")
+        assert m.encode(242.3) == 0xED
+
+    def test_551_target_has_kpa_decode(self):
+        from urrom import boost_sensor as bs
+        from urrom.ecu_profiles import ALL_VARIANTS
+        v = next(x for x in ALL_VARIANTS if x.software_id == "551C")
+        tgt = next(x for x in v.boost_maps if x.main_addr == 0x2520)
+        lim = next(x for x in v.boost_maps if x.main_addr == 0x2A96)
+        assert tgt.decode and lim.decode and tgt.encode
+        assert tgt.decode(255) == 260.0                                    # MPX4250 default for 551
+        bs.set_sensor("551", "lin300")
+        assert tgt.decode(255) == 300.0
+        assert bs.unit("551") == "kPa abs"
+
+    def test_identify_ranks_by_voltage(self):
+        from urrom import boost_sensor as bs
+        assert bs.identify(1.8)[0][0].key == "mpx4250"
+        assert bs.identify(2.5)[0][0].key == "bosch200"
+        assert bs.identify(1.17)[0][0].key == "mpxh6400"
+        assert bs.identify(1.67)[0][0].key == "lin300"
+
+    def test_custom_sensor(self):
+        from urrom import boost_sensor as bs
+        s = bs.set_custom("404", 250, 0)
+        assert s.key == "custom" and bs.decode(255, "404") == 250.0
+
+
+# -- KWPBridge live values: bridge cells are already decoded (2026-09-09) --------
+
+class TestKWPLiveValues:
+    def _bridge_state(self):
+        def cell(i, v, u): return {"index": i, "value": v, "unit": u, "display": f"{v} {u}"}
+        return {"connected": True, "ecu_id": {"part_number": "4A0907551AA"},
+                "groups": {"1": {"cells": [cell(1, 3000.0, "RPM"), cell(2, 92.0, "°C"),
+                                           cell(3, 1.0, "λ"), cell(4, 24.0, "° BTDC")]},
+                           "3": {"cells": [cell(1, 3000.0, "RPM"), cell(2, 100.0, ""),
+                                           cell(3, 30.0, "%"), cell(4, 38.0, "°C")]},
+                           "6": {"cells": [cell(1, 12.0, "%"), cell(2, 12.0, "%"),
+                                           cell(3, 115.0, "kPa"), cell(4, 115.0, "kPa")]}}}
+
+    def test_bridge_values_used_as_is(self):
+        from urrom.kwp import LiveValues
+        lv = LiveValues(self._bridge_state())
+        assert lv.valid and lv.rpm == 3000 and lv.ect == 92 and lv.lambda_ == 1.0
+        assert lv.timing == 24 and lv.load == 100 and lv.tps == 30 and lv.iat == 38
+        assert lv.map_kpa == 115 and lv.n75_dc == 12
+        assert lv.ecu_pn == "4A0907551AA"
+
+    def test_legacy_raw_list_still_decoded(self):
+        from urrom.kwp import LiveValues
+        st = {"connected": True, "ecu_id": {"part_number": "4A0907551AA"},
+              "groups": {"1": {"cells": [75, 162, 128, 50]},
+                         "3": {"cells": [75, 100, 72, 108]}}}
+        lv = LiveValues(st)
+        assert lv.rpm == 3000 and lv.ect == 92 and lv.lambda_ == 1.0
+        assert abs(lv.timing - (50 * 0.6491 - 8.2186)) < 1e-6
+        assert lv.load == 100 and abs(lv.tps - 29.95) < 0.01 and lv.iat == 38

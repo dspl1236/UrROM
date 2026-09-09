@@ -589,6 +589,22 @@ _MAPS_V8_MAIN = [
 _BOOST_RPM_AXIS  = [600, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 7200]
 _BOOST_LOAD_AXIS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
 
+# Pressure tables go through the selected sensor scale (urrom.boost_sensor):
+# kPa_abs = raw/255*span + offset, or bar gauge when that display is chosen.
+def _boost404_kpa_decode(b):
+    from urrom import boost_sensor
+    return boost_sensor.decode(b, "404")
+def _boost404_kpa_encode(v):
+    from urrom import boost_sensor
+    return boost_sensor.encode(v, "404")
+def _boost551_kpa_decode(b):
+    from urrom import boost_sensor
+    return boost_sensor.decode(b, "551")
+def _boost551_kpa_encode(v):
+    from urrom import boost_sensor
+    return boost_sensor.encode(v, "551")
+
+
 _MAPS_BOOST_551 = [
     MapDef("Boost Pressure Target",
            "Boost target vs RPM (rows) × load (cols). "
@@ -597,6 +613,7 @@ _MAPS_BOOST_551 = [
            "vwnut8392 XDF note: same values as 551AA S4/S6.",
            main_addr=0x2520, rows=10, cols=16,
            map_type="boost", unit="kPa", chip="boost",
+           decode=_boost551_kpa_decode, encode=_boost551_kpa_encode,
            confidence="CONFIRMED"),
 
     MapDef("N75 Wastegate Duty Cycle",
@@ -612,6 +629,7 @@ _MAPS_BOOST_551 = [
            "Decode: raw/255 × 250 = kPa. Acts as hard overboost cut.",
            main_addr=0x2A96, rows=8, cols=1,
            map_type="boost", unit="kPa", chip="boost",
+           decode=_boost551_kpa_decode, encode=_boost551_kpa_encode,
            confidence="CONFIRMED"),
 
     MapDef("Characteristic Map",
@@ -688,9 +706,6 @@ _BOOST_3B_LOAD_AXIS = [1, 2, 3, 4, 5, 6, 7, 8]
 
 def _boost404_duty_decode(b):   return round(b / 255 * 100, 1)   # % duty
 def _boost404_duty_encode(v):   return max(0, min(255, round(v / 100 * 255)))
-def _boost404_kpa_decode(b):    return round(b / 255 * 200, 1)   # kPa abs, 200 kPa sensor
-def _boost404_kpa_encode(v):    return max(0, min(255, round(v / 200 * 255)))
-
 _BOOST_404_TABLE_AXES: dict[int, tuple[int, int]] = {
     # table data addr → (X axis addr, Y axis addr)
     0x18B4: (0x189A, 0x18A3), 0x1934: (0x189A, 0x18A3), 0x19B4: (0x189A, 0x18A3),

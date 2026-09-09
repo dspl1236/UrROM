@@ -98,6 +98,7 @@ python -m urrom.cli info rom.034           # identification
 python -m urrom.cli maps rom.bin           # every map the 551 firmware references
 python -m urrom.cli chip boost.bin         # 8KB/32KB image → 64KB 27C512 image (--to native folds back)
 python -m urrom.cli coding rom.bin --volts 2.5   # coding-plug bands → ignition set (3B/RR/S2 and 551)
+# Boost editor: Sensor selector (200 / MPX4250 / 300 / MPXH6400A / custom) + kPa abs or bar gauge — see docs/3B_boost_chip_RE.md
 ```
 
 ### Tools Menu
