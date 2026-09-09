@@ -316,11 +316,18 @@ def _stock_0e13_family(fuel: int, ign: list[int], chip_tag: str,
                        idle_a: int | None = None, idle_b: int | None = None) -> list[MapDef]:
     """
     0x0E13-family stock layout (RS2 D02 8A0907551B, AAN 4A0907551AA).
-    ign = [overrun, no-knock, map3, knock-L1, map5, map6, map7] in address order.
-    Decode follows the PRJ XDF for this firmware family (raw x 0.75 - 22.5).
+    ign = the seven 16x16 maps in address order.  2026-09-09: the RS2 D02 chip's
+    maps are byte-identical to the ADU's (0x2E17 layout) one-to-one — 0x10A8 ==
+    0x30AC, 0x125F == 0x3263, ... 0x192D == 0x3931, fuel 0x0E13 == 0x2E17 — so the
+    roles are the 551 ones (docs 3e): map 1 fault fallback, then three coding-
+    plug sets of (main, alternate).  The PRJ XDF's "overrun / no knock / knock
+    level 1" names describe what PRJMOD does with these slots, not stock.
+    Decode raw x 0.75 - 22.5 (same bytes as the 0x2E17 family).
     """
-    names = ["Ign P/T (overrun)", "Ign P/T (no knock)", "Ign Map 3",
-             "Ign P/T (knock level 1)", "Ign Map 5", "Ign Map 6", "Ign Map 7"]
+    names = ["Ign Map 1 (fault fallback)",
+             "Ign Map 2 (main, coding set A)", "Ign Map 3 (alt, coding set A)",
+             "Ign Map 4 (main, coding set B)", "Ign Map 5 (alt, coding set B)",
+             "Ign Map 6 (main, coding set C)", "Ign Map 7 (alt, coding set C)"]
     maps = [MapDef("Fuel P/T (primary)",
                    "Main fuelling map, 16 RPM rows x 16 load cols. Firmware descriptor "
                    "X=RPM(3Ah) Y=LOAD(3Fh). Same address PRJmod uses.",
@@ -331,13 +338,13 @@ def _stock_0e13_family(fuel: int, ign: list[int], chip_tag: str,
                    notes=f"{chip_tag}: firmware-referenced descriptor.")]
     for name, addr in zip(names, ign):
         maps.append(MapDef(name,
-                   "Ignition map, 16 RPM rows x 16 load cols. Decode per PRJ XDF: "
-                   "raw x 0.75 - 22.5 = deg BTDC. Firmware descriptor X=RPM Y=LOAD.",
+                   "Ignition map, 16 RPM rows x 16 load cols. Decode raw x 0.75 - 22.5 = deg BTDC. "
+                   "Firmware descriptor X=RPM Y=LOAD. Roles by the ADU selector (byte-identical maps).",
                    main_addr=addr, rows=16, cols=16,
                    map_type="ign", unit="\u00b0BTDC",
                    decode=_prj_ign_decode, encode=_prj_ign_encode,
                    confidence=confidence,
-                   notes=f"{chip_tag}: firmware-referenced. Role names follow the PRJ XDF."))
+                   notes=f"{chip_tag}: firmware-referenced. Selector assumed as on the ADU (untraced on this build)."))
     if idle_a is not None:
         maps.append(MapDef("Idle Ignition A (closed throttle)",
                    "Idle/low-load ignition, 4 RPM rows x 6 load cols (third of three "
@@ -2076,7 +2083,10 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x2EB58546: ("551AA_0202", "034EFI GT2871 Stage 1 R9.1 550cc EV14 — Fuel chip. PAIR with GT2871 boost 0x69156B3A. Requires: 3.0 BAR MAP, 550cc EV14 injectors, stock MAF. 26psi OB / 22psi / 7200rpm / 330whp"),
     0xA77BB88E: ("551AA_0202", "034EFI GT2871 Stage 1 R9 440cc Siemens — Fuel chip. PAIR with GT2871 boost 0x69156B3A. Requires: 3.0 BAR MAP, 440cc Siemens injectors, stock MAF. 26psi OB / 22psi / 7200rpm / 330whp"),
     0x28C04D7B: ("551AA_0202", "034EFI Rip Chip RS2 91Oct — ABY/ADU fuel chip. PAIR with stock 551B/C boost chip. Requires: 3.0 BAR MAP, 440cc injectors, stock MAF. RS2/ADU/ABY application."),
-    0x81D197CF: ("551AA_0202", "PRJ AAN/ABY stock (m232.org)"),
+    0x81D197CF: ("551AA_0202", "PRJ AAN/ABY base (github.com/prj/m232 stock_AANABY): RS2 D02 firmware + the "
+                               "ABY/ADU/RS2 D02 calibration with fuel ~+5.7 raw, ign map 2 reshaped (same mean) and "
+                               "ign map 4 ~-5.6 raw (~-4 deg); maps 1/3/5/6/7 byte-identical to the real chips "
+                               "(2026-09-09). Not AAN maps. Use ABY/ADU/RS2 D02 reads as stock baselines."),
     0xAD9330AC: ("551AA_0202", "PRJ AAN bigturbo WMI"),
     # vwnut8392/M232-Firmware
     0x9DD68BD3: ("551AA_0202", "PRJmod AAN D03PMC (vwnut8392/M232-Firmware TMS27C512)"),
@@ -2915,6 +2925,12 @@ def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
                     _BOOST_LOAD_AXIS[:map_def.cols])
 
     if sw == "551AA_0202":
+        # prjmod keeps the stock Bosch descriptors in front of every 16x16 map
+        # (verified 2026-09-09 on prj's stock_AANABY): exact decode first.  The
+        # legacy _AXES_0202 table below is only for the prjmod-added tables.
+        exact = read_descriptor_axes(rom, map_def.main_addr, map_def.rows, map_def.cols)
+        if exact is not None:
+            return exact
         row_addr, col_addr = _AXES_0202.get(map_def.main_addr, (None, None))
 
         def _read_axis(addr: int | None, n: int) -> list:

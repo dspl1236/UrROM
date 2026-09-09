@@ -28,12 +28,34 @@ the port is value-by-value, but the values line up.
 | Ign Map 2 (main) | ADU maps 5 / 7 (0x36BC / 0x3931) | 3.0, mean −0.1 | same bytes → **same degrees**: 551 decode is 0.75°/count, not RS2.xdf's 0.6491 |
 | Ign Map 2 (main) | ABY maps 3 / 5 / 7 | 4.4, mean +2.4 raw (+1.8°) | ABY runs ~2° more advance than the 200 20v |
 | Fuel Map 1 | ABY / ADU fuel 0x2E17 | 12.4 / 12.7, mean −8 / −5 raw | 551 fuel maps sit lower, −15…−17 raw at high load |
-| Fuel Map 1 | prj AAN/ABY 0x0E13 | 18.6, mean −7 | similar to ABY; high-load −25 raw |
+| Fuel Map 1 | prj AAN/ABY 0x0E13 | (see resolution below; earlier row used bad axes) | — |
 
-prj's 0x0E13-layout ignition maps come out **+16…+27 raw** above the 3B — far
-more than any real stock difference. Either that file is not stock timing, or
-the 0x0E13 family encodes ignition differently. **Do not use it for timing
-until resolved**; the ABY/ADU direct reads are the trustworthy 551 baselines.
+**Resolved 2026-09-09.** The RS2 D02 chip (real RS2 read, 0x0E13 layout) is
+byte-identical to the ADU chip (0x2E17 layout) map for map — fuel 0x0E13 ==
+0x2E17, ignition 0x10A8 == 0x30AC … 0x192D == 0x3931 (0.0 rms, blanks
+excluded). So the 0x0E13 layout encodes exactly like the 0x2E17 one, and the
+PRJ XDF's "overrun / no knock / knock level 1" names are PRJMOD's own use of
+those slots, not the stock roles. The earlier "+16…+27 raw"
+offset was an artefact: the 0202 profile read its axes from the PRJ XDF's
+axis addresses, which do not hold axes in this file (rows came out 9…16, load
+400…2840), so the resample was garbage. The file keeps the stock Bosch
+descriptors in front of every map, and `get_axes()` now reads them.
+
+Raw, same addresses, prj `stock_AANABY` vs the RS2 D02 chip (ABY and ADU
+carry the identical bytes on maps 1/3/5/6/7):
+
+| Map | prj − real chip | Reading |
+|---|---|---|
+| Fuel 0x0E13 | mean +5.7 raw, 234 cells | fuel raised |
+| Ign 1 (0x10A8), 3, 5, 6, 7 | 0 cells differ | untouched stock |
+| Ign 2 (0x125F, set A main) | mean −0.3 raw, 242 cells | reshaped, same average |
+| Ign 4 (0x1594, set B main) | mean −5.6 raw (≈ −4°) | retarded |
+
+So prj's file = RS2 D02 firmware + the ABY/ADU/RS2 D02 calibration with mild
+edits to fuel and to the two coding-set main maps; it does **not** carry the
+AAN 551AA chip's maps (those differ on every map). Labelled in `KNOWN_CRCS`
+and `roms/README.md`; the ABY / ADU / RS2 D02 direct reads remain the stock
+baselines.
 
 ## Consequences applied to the app (2026-09-09)
 
@@ -68,6 +90,7 @@ reading on the car settles it.
 
 1. ~~Trace the 551 ignition selector~~ — done (§3e): coding plug picks
    maps 2 / 4 / 6.
-2. Resolve the prj 0x0E13 timing offset (compare against the RS2 D02 chip's
-   own maps, which are the same family).
+2. ~~Resolve the prj 0x0E13 timing offset~~ — done: it was an axis-read bug; the
+   layouts encode identically (RS2 D02 == ADU byte for byte) and prj's file is
+   the ABY/RS2 cal with mild fuel / map 2 / map 4 edits.
 3. Log boost on the car → sensor scale → boost-target port.

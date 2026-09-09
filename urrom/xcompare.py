@@ -24,7 +24,7 @@ from urrom.ecu_profiles import (
 
 # Which map plays which role on each variant (working-half data addresses).
 # 3B: ign map 2 is the main high-load map (docs 551_calibration_descriptors_RE.md §3c).
-# 0E13-family / prjmod: PRJ XDF "Ign P/T (no knock)" 0x125F.  Best current guesses.
+# prjmod (551AA_0202): PRJ XDF "Ign P/T (no knock)" 0x125F.
 ROLE_MAPS: dict[str, dict[str, int]] = {
     "404":        {"fuel": 0x6A8E, "ign": 0x71F8},
     # 551 0x2E17 family (selector traced, docs §3e): main map = slot 0D of the coding-
@@ -33,9 +33,11 @@ ROLE_MAPS: dict[str, dict[str, int]] = {
     "551C":       {"fuel": 0x2E17, "ign": 0x3598},
     "551B":       {"fuel": 0x2E17, "ign": 0x3594},
     "551D":       {"fuel": 0x2E17, "ign": 0x3598},
-    "551B_D02":   {"fuel": 0x0E13, "ign": 0x125F},
-    "551AA":      {"fuel": 0x0DEA, "ign": 0x1224},
-    "551A":       {"fuel": 0x0E13, "ign": 0x125F},
+    # 0x0E13 family: same roles as the 0x2E17 family (byte-identical maps, 2026-09-09):
+    # main = map 4 (set B) at 0x1594 / AAN 0x155F.  prjmod keeps PRJ's own roles.
+    "551B_D02":   {"fuel": 0x0E13, "ign": 0x1594},
+    "551AA":      {"fuel": 0x0DEA, "ign": 0x155F},
+    "551A":       {"fuel": 0x0E13, "ign": 0x1594},
     "551AA_0202": {"fuel": 0x0E13, "ign": 0x125F},
 }
 
