@@ -2083,9 +2083,10 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x2EB58546: ("551AA_0202", "034EFI GT2871 Stage 1 R9.1 550cc EV14 — Fuel chip. PAIR with GT2871 boost 0x69156B3A. Requires: 3.0 BAR MAP, 550cc EV14 injectors, stock MAF. 26psi OB / 22psi / 7200rpm / 330whp"),
     0xA77BB88E: ("551AA_0202", "034EFI GT2871 Stage 1 R9 440cc Siemens — Fuel chip. PAIR with GT2871 boost 0x69156B3A. Requires: 3.0 BAR MAP, 440cc Siemens injectors, stock MAF. 26psi OB / 22psi / 7200rpm / 330whp"),
     0x28C04D7B: ("551AA_0202", "034EFI Rip Chip RS2 91Oct — ABY/ADU fuel chip. PAIR with stock 551B/C boost chip. Requires: 3.0 BAR MAP, 440cc injectors, stock MAF. RS2/ADU/ABY application."),
-    0x81D197CF: ("551AA_0202", "PRJ AAN/ABY base (github.com/prj/m232 stock_AANABY): RS2 D02 firmware + the "
-                               "ABY/ADU/RS2 D02 calibration with fuel ~+5.7 raw, ign map 2 reshaped (same mean) and "
-                               "ign map 4 ~-5.6 raw (~-4 deg); maps 1/3/5/6/7 byte-identical to the real chips "
+    0x81D197CF: ("551AA_0202", "PRJ AAN/ABY base (github.com/prj/m232 stock_AANABY) - NOT stock: RS2 D02 firmware + "
+                               "ABY/ADU/RS2 D02 cal, but fuel and ign map 2 re-gridded to a 10..240 load / 7400 rpm "
+                               "axis (300 kPa-sensor shape), fuel +10..+28 raw at high load, map 2 -5..-13 raw in the "
+                               "boost region, map 4 -5.6 raw; maps 1/3/5/6/7 byte-identical to the real chips "
                                "(2026-09-09). Not AAN maps. Use ABY/ADU/RS2 D02 reads as stock baselines."),
     0xAD9330AC: ("551AA_0202", "PRJ AAN bigturbo WMI"),
     # vwnut8392/M232-Firmware

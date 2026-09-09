@@ -41,21 +41,24 @@ axis addresses, which do not hold axes in this file (rows came out 9…16, load
 400…2840), so the resample was garbage. The file keeps the stock Bosch
 descriptors in front of every map, and `get_axes()` now reads them.
 
-Raw, same addresses, prj `stock_AANABY` vs the RS2 D02 chip (ABY and ADU
-carry the identical bytes on maps 1/3/5/6/7):
+prj `stock_AANABY` vs the RS2 D02 chip (ABY and ADU carry the identical
+bytes on maps 1/3/5/6/7). Fuel and map 2 were **re-gridded**: their descriptors
+now read load 10…240 / rpm 600…7400 (7480 for fuel) instead of the stock
+12…177 / 600…7000, i.e. the shape of a 300 kPa-sensor tune, so those two are
+compared resampled onto the stock grid:
 
-| Map | prj − real chip | Reading |
+| Map | prj vs real chip | Reading |
 |---|---|---|
-| Fuel 0x0E13 | mean +5.7 raw, 234 cells | fuel raised |
-| Ign 1 (0x10A8), 3, 5, 6, 7 | 0 cells differ | untouched stock |
-| Ign 2 (0x125F, set A main) | mean −0.3 raw, 242 cells | reshaped, same average |
-| Ign 4 (0x1594, set B main) | mean −5.6 raw (≈ −4°) | retarded |
+| Fuel 0x0E13 (resampled) | mean +4.3 raw; +10…+28 raw above load 112 | richer under boost, slightly leaner at idle/cruise |
+| Ign 1 (0x10A8), 3, 5, 6, 7 | 0 bytes differ | untouched stock |
+| Ign 2 (0x125F, set A main, resampled) | mean −1.6 raw; +2…+7 raw at part load, −5…−13 raw (−4…−10°) above load 103 | boost region pulled back, cruise advanced |
+| Ign 4 (0x1594, set B main, same grid) | mean −5.6 raw (≈ −4°), 246 cells | retarded throughout |
 
-So prj's file = RS2 D02 firmware + the ABY/ADU/RS2 D02 calibration with mild
-edits to fuel and to the two coding-set main maps; it does **not** carry the
-AAN 551AA chip's maps (those differ on every map). Labelled in `KNOWN_CRCS`
-and `roms/README.md`; the ABY / ADU / RS2 D02 direct reads remain the stock
-baselines.
+So prj's file = RS2 D02 firmware + the ABY/ADU/RS2 D02 calibration with a
+bigger-turbo/300 kPa base laid over fuel and the two coding-set main maps. It
+does **not** carry the AAN 551AA chip's maps (those differ on every map) and
+it is **not stock**. Labelled in `KNOWN_CRCS` and `roms/README.md`; the
+ABY / ADU / RS2 D02 direct reads remain the stock baselines.
 
 ## Consequences applied to the app (2026-09-09)
 
@@ -90,7 +93,8 @@ reading on the car settles it.
 
 1. ~~Trace the 551 ignition selector~~ — done (§3e): coding plug picks
    maps 2 / 4 / 6.
-2. ~~Resolve the prj 0x0E13 timing offset~~ — done: it was an axis-read bug; the
-   layouts encode identically (RS2 D02 == ADU byte for byte) and prj's file is
-   the ABY/RS2 cal with mild fuel / map 2 / map 4 edits.
+2. ~~Resolve the prj 0x0E13 timing offset~~ — done: the big offset was an
+   axis-read bug; the layouts encode identically (RS2 D02 == ADU byte for byte)
+   and prj's file is the ABY/RS2 cal with fuel and map 2 re-gridded to 240 load
+   and map 4 retarded — a base tune, not stock.
 3. Log boost on the car → sensor scale → boost-target port.

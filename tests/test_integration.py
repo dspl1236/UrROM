@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from urrom.ecu_profiles import (
-    detect_rom, read_map, write_map, get_axes,
+    detect_rom, read_map, write_map, get_axes, read_descriptor_axes,
     apply_checksum, ign_decode, ign_encode, fuel_decode, fuel_encode,
     DetectionResult,
 )
@@ -992,29 +992,33 @@ class TestLayoutEquivalence:
             assert all(x[i] == y[i] for i in valid), f"0x{a:04X} vs 0x{b:04X}"
 
     def test_prj_base_edits_vs_rs2_d02(self):
-        """prj stock_AANABY = RS2 D02 cal with mild edits: maps 1/3/5/6/7 untouched,
-        fuel raised, map 4 retarded, map 2 reshaped at the same mean (2026-09-09)."""
+        """prj stock_AANABY = RS2 D02 cal with a base tune over it: maps 1/3/5/6/7
+        untouched, map 4 retarded on the same grid, fuel and map 2 re-gridded to a
+        10..240 load / 7400 rpm axis (2026-09-09)."""
         rs2 = bytes(load_rom("rs2_d02_fuel-ign_551b.bin"))[0x8000:]
         prj = bytes(load_rom("prj_stock_aan-aby_551aa_0202.bin"))[0x8000:]
 
-        def delta(addr):
-            x, y = rs2[addr:addr + 256], prj[addr:addr + 256]
-            valid = [i for i in range(256) if x[i] != 0x02]
-            d = [y[i] - x[i] for i in valid]
-            return sum(d) / len(d), sum(1 for t in d if t)
-
         for addr in (0x10A8, 0x1383, 0x16B8, 0x1809, 0x192D):
-            assert delta(addr)[1] == 0, hex(addr)
-        assert delta(0x0E13)[0] > 3
-        assert delta(0x1594)[0] < -3
-        m2, n2 = delta(0x125F)
-        assert abs(m2) < 1.5 and n2 > 100
+            assert prj[addr:addr + 256] == rs2[addr:addr + 256], hex(addr)
+            assert read_descriptor_axes(prj, addr, 16, 16) == read_descriptor_axes(rs2, addr, 16, 16)
+
+        assert read_descriptor_axes(prj, 0x1594, 16, 16) == read_descriptor_axes(rs2, 0x1594, 16, 16)
+        d = [prj[0x1594 + i] - rs2[0x1594 + i] for i in range(256)]
+        assert sum(d) / 256 < -3
+
+        for addr in (0x0E13, 0x125F):
+            rows, cols = read_descriptor_axes(prj, addr, 16, 16)
+            assert cols[0] == 10 and cols[-1] == 240 and rows[-1] >= 7400, hex(addr)
+            srows, scols = read_descriptor_axes(rs2, addr, 16, 16)
+            assert scols[-1] == 177 and srows[-1] == 7000
 
     def test_0202_axes_come_from_descriptors(self):
-        """The prjmod file keeps the Bosch descriptors; axes must be the real 551 ones."""
+        """The prjmod file keeps Bosch descriptors; get_axes must read them, not the
+        legacy PRJ-XDF axis addresses (which gave rows 9..16 / load 400..2840)."""
         rom = bytes(load_rom("prj_stock_aan-aby_551aa_0202.bin"))[0x8000:]
         from urrom.ecu_profiles import VARIANT_551AA_0202 as v
         m = next(x for x in v.main_maps if x.main_addr == 0x125F)
         rows, cols = get_axes(rom, m, v)
-        assert rows[0] == 600 and rows[-1] in (7000, 7400)
-        assert cols[0] in (10, 12) and cols[-1] in (177, 180)
+        assert rows == read_descriptor_axes(rom, 0x125F, 16, 16)[0]
+        assert rows[0] == 600 and rows[-1] == 7400
+        assert cols[0] == 10 and cols[-1] == 240
