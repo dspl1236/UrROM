@@ -2053,6 +2053,11 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                            "upper=this stock blank, lower=PRJmod D02PMC base ROM (reset→0x117A). "
                            "NOT a usable calibration baseline."),
     0xBBAFE260: ("551A_boost", "Stock — AAN boost, 4A0907551A,  8KB, build 0xA04B (direct read)"),
+    0x0ECFCB2C: ("551A_boost", "Stock — AAN boost, 4A0907551A, 8KB, cal tag 0xA04B "
+                               "(vwnut8392/M232-Firmware aan_boost_551a.bin). Same tag as 0xBBAFE260 "
+                               "but different bytes — one of the two reads differs; keep both until a "
+                               "third read settles it. NOTE: this 8KB MCU firmware is NOT the 3B/RR/S2 "
+                               "boost firmware (7870/8192 bytes differ) — 404 boost map decode does not apply."),
     0xB9A49F8A: ("551AA",      "Stock — AAN fuel/ign, 4A0907551AA, D03+HS cam trigger (direct read WH)"),
     0x16707F66: ("551AA_boost","Stock — AAN boost, 4A0907551AA, 32KB, build 0x0202 (direct read)"),
     0xF50660DA: ("404_boost", "Stock — 3B boost chip, 447907404AA, build 0x0254 (direct read)"),
