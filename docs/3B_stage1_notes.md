@@ -29,11 +29,34 @@ all three chips. Whole-chip: RR differs from the 3B in 646 bytes, S2 in 1084.
   never compared against a constant ≥ 0xA0), so a higher target does not
   trip a cut there.
 
+## The S2 fuel/ignition chip on a 3B (cell-level, S2 minus 3B)
+
+- **Ignition main map**: mean +0.2°, but shaped: +1.5…+3° through 4000–7200
+  rpm at part and mid load, up to +3° at 4000–4600 rpm in the top load
+  columns; −1.5…−3° at idle and at low load below 1240 rpm. One overrun
+  cell (1760 rpm, load 14) is +9°. Maps 5/6/7 carry the same 90-cell trim;
+  correction map 3 is almost entirely different (251/256 cells).
+- **Fuel**: 3–16 raw leaner everywhere below 1500 rpm and on the low-load
+  columns up to 4000 rpm; 4–14 raw richer from 5700 rpm up, peaking at
+  7200 rpm; within a few raw of the 3B under full boost from 2000 to
+  5200 rpm and identical at load 190. All four fuel maps carry the same
+  213-cell pattern.
+- RPM×IAT table 17/24 cells different; idle ignition tables touched in one
+  or two cells each.
+
+So the S2 chip is the one OEM chip that changes how the engine feels at part
+throttle (more mid-band advance) and it adds top-end fuel; the price is a
+leaner idle and cruise, which is exactly where an ageing 200 20V is already
+marginal. The S2 *boost* chip is the one to leave out (0.2 bar lower).
+
 ## Recommendation
 
-**OEM combo:** RR boost chip + the car's own 3B fuel/ignition chip. Gains
-about +0.05 bar and a firmer top end; every byte is factory.
-`D:\ECU FLASH\Bins\rr_boost_404b_27C512.bin`.
+**OEM combo:** RR boost chip + S2 fuel/ignition chip. The RR moves boost
+(+0.05 bar, firmer top end), the S2 moves timing and top-end fuel; every
+byte is factory. Keep the 3B chip if the car idles or cruises badly on the
+S2. Images: `D:\ECU FLASH\Bins\rr_boost_404b_27C512.bin` and
+`s2_fuel-ign_404_27C512.bin` (both fold back byte-exact, S2 checksum at
+0x7F00 valid, native CRC 9245FA10). Log the boost peak on the first drive.
 
 **Stage 1 (conservative):** the RR boost chip with all three target tables
 lifted +6 raw, capped at 250 → peak 196 kPa, +0.96 bar. Duty, gains, knock
