@@ -42,6 +42,14 @@ def check_fuel_range(rom: bytes, variant, *, lean_threshold=170, rich_threshold=
     """
     from urrom.ecu_profiles import read_map
     issues = []
+    # The 3B/RR/S2 (404) and V8 fuel maps use a different raw scale from the
+    # 551x family: stock 3B chips span raw 117–205 (S2 B3 up to 205, 3B AA to
+    # 199).  The 551-derived 170 "lean" threshold flags every high-load cell of
+    # a stock 3B chip, so widen the window for the 404 family unless the caller
+    # overrode the defaults.
+    sw = getattr(variant, "software_id", "") if variant else ""
+    if sw in ("404", "404V8") and lean_threshold == 170 and rich_threshold == 80:
+        lean_threshold, rich_threshold = 215, 100
     # Only check primary tunable fuel maps — skip failsafe, race fuel, correction, LPG
     _SKIP_FUEL = {"failsafe", "race fuel", "lpg", "correction", "warmup",
                   "decel", "overrun", "wall film", "lambda", "cat"}
@@ -245,7 +253,7 @@ def check_checksum(rom: bytes, variant, crc32: int = 0) -> list[TuningIssue]:
     if known[1].startswith("Stock"):
         return []  # stock chips — no computed checksum expected
 
-    CHECKSUM_VARIANTS = {"551AA_0202","551C","551B","551B_D02","551AA","551A","404","404V8"}
+    from urrom.ecu_profiles import CHECKSUM_VARIANTS
     sw = variant.software_id if variant else ""
     if sw not in CHECKSUM_VARIANTS:
         return []

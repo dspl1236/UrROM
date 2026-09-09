@@ -537,3 +537,75 @@ class TestDecodeEncode:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+# ── 404 family safety (2026-09, after the S2 B3 chip set was added) ──────────
+
+class Test404ChecksumSafety:
+    """
+    On the 32KB flat 3B/RR/S2 chips the bytes at 0x3FFA-0x3FFF are 8051
+    firmware, not a checksum slot.  UrROM must never treat the 404 family as
+    checksummed, or Save would corrupt live code.
+    """
+
+    def test_404_not_in_checksum_variants(self):
+        from urrom.ecu_profiles import CHECKSUM_VARIANTS, has_software_checksum, VARIANT_404, VARIANT_V8_PT
+        assert "404" not in CHECKSUM_VARIANTS
+        assert "404V8" not in CHECKSUM_VARIANTS
+        assert not has_software_checksum(VARIANT_404)
+        assert not has_software_checksum(VARIANT_V8_PT)
+
+    def test_551_still_checksummed(self):
+        from urrom.ecu_profiles import has_software_checksum, VARIANT_551B, VARIANT_551AA_0202
+        assert has_software_checksum(VARIANT_551B)
+        assert has_software_checksum(VARIANT_551AA_0202)
+
+    def test_3b_checksum_slot_is_firmware(self):
+        import pathlib
+        p = pathlib.Path(__file__).parent.parent / "roms" / "3b_fuel-ign_404aa.bin"
+        if not p.exists():
+            import pytest; pytest.skip("bundled 3B ROM not present")
+        rom = p.read_bytes()
+        # Known firmware bytes on the 447907404AA chip — if these ever change
+        # the assumption above needs revisiting.
+        assert rom[0x3FFA:0x4000] == bytes.fromhex("799be375f004")
+
+    def test_checksum_check_skips_404(self):
+        import pathlib
+        from urrom.ecu_profiles import VARIANT_404
+        from urrom.tuning_checks import check_checksum
+        p = pathlib.Path(__file__).parent.parent / "roms" / "s2_fuel-ign_404.bin"
+        if not p.exists():
+            import pytest; pytest.skip("bundled S2 ROM not present")
+        assert check_checksum(p.read_bytes(), VARIANT_404) == []
+
+    def test_stock_3b_fuel_maps_do_not_scan_lean(self):
+        """Stock 3B/S2 fuel maps reach raw 205 — must not be flagged as lean."""
+        import pathlib
+        from urrom.ecu_profiles import VARIANT_404
+        from urrom.tuning_checks import check_fuel_range
+        for name in ("3b_fuel-ign_404aa.bin", "s2_fuel-ign_404.bin", "rr_fuel-ign_404b.bin"):
+            p = pathlib.Path(__file__).parent.parent / "roms" / name
+            if not p.exists():
+                continue
+            errs = [i for i in check_fuel_range(p.read_bytes(), VARIANT_404) if i.severity == "error"]
+            assert errs == [], f"{name}: {len(errs)} false lean errors"
+
+
+class TestS2ChipSet:
+    def test_s2_pair_fingerprinted(self):
+        import pathlib
+        from urrom.ecu_profiles import detect_rom, KNOWN_CRCS
+        base = pathlib.Path(__file__).parent.parent / "roms"
+        fuel, boost = base / "s2_fuel-ign_404.bin", base / "s2_boost_404.bin"
+        if not (fuel.exists() and boost.exists()):
+            import pytest; pytest.skip("S2 chip set not present")
+        d = detect_rom(fuel.read_bytes())
+        assert d.crc32 == 0x9245FA10 and d.variant is not None and d.variant.software_id == "404"
+        assert KNOWN_CRCS[0x604AB965][0] == "404_boost"
+
+    def test_404_boost_tables_exposed_read_only(self):
+        from urrom.ecu_profiles import VARIANT_404
+        tables = [m for m in VARIANT_404.boost_maps if m.name.startswith("Boost table ")]
+        assert [m.main_addr for m in tables] == [0x18B4, 0x1934, 0x19B4, 0x1A34, 0x1AB4, 0x1B34]
+        assert all(m.rows == 8 and m.cols == 16 and m.confidence == "UNCONFIRMED" for m in tables)

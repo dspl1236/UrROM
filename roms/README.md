@@ -19,6 +19,8 @@ including blank/erased chips not stored here.
 | `3b_fuel-ign_404aa.bin` | 447907404AA | Audi 200 20vT, UrQ, S2 early | 1267356462 | `0x0AE3CACD` | ✓ REAL |
 | `3b_fuel-ign_404a.bin` | 447907404A | Same applications, earlier rev | 1267356259 | `0xE66098C8` | ✓ REAL |
 | `3b_boost_404aa.bin` | 447907404AA boost | 3B boost MCU (8KB exec code) | — | `0xF50660DA` | ✓ REAL |
+| `s2_fuel-ign_404.bin` | 895907404 (Bosch 0261200484) | Audi S2 B3 Coupe (3B engine) | 1267356530 | `0x9245FA10` | ✓ REAL |
+| `s2_boost_404.bin` | 895907404 boost | S2 B3 boost MCU (8KB exec code), cal tag 0xA027 | — | `0x604AB965` | ✓ REAL |
 | `rr_fuel-ign_404b.bin` | 857907404B | UrQuattro RR S2 Coupe | 1267356261 | `0xFBE0A74A` | ✓ REAL |
 | `rr_boost_404b.bin` | 857907404B boost | RR boost MCU (8KB exec code) | — | `0xEA8D46DF` | ✓ REAL |
 
@@ -30,6 +32,15 @@ including blank/erased chips not stored here.
   calibration — they are different tunes on different hardware revisions
 - 3B and RR share **identical firmware** (0 code differences); only calibration differs
   (~5,976 bytes) — RR runs leaner mid-range
+- **S2 B3 (895907404, 0261200484)** fuel/ign chip is firmware-identical to the 3B 447907404AA
+  (0 code bytes differ, 1,578 cal bytes differ). Ign map 1 is byte-identical across S2/3B/RR;
+  ign maps 2–4 differ by ~90 cells (S2 ≈ +0.2° mean). Fuel: S2 mean raw 140.4, 3B 141.4, RR 135.5.
+  The RR fuel chip has 4,753 bytes of *different firmware code* at 0x4893–0x5B23 vs both 3B and S2.
+- **All three 8KB boost chips (3B / RR / S2) run identical MCU code.** Only calibration differs:
+  six 8×16 tables at 0x18B4 / 0x1934 / 0x19B4 / 0x1A34 / 0x1AB4 / 0x1B34 (all three differ),
+  plus 0x1C60–0x1DFC and 0x1E20–0x1EC8 (S2 differs from 3B=RR), plus the 6-byte tail at 0x1FFA.
+  The 8×8 block at 0x1650 previously listed as "Boost Target" is identical on all three chips.
+  Bosch pairs each boost chip with its fuel chip by consecutive cal tags (S2: 0xA027 / 0xA028).
 
 ---
 

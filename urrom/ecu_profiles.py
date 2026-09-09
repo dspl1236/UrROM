@@ -651,10 +651,39 @@ _BOOST_3B_LOAD_AXIS = [1, 2, 3, 4, 5, 6, 7, 8]
 _MAPS_BOOST_404 = [
     MapDef("Boost Target",
            "3B/RR boost target tables at 0x1650+ (direct RE session 2026). "
-           "Executable MCU code chip — tables in upper data region.",
+           "Executable MCU code chip — tables in upper data region. "
+           "NOTE 2026-09: this block is byte-identical on 3B 404AA, RR 404B and S2 "
+           "boost chips, so it is NOT where the per-application boost calibration lives.",
            main_addr=0x1650, rows=8, cols=8,
            map_type="boost", unit="raw", chip="boost",
            confidence="PROVISIONAL"),
+]
+
+# Six 128-byte tables that DO differ between the 3B (447907404AA), RR (857907404B)
+# and S2 (895907404) boost chips — found 2026-09 by three-way diff.  The pointer
+# list at 0x1600 references each of them as (table, 0x189A, 0x18A3) triplets, so
+# 0x189A / 0x18A3 are most likely the shared X / Y axis arrays.
+# Tables A-C hold high values (0x74-0xF4, rising with row/col) — candidates for
+# N75 duty cycle or boost target.  Tables D-F hold low values (0x02-0xAC) —
+# candidates for a correction / limit map.  Function unconfirmed: read-only.
+_MAPS_BOOST_404 += [
+    MapDef(f"Boost table {tag} (0x{addr:04X}, unknown)",
+           f"8×16 calibration table at 0x{addr:04X} on the 3B/RR/S2 8KB boost MCU. "
+           f"Differs between 3B / RR / S2 chips. {desc} "
+           "Axes probably at 0x189A (X) / 0x18A3 (Y). Function NOT confirmed — "
+           "view and compare only, do not write.",
+           main_addr=addr, rows=8, cols=16,
+           map_type="raw", unit="raw", chip="boost",
+           confidence="UNCONFIRMED",
+           notes="RR chip carries the highest values in tables A-C, S2 the lowest at high load.")
+    for tag, addr, desc in [
+        ("A", 0x18B4, "High-valued (0x76-0xDE). Rises with row and column."),
+        ("B", 0x1934, "High-valued (0x74-0xE4). Rises with row and column."),
+        ("C", 0x19B4, "High-valued (0x74-0xF4). Rises with row and column."),
+        ("D", 0x1A34, "Low-valued (0x02-0xAC)."),
+        ("E", 0x1AB4, "Low-valued (0x02-0xAC)."),
+        ("F", 0x1B34, "Low-valued (0x02-0xAC)."),
+    ]
 ]
 
 
@@ -1897,7 +1926,15 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0xFBE0A74A: ("404",      "Stock — RR fuel/ign, 857907404B (UrQuattro RR S2 Coupe). "
                               "ROM ID: 857907404 B  MOTOR  PMC 02. Direct chip read. "
                               "Firmware identical to 3B (0xF004). Calibration differs ~5976 bytes."),
-    0x9245FA10: ("404",       "Stock — 3B Audi S2 (0261200484 MapFinder bin)"),
+    0x9245FA10: ("404",       "Stock — S2 B3 3B fuel/ign, 895907404 (no suffix), Bosch 0261200484, "
+                              "ROM PN 1267356530, cal tag 0xA028. Firmware byte-identical to 3B 447907404AA "
+                              "(0 code diffs); 1578 cal bytes differ. Ign map 1 identical to 3B/RR, "
+                              "ign 2-4 marginally more advance, fuel slightly leaner than 3B AA. "
+                              "Same bin PRJ MapFinder used for the 3B map addresses. Direct chip read."),
+    0x604AB965: ("404_boost", "Stock — S2 B3 3B boost chip, 8KB, cal tag 0xA027 (pairs with 0x9245FA10). "
+                              "Boost MCU code identical to 3B/RR boost chips; calibration differs in six "
+                              "8×16 tables at 0x18B4-0x1BB4 plus S2-only regions 0x1C60-0x1DFC / 0x1E20-0x1EC8. "
+                              "Direct chip read."),
     # AAN 551A/551AA direct chip reads — 2026-03 RE session
     # 551A = early AAN, D02 trigger (distributor hall, like 3B), 8KB boost chip
     # 551AA = late AAN, D03+HS trigger (cam pulley hall), 32KB boost chip
@@ -2253,6 +2290,23 @@ def apply_checksum(rom: bytearray) -> bytearray:
         for i in range(MAIN_CHIP_WORKING):
             rom[MIRROR_OFFSET + i] = rom[i]
     return rom
+
+
+# Variants whose working half carries a software checksum at 0x3FFA-0x3FFD.
+# 551x (64KB doubled) working halves reserve those bytes; prjmod/TunerPro
+# (M232csum.dll) compute a sum there and UrROM re-applies it on save.
+#
+# NOT the 32KB flat 404 / 404V8 chips: on those files 0x3FFA-0x3FFF sits in
+# the middle of the 8051 firmware (3B 447907404AA has 79 9B E3 75 F0 04 there —
+# live code).  Writing a checksum into a 404 chip corrupts the firmware.
+CHECKSUM_VARIANTS: frozenset[str] = frozenset(
+    {"551AA_0202", "551C", "551B", "551B_D02", "551AA", "551A", "551D"})
+
+
+def has_software_checksum(variant) -> bool:
+    """True if UrROM should verify / re-apply the 0x3FFA checksum for this variant."""
+    sw = getattr(variant, "software_id", variant) if variant is not None else ""
+    return sw in CHECKSUM_VARIANTS
 
 
 def read_build_number(rom: bytes) -> int:

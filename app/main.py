@@ -167,7 +167,7 @@ class InfoStrip(QFrame):
 
         # Checksum — distinguish computed/stored for prjmod, stock ID string for Bosch
         from urrom.ecu_profiles import verify_checksum, compute_checksum, read_stored_checksum
-        CHECKSUM_VARIANTS = {"551AA_0202","551C","551B","551B_D02","551AA","551A","404","404V8"}
+        from urrom.ecu_profiles import CHECKSUM_VARIANTS
         sw = det.variant.software_id if det.variant else ""
         if sw in CHECKSUM_VARIANTS:
             # PRJmod / tuned: has a computed checksum
@@ -407,7 +407,7 @@ class OverviewTab(QWidget):
 
         # Checksum state
         sw_id = v.software_id if v else ""
-        CHECKSUM_VARIANTS = {"551AA_0202","551C","551B","551B_D02","551AA","551A","404","404V8"}
+        from urrom.ecu_profiles import CHECKSUM_VARIANTS
         if sw_id in CHECKSUM_VARIANTS:
             self._checksum_lbl.setText("PRJmod checksum: applied on save")
         else:
@@ -4135,8 +4135,7 @@ class MainWindow(QMainWindow):
 
         variant = self._det.variant if self._det else None
         sw_id = getattr(variant, "software_id", "") if variant else ""
-        CHECKSUM_VARIANTS = {"551AA_0202", "551C", "551B", "551B_D02",
-                             "551AA", "551A", "404", "404V8"}
+        from urrom.ecu_profiles import CHECKSUM_VARIANTS
         needs_checksum = sw_id in CHECKSUM_VARIANTS
         if needs_checksum:
             old_cs = bytes(rom_out[0x3FFA:0x3FFE])
