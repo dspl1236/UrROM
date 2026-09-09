@@ -179,9 +179,16 @@ Addresses are direct ROM offsets in the 32KB chip.
 | Fuel Map 2 (mirror) | 0x6C1C | 16×16 |
 | Fuel Map 3 (mirror) | 0x6D74 | 16×16 |
 | Fuel Map 4 (WOT enrichment) | 0x6E98 | 16×16 |
-| Ign Map 1 | 0x7076 | 16×16 |
-| Ign Map 2 | 0x7667 | 16×16 |
-| Ign Map 3 | 0x77CF | 16×16 |
+| Ign Map 1 (identical 3B/RR/S2) | 0x7076 | 16×16 |
+| Ign Map 2 | 0x71F8 | 16×16 |
+| Ign Map 3 (S2 differs in 251/256 cells) | 0x731C | 16×16 |
+| Ign Map 4 | 0x7440 | 16×16 |
+| Ign Map 5 | 0x7667 | 16×16 |
+| Ign Map 6 | 0x77CF | 16×16 |
+| Ign Map 7 | 0x7937 | 16×16 |
+
+All eleven confirmed from the firmware's own descriptor tables (2026-09); axes
+RPM 600–7200, load 14–190. `python -m urrom.cli maps <chip>` lists all 126 tables.
 
 ## Map Addresses — V8 557 / 404V8 (preliminary, unconfirmed)
 

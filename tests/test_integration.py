@@ -738,3 +738,50 @@ class Test551Descriptors:
         assert out[MFTS_BYPASS_OFFSET:MFTS_BYPASS_OFFSET + 2] == MFTS_BYPASS_PATCH
         assert out[0x8000:] == full[0x8000:]
         assert "firmware half written (patched)" in notes
+
+
+# -- 404 (3B/RR/S2) firmware descriptor tables (2026-09) -----------------------
+
+class Test404Descriptors:
+    """The 3B firmware uses the same READ_MAP descriptor mechanism as the 551,
+    in a flat 32KB address space (index tables 0x6000+, pointers 0x65D0+)."""
+
+    _IGN = [0x7076, 0x71F8, 0x731C, 0x7440, 0x7667, 0x77CF, 0x7937]
+    _FUEL = [0x6A8E, 0x6C1C, 0x6D74, 0x6E98]
+
+    def _rpm_load_16x16(self, name):
+        from urrom.ecu_profiles import decode_descriptor_tables
+        rom = bytes(load_rom(name))
+        if len(rom) != 0x8000:
+            import pytest; pytest.skip(f"{name} is not a 32KB flat image")
+        maps = decode_descriptor_tables(rom)
+        return [m["data"] for m in maps
+                if m["two_d"] and m["rows"] == 16 and m["cols"] == 16
+                and m["x_input"] == 0x3A and m["y_input"] == 0x3F]
+
+    def test_3b_rr_s2_have_eleven_16x16_maps(self):
+        for name in ("3b_fuel-ign_404aa.bin", "rr_fuel-ign_404b.bin", "s2_fuel-ign_404.bin"):
+            assert self._rpm_load_16x16(name) == sorted(self._FUEL + self._IGN), name
+
+    def test_variant_404_list_matches_firmware(self):
+        from urrom.ecu_profiles import VARIANT_404
+        listed = {m.main_addr for m in VARIANT_404.main_maps if m.rows == 16 and m.cols == 16}
+        assert listed == set(self._FUEL + self._IGN)
+        ign = [m for m in VARIANT_404.main_maps if m.map_type == "ign" and m.rows == 16]
+        assert len(ign) == 7 and all(m.confidence == "CONFIRMED" for m in ign)
+
+    def test_3b_exact_axes(self):
+        from urrom.ecu_profiles import VARIANT_404, get_axes, _RPM_AXIS_551
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        m = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x7076)
+        rpm, load = get_axes(rom, m, VARIANT_404)
+        assert rpm == _RPM_AXIS_551                      # 600 .. 7200, same as the 551
+        assert load == [14, 24, 34, 44, 54, 66, 78, 90, 100, 110, 120, 130, 140, 154, 174, 190]
+
+    def test_new_3b_ign_maps_decode_as_ignition(self):
+        from urrom.ecu_profiles import VARIANT_404, read_map_decoded
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        for addr in (0x71F8, 0x731C, 0x7440):
+            m = next(m for m in VARIANT_404.main_maps if m.main_addr == addr)
+            vals = [v for row in read_map_decoded(rom, m) for v in row]
+            assert 5.0 <= min(vals) and max(vals) <= 45.0, hex(addr)

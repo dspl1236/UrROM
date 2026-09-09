@@ -384,71 +384,78 @@ _MAPS_551A_MAIN = _stock_0e13_family(
 #   Ign maps:   0x7052, 0x7643, 0x77AB, 0x7913
 # Data offset = header + 36
 
+# 3B / RR / S2 (404) map list — decoded from the chip's own descriptor tables
+# (2026-09, same READ_MAP mechanism as the 551 at 0x0D92; base-pointer stubs at
+# 0x3423+ load index tables at 0x6000+ and pointer tables at 0x65D0+).  Eleven
+# 16x16 RPM x LOAD maps: 4 fuel + 7 ignition — the same 1+7 ignition structure
+# as the 551.  Three of the ignition maps (0x71F8 / 0x731C / 0x7440) were not
+# in the original MapFinder-derived list.  Axes decode exactly: RPM 600…7200,
+# load 14…190.  Descriptor = data − 36 for the 16x16 maps.
+
+def _b3_fuel(name, addr, desc):
+    return MapDef(name, desc, main_addr=addr, rows=16, cols=16,
+                  map_type="fuel", unit="raw",
+                  decode=fuel_decode, encode=fuel_encode,
+                  confidence="CONFIRMED",
+                  notes="Firmware descriptor table (X=RPM 3Ah, Y=LOAD 3Fh). Stock 117–205 raw.")
+
+def _b3_ign(name, addr, desc):
+    return MapDef(name, desc, main_addr=addr, rows=16, cols=16,
+                  map_type="ign", unit="°BTDC",
+                  decode=ign_decode_3b, encode=ign_encode_3b,
+                  confidence="CONFIRMED",
+                  notes="Firmware descriptor table (X=RPM 3Ah, Y=LOAD 3Fh). "
+                        "Which condition selects it is still to be traced.")
+
+def _b3_raw(name, addr, rows, cols, desc, unit="raw", conf="PROVISIONAL", decode=None, encode=None):
+    return MapDef(name, desc, main_addr=addr, rows=rows, cols=cols,
+                  map_type="raw" if decode is None else "ign", unit=unit,
+                  decode=decode, encode=encode, confidence=conf,
+                  notes="Address and axes firmware-confirmed; function not yet traced.")
+
 _MAPS_3B_MAIN = [
-    MapDef("Fuel Map 1",
-           "Part-throttle fuel map 1. Header @ 0x6A6A, data +36 bytes.",
-           main_addr=0x6A6A + 36, rows=16, cols=16,
-           map_type="fuel", unit="raw",
-           decode=fuel_decode, encode=fuel_encode,
-           confidence="CONFIRMED",
-           notes="Verified from MapFinder + bin. Values 117-205."),
+    _b3_fuel("Fuel Map 1", 0x6A8E, "Part-throttle fuel map 1 (primary). Header @ 0x6A6A, data +36."),
+    _b3_fuel("Fuel Map 2", 0x6C1C, "Fuel map 2 — identical to map 1 in stock chips (alternate/failsafe copy)."),
+    _b3_fuel("Fuel Map 3", 0x6D74, "Fuel map 3 — identical to map 1 in stock chips (alternate copy)."),
+    _b3_fuel("Fuel Map 4", 0x6E98, "Fuel map 4 — WOT / high-load enrichment (up to raw 205 on the S2 chip)."),
+    _b3_ign("Ignition Map 1 (PT primary)", 0x7076,
+            "Primary part-throttle ignition. Byte-identical on 3B / RR / S2. Decode raw×0.75−22.5."),
+    _b3_ign("Ignition Map 2", 0x71F8, "Ignition map 2 (newly found 2026-09; differs S2 vs 3B)."),
+    _b3_ign("Ignition Map 3", 0x731C, "Ignition map 3 (newly found 2026-09)."),
+    _b3_ign("Ignition Map 4", 0x7440, "Ignition map 4 (newly found 2026-09)."),
+    _b3_ign("Ignition Map 5", 0x7667, "Ignition map 5 (was listed as map 2)."),
+    _b3_ign("Ignition Map 6", 0x77CF, "Ignition map 6 (was listed as map 3)."),
+    _b3_ign("Ignition Map 7", 0x7937, "Ignition map 7 (was listed as map 4)."),
 
-    MapDef("Fuel Map 2",
-           "Part-throttle fuel map 2.",
-           main_addr=0x6BF8 + 36, rows=16, cols=16,
-           map_type="fuel", unit="raw",
-           decode=fuel_decode, encode=fuel_encode,
-           confidence="CONFIRMED"),
-
-    MapDef("Fuel Map 3",
-           "Part-throttle fuel map 3.",
-           main_addr=0x6D50 + 36, rows=16, cols=16,
-           map_type="fuel", unit="raw",
-           decode=fuel_decode, encode=fuel_encode,
-           confidence="CONFIRMED"),
-
-    MapDef("Fuel Map 4",
-           "Part-throttle fuel map 4 (high load).",
-           main_addr=0x6E74 + 36, rows=16, cols=16,
-           map_type="fuel", unit="raw",
-           decode=fuel_decode, encode=fuel_encode,
-           confidence="CONFIRMED"),
-
-    MapDef("Ignition Map 1 (PT primary)",
-           "Primary part-throttle ignition map. Decode: raw×0.75−22.5=°BTDC",
-           main_addr=0x7052 + 36, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode_3b, encode=ign_encode_3b,
-           confidence="CONFIRMED",
-           notes="Verified: 8-14°BTDC at PT idle. Standard Motronic formula."),
-
-    MapDef("Ignition Map 2",
-           "Part-throttle ignition map 2.",
-           main_addr=0x7643 + 36, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode_3b, encode=ign_encode_3b,
-           confidence="CONFIRMED"),
-
-    MapDef("Ignition Map 3",
-           "Part-throttle ignition map 3.",
-           main_addr=0x77AB + 36, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode_3b, encode=ign_encode_3b,
-           confidence="CONFIRMED"),
-
-    MapDef("Ignition Map 4",
-           "Part-throttle ignition map 4.",
-           main_addr=0x7913 + 36, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode_3b, encode=ign_encode_3b,
-           confidence="CONFIRMED"),
+    # Smaller RPM x LOAD tables the firmware references (function TBD)
+    _b3_raw("Idle/Low-load Ign A (0x7C06)", 0x7C06, 4, 6,
+            "4 RPM x 6 load, first of three sibling blocks — the 551's idle-ignition family.",
+            unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
+    _b3_raw("Idle/Low-load Ign B (0x7C2C)", 0x7C2C, 4, 6, "Second sibling 4x6 block.",
+            unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
+    _b3_raw("Idle/Low-load Ign C (0x7C52)", 0x7C52, 4, 6, "Third sibling 4x6 block.",
+            unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
+    _b3_raw("Idle/Low-load Ign D (0x7CF0)", 0x7CF0, 4, 6, "Fourth 4x6 block (+0xEA).",
+            unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
+    _b3_raw("Idle/Low-load Ign E (0x7D16)", 0x7D16, 4, 6, "Fifth 4x6 block.",
+            unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
+    _b3_raw("RPM x Load 6x8 (0x7CB2)", 0x7CB2, 6, 8, "6 RPM x 8 load table."),
+    _b3_raw("RPM x Load 6x4 (0x7D4A)", 0x7D4A, 6, 4, "6 RPM x 4 load table."),
+    _b3_raw("RPM x Load 6x4 (0x698E)", 0x698E, 6, 4, "6 RPM x 4 load table (800–…rpm)."),
+    _b3_raw("RPM x Load 5x3 (0x6A31)", 0x6A31, 5, 3, "5 RPM x 3 load table."),
+    _b3_raw("RPM x Load 3x4 (0x69B1)", 0x69B1, 3, 4, "3 RPM x 4 load table."),
+    _b3_raw("Dwell / RPM x UBAT 12x12 (0x68BA)", 0x68BA, 12, 12,
+            "12 RPM x 12 battery-voltage table — the 551 has the same shape as its dwell map."),
+    _b3_raw("RPM x UBAT 12x7 (0x7583)", 0x7583, 12, 7, "12 RPM x 7 battery-voltage table."),
+    _b3_raw("RPM x IAT 6x4 (0x6B9C)", 0x6B9C, 6, 4,
+            "6 RPM x 4 IAT table — differs S2 vs 3B (IAT breakpoints 82.. vs 120..)."),
 
     MapDef("End-of-Cal RPM table",
-           "32-byte RPM table at WH 0x3FE0–0x3FFF. Values × 40 = RPM. "
-           "Likely RPM-threshold array (ign/fuel cut). NOT a simple rev limit.",
+           "32-byte RPM table at 0x3FE0–0x3FFF. On the 404 this sits inside firmware; "
+           "kept for reference only. DO NOT write.",
            main_addr=0x3FE0, rows=2, cols=16,
            map_type="raw", unit="RPM",
-           confidence="PROVISIONAL"),
+           confidence="UNCONFIRMED"),
 ]
 
 # ── V8 maps ───────────────────────────────────────────────────────────────────
@@ -2658,41 +2665,52 @@ def find_descriptor_base_pairs(firmware: bytes) -> list[tuple[int, int]]:
             vals[raw[1]] = raw[2]
             if len(vals) == 4:
                 pairs.add(((vals[0x77] << 8) | vals[0x78], (vals[0x75] << 8) | vals[0x76]))
-    return sorted(p for p in pairs
-                  if 0x8000 <= p[0] < 0x10000 and 0x8000 <= p[1] < 0x10000)
+    limit = 0x10000 if len(firmware) <= MAIN_CHIP_WORKING else len(firmware)
+    return sorted(p for p in pairs if p[0] < limit and p[1] < limit)
 
 
 def decode_descriptor_tables(full_rom: bytes) -> list[dict]:
     """
     Enumerate every calibration map a 551 chip's firmware references.
 
-    full_rom must be the 64KB split-bank image (firmware low, calibration high).
+    full_rom is the 64KB split-bank image (551: firmware low, calibration high)
+    or the 32KB flat image (3B/RR/S2 404: one address space).  Offsets returned
+    are working-half offsets (cal-relative for 551, absolute for 404).
     Each result dict: data (WH offset of map data), desc (WH offset of descriptor),
     rows, cols, x_input, y_input (RAM addr or None), x_axis, y_axis (decoded),
     two_d (bool).  Sorted by data address; duplicates (several index entries
     naming the same descriptor) are merged.
     """
-    if len(full_rom) < MAIN_CHIP_PHYSICAL:
+    if len(full_rom) >= MAIN_CHIP_PHYSICAL:
+        # 551 split-bank: firmware low, calibration high; cal addresses are 0x8000-based
+        fw = full_rom[:MAIN_CHIP_WORKING]
+        cal = full_rom[MAIN_CHIP_WORKING:MAIN_CHIP_PHYSICAL]
+        base = 0x8000
+    elif len(full_rom) == MAIN_CHIP_WORKING:
+        # 3B/RR/S2 (404) 32KB flat: firmware + calibration share one address space
+        fw = full_rom
+        cal = full_rom
+        base = 0
+    else:
         return []
-    fw = full_rom[:MAIN_CHIP_WORKING]
-    cal = full_rom[MAIN_CHIP_WORKING:MAIN_CHIP_PHYSICAL]
-    pairs = find_descriptor_base_pairs(fw)
+    pairs = [(a, b) for a, b in find_descriptor_base_pairs(fw)
+             if a >= base and b >= base and a - base < len(cal) and b - base < len(cal)]
     idx_bases = sorted({ib for ib, _ in pairs})
     seen: dict[tuple[int, int], dict] = {}
     for ib, pb in pairs:
         nxt = min([x for x in idx_bases if x > ib] + [ib + 0x100])
         for k in range(nxt - ib):
-            off = cal[ib - 0x8000 + k]
+            off = cal[ib - base + k]
             if off == 0xFF:
                 continue
             two_d = bool(off & 1)
-            pt = pb - 0x8000 + (off & 0xFE)
+            pt = pb - base + (off & 0xFE)
             if pt + 1 >= len(cal):
                 continue
             ptr = (cal[pt] << 8) | cal[pt + 1]
-            if not (0x8000 <= ptr < 0x10000):
+            if not (base <= ptr < base + len(cal)):
                 continue
-            wh = ptr - 0x8000
+            wh = ptr - base
             if wh + 2 > len(cal):
                 continue
             xin, nx = cal[wh], cal[wh + 1]
@@ -2831,7 +2849,9 @@ def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
         return rpm, load
 
     if sw in ("404", "404V8", "RR"):
-        # Header is at data_addr - 36
+        exact = read_descriptor_axes(rom, map_def.main_addr, map_def.rows, map_def.cols)
+        if exact is not None:
+            return exact
         header_addr = map_def.main_addr - 36
         return read_axes_from_header(rom, header_addr, map_def.rows, map_def.cols)
 

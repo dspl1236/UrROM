@@ -82,6 +82,29 @@ wrong half. They are firmware-referenced RPM×LOAD tables; downgrade reverted.
 Also confirmed: the "idle ignition" blocks are 4×6 (RPM×LOAD) at ADU 0x3D00 /
 0x3E60 (ABY 0x3CFC / 0x3E5C); the older 3×6 view began one row in.
 
+## 3b. The same mechanism on the 3B / RR / S2 (404) fuel/ign chip
+
+The M2.3 404 firmware has a byte-for-byte structural twin of READ_MAP at
+`0x0D92` (same PUSH sequence, same 77h:78h index / 75h:76h pointer bases, same
+2-D flag in bit 0). Base-pointer stubs start at `0x3423`
+(`MOV 75h,#65h; MOV 76h,#D0h; MOV 77h,#60h; MOV 78h,#00h`): index tables at
+`0x6000+`, pointer tables at `0x65D0+`, all flat 32 KB addresses. 58 base
+pairs → 126 descriptors, identical set on 3B 404AA, 404A, RR 404B and S2.
+
+Eleven 16×16 RPM×LOAD maps — 4 fuel + **7 ignition**, the 551's structure:
+
+| Fuel | 0x6A8E | 0x6C1C | 0x6D74 | 0x6E98 | | | |
+|---|---|---|---|---|---|---|---|
+| **Ign** | 0x7076 | **0x71F8** | **0x731C** | **0x7440** | 0x7667 | 0x77CF | 0x7937 |
+
+The three bold ignition maps were missing from the MapFinder-derived list.
+Ign map 1 is identical on 3B / RR / S2; map 3 (0x731C) differs from the S2
+chip in 251 of 256 cells. Axes decode exactly: RPM 600…7200 (same deltas as
+the 551), load 14…190. `python -m urrom.cli maps roms/3b_fuel-ign_404aa.bin`
+lists everything, including the 4×6 idle-ignition family at 0x7C06–0x7D16,
+the 12×12 RPM×UBAT (dwell-shaped) table at 0x68BA and the ECT×IAT warm-up
+tables.
+
 ## 4. Open items
 
 - Which of the seven ignition maps is active under which condition
