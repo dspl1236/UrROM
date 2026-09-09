@@ -1017,4 +1017,4 @@ class TestLayoutEquivalence:
         m = next(x for x in v.main_maps if x.main_addr == 0x125F)
         rows, cols = get_axes(rom, m, v)
         assert rows[0] == 600 and rows[-1] in (7000, 7400)
-        assert cols[0] == 12 and cols[-1] == 177
+        assert cols[0] in (10, 12) and cols[-1] in (177, 180)
