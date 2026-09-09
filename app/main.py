@@ -166,16 +166,16 @@ class InfoStrip(QFrame):
         self._build_lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
 
         # Checksum — distinguish computed/stored for prjmod, stock ID string for Bosch
-        from urrom.ecu_profiles import verify_checksum, compute_checksum, read_stored_checksum
-        from urrom.ecu_profiles import CHECKSUM_VARIANTS
-        sw = det.variant.software_id if det.variant else ""
-        if sw in CHECKSUM_VARIANTS:
-            # PRJmod / tuned: has a computed checksum
+        from urrom.ecu_profiles import checksum_kind
+        kind = checksum_kind(det.variant)
+        if kind is not None:
+            # 551: PRJmod sum at 0x3FFA; 404: Bosch 16-bit sum at 0x7F00
+            where = "0x7F00" if kind == "404" else "0x3FFA"
             if det.checksum_ok:
-                self._cs_lbl.setText("✓ checksum OK")
+                self._cs_lbl.setText(f"✓ checksum OK ({where})")
                 self._cs_lbl.setStyleSheet(f"color: {GREEN}; font-size: 11px;")
             else:
-                self._cs_lbl.setText("✗ checksum BAD")
+                self._cs_lbl.setText(f"✗ checksum BAD ({where})")
                 self._cs_lbl.setStyleSheet(f"color: {RED}; font-size: 11px;")
         else:
             # Stock Bosch: ASCII part number at 0x3FFA, not a computed checksum
@@ -2660,8 +2660,9 @@ class HardwareTab(QWidget):
         sw = self._variant_name or "?"
         if is_404_family(sw):
             fam = ("M2.3 (404 family): 32 KB flat fuel/ignition chip + 8 KB boost-board chip. "
-                   "4 fuel + 7 ignition maps with firmware descriptors; no software checksum; "
-                   "boost targets and knock windows live on the boost chip.")
+                   "4 fuel + 7 ignition maps with firmware descriptors; 16-bit checksum at 0x7F00 "
+                   "(verified by the ECU at boot, maintained by UrROM on save); boost targets and "
+                   "knock windows live on the boost chip.")
         elif is_551_family(sw):
             fam = ("M2.3.2 (551/557 family): 64 KB split-bank chip (firmware low, calibration "
                    "high) + 32 KB boost chip. Firmware patches, LC/NLS scalars and SD mode "
@@ -2807,11 +2808,44 @@ class HardwareTab(QWidget):
             rec_lbl.setStyleSheet(f"color:{AMBER};font-size:10px;")
             layout.addWidget(rec_lbl)
 
+        # ── Editable scalars of an applied patch ──────────────────────
+        scalars = getattr(result, "scalars", None) or []
+        if scalars and result.status == "PATCHED" and self._wh is not None:
+            from PyQt5.QtWidgets import QSpinBox
+            for name, off, dec, enc, unit, lo, hi in scalars:
+                if off >= len(self._wh):
+                    continue
+                row = QHBoxLayout(); row.setSpacing(6)
+                n_lbl = QLabel(name)
+                n_lbl.setStyleSheet(f"color:{FG};font-size:11px;min-width:120px;")
+                n_lbl.setToolTip(f"WH 0x{off:04X}")
+                spin = QSpinBox()
+                spin.setRange(lo, hi)
+                step = 40 if unit == "RPM" else 1
+                spin.setSingleStep(step)
+                spin.setSuffix(f"  {unit}")
+                spin.setFixedWidth(110)
+                spin.setStyleSheet(
+                    f"QSpinBox{{background:{BG2};color:{FG};border:1px solid {BORDER};"
+                    f"border-radius:3px;padding:1px 4px;font-size:10px;}}")
+                raw0 = self._wh[off]
+                spin.blockSignals(True); spin.setValue(int(dec(raw0))); spin.blockSignals(False)
+                r_lbl = QLabel(f"raw 0x{raw0:02X}")
+                r_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+                spin.valueChanged.connect(
+                    lambda val, o=off, d=dec, e=enc, rl=r_lbl:
+                        (self._on_lc_scalar_changed(o, d, e, val),
+                         rl.setText(f"raw 0x{e(val):02X} ← edited"),
+                         rl.setStyleSheet(f"color:{AMBER};font-size:10px;")))
+                row.addWidget(n_lbl); row.addWidget(spin); row.addWidget(r_lbl); row.addStretch()
+                layout.addLayout(row)
+
         # ── Toggle buttons for toggleable firmware patches ────────────
         TOGGLEABLE = {
             "MFTS Boost Cut Bypass",
             "Load Overflow Decap",
             "Lambda Cold-Start Delay",
+            "3B Spark-Cut Launch Control",
         }
         if result.name in TOGGLEABLE and result.category == "firmware":
             btn_row = QHBoxLayout()
@@ -4353,6 +4387,11 @@ class MainWindow(QMainWindow):
         # Wire firmware patch apply/revert callback
         def _on_patch_toggle(patch_name, action, value):
             fw = self._main_fw
+            sw_now = self._det.variant.software_id if self._det and self._det.variant else ""
+            from urrom.hw_patches import is_404_family
+            if fw is None and is_404_family(sw_now) and self._main_rom is not None:
+                # 32 KB flat chip: firmware and calibration are the same bytes
+                fw = self._main_rom
             if fw is None:
                 QMessageBox.warning(
                     self, "No firmware half",
@@ -4367,6 +4406,18 @@ class MainWindow(QMainWindow):
                     apply_load_decap(fw)
                 elif patch_name == "Lambda Cold-Start Delay":
                     apply_lambda_delay(fw, value if value is not None else 0xFF)
+                elif patch_name == "3B Spark-Cut Launch Control":
+                    from urrom.hw_patches import apply_lc3b
+                    r = QMessageBox.warning(
+                        self, "Spark-cut launch control",
+                        "This installs vwnut8392's hard spark-cut launch control (S&M Msport "
+                        "V1.01) into the firmware.\n\nIt needs ECU pin 38 cut and wired to a "
+                        "clutch switch, and it can damage the engine, turbo or exhaust if "
+                        "abused. Off-road use only.\n\nInstall it?",
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if r != QMessageBox.Yes:
+                        return
+                    apply_lc3b(fw)
             elif action == "revert":
                 if patch_name == "MFTS Boost Cut Bypass":
                     revert_mfts_bypass(fw)
@@ -4374,6 +4425,9 @@ class MainWindow(QMainWindow):
                     revert_load_decap(fw)
                 elif patch_name == "Lambda Cold-Start Delay":
                     revert_lambda_delay(fw)
+                elif patch_name == "3B Spark-Cut Launch Control":
+                    from urrom.hw_patches import revert_lc3b
+                    revert_lc3b(fw)
             self._set_dirty()
             # Refresh hardware tab with the updated firmware bytes
             sw = self._det.variant.software_id if self._det and self._det.variant else ""
@@ -4516,12 +4570,20 @@ class MainWindow(QMainWindow):
 
         variant = self._det.variant if self._det else None
         sw_id = getattr(variant, "software_id", "") if variant else ""
-        from urrom.ecu_profiles import CHECKSUM_VARIANTS
-        needs_checksum = sw_id in CHECKSUM_VARIANTS
-        if needs_checksum:
+        from urrom.ecu_profiles import checksum_kind, apply_checksum_for
+        kind = checksum_kind(variant)
+        if kind == "551":
             old_cs = bytes(rom_out[0x3FFA:0x3FFE])
-            rom_out = apply_checksum(rom_out)
+            rom_out = apply_checksum_for(rom_out, variant)
             cs_changed = bytes(rom_out[0x3FFA:0x3FFE]) != old_cs
+        elif kind == "404":
+            # firmware patches on a flat 404 chip live in the same 32 KB
+            if getattr(self, "_main_fw", None) is not None and len(self._main_fw) == len(rom_out):
+                rom_out = bytearray(self._main_fw)
+                rom_out = self._main_chip_tab.commit_to_rom(rom_out)
+            old_cs = bytes(rom_out[0x7F00:0x7F02])
+            rom_out = apply_checksum_for(rom_out, variant)
+            cs_changed = bytes(rom_out[0x7F00:0x7F02]) != old_cs
         else:
             cs_changed = False
 

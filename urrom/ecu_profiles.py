@@ -2505,6 +2505,65 @@ def apply_checksum(rom: bytearray) -> bytearray:
     return rom
 
 
+# ── 404 (3B / RR / S2) checksum: 16-bit sum of 0x0000..0x7EFF, big-endian at
+# 0x7F00, right in front of the ID string.  The firmware verifies it at boot
+# (3B 0x497A: sums pages 0x00..0x7E, compares with 0x7F00/0x7F01, sets 2Eh.0
+# and logs a fault on mismatch).  Found 2026-09-09 via vwnut8392's launch-
+# control patch, whose V1.01 "corrected the checksum address".
+CHECKSUM_404_ADDR = 0x7F00
+CHECKSUM_404_END  = 0x7F00
+CHECKSUM_404_VARIANTS: frozenset[str] = frozenset({"404", "RR"})
+
+
+def compute_checksum_404(rom: bytes) -> int:
+    return sum(rom[:CHECKSUM_404_END]) & 0xFFFF
+
+
+def read_stored_checksum_404(rom: bytes) -> int:
+    return (rom[CHECKSUM_404_ADDR] << 8) | rom[CHECKSUM_404_ADDR + 1]
+
+
+def verify_checksum_404(rom: bytes) -> bool:
+    if len(rom) < CHECKSUM_404_ADDR + 2:
+        return False
+    return read_stored_checksum_404(rom) == compute_checksum_404(rom)
+
+
+def apply_checksum_404(rom: bytearray) -> bytearray:
+    cs = compute_checksum_404(bytes(rom))
+    rom[CHECKSUM_404_ADDR]     = (cs >> 8) & 0xFF
+    rom[CHECKSUM_404_ADDR + 1] = cs & 0xFF
+    return rom
+
+
+def checksum_kind(variant) -> str | None:
+    """'551' (0x3FFA sum+complement on the calibration half), '404' (0x7F00 sum), or None."""
+    sw = getattr(variant, "software_id", variant) if variant is not None else ""
+    if sw in CHECKSUM_VARIANTS:
+        return "551"
+    if sw in CHECKSUM_404_VARIANTS:
+        return "404"
+    return None
+
+
+def verify_checksum_for(rom: bytes, variant) -> bool | None:
+    kind = checksum_kind(variant)
+    if kind == "551":
+        return verify_checksum(rom)
+    if kind == "404":
+        return verify_checksum_404(rom)
+    return None
+
+
+def apply_checksum_for(rom: bytearray, variant) -> bytearray:
+    kind = checksum_kind(variant)
+    if kind == "551":
+        return apply_checksum(rom)
+    if kind == "404":
+        return apply_checksum_404(rom)
+    return rom
+
+
 # Variants whose working half carries a software checksum at 0x3FFA-0x3FFD.
 # 551x (64KB doubled) working halves reserve those bytes; prjmod/TunerPro
 # (M232csum.dll) compute a sum there and UrROM re-applies it on save.
@@ -2517,9 +2576,8 @@ CHECKSUM_VARIANTS: frozenset[str] = frozenset(
 
 
 def has_software_checksum(variant) -> bool:
-    """True if UrROM should verify / re-apply the 0x3FFA checksum for this variant."""
-    sw = getattr(variant, "software_id", variant) if variant is not None else ""
-    return sw in CHECKSUM_VARIANTS
+    """True if UrROM should verify / re-apply a software checksum for this variant."""
+    return checksum_kind(variant) is not None
 
 
 def assemble_output(wh: bytes, variant, original_full: bytes | None,
@@ -2600,7 +2658,8 @@ def detect_rom(rom: bytes) -> DetectionResult:
     """
     crc    = zlib.crc32(rom[:MAIN_CHIP_WORKING] if len(rom) >= MAIN_CHIP_WORKING
                         else rom) & 0xFFFFFFFF
-    cs_ok  = verify_checksum(rom)
+    # 551: 0x3FFA sum+complement on the calibration half; 404 flat chips: 0x7F00 sum
+    cs_ok  = verify_checksum(rom) or verify_checksum_404(rom)
     build  = read_build_number(rom)
 
     # 1. CRC32 exact match

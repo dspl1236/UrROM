@@ -108,7 +108,7 @@ PRJmod firmware patches (from vwnut8392 patcher XDF, target: 8A0 907 551B only)
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -125,6 +125,8 @@ class PatchResult:
     applicable: bool = False           # can this patch be applied via UI?
     recommended: bool = False          # is this patch recommended?
     in_scope: bool = True              # does this check mean anything on the loaded chip?
+    # Editable bytes of an applied patch: (name, wh_offset, decode, encode, unit, lo, hi)
+    scalars: list = field(default_factory=list)
 
 
 # ── Feature scope per chip family ────────────────────────────────────────────
@@ -151,6 +153,7 @@ FEATURE_SCOPE: dict[str, "callable"] = {
     "r201_swap":         is_551_family,
     "lc_nls_detect":     is_551_family,
     "fw_patches_551":    is_551_family,      # MFTS / load decap / lambda delay offsets are 551 firmware
+    "fw_patches_404":    lambda sw: sw in ("404", "RR"),   # 3B/RR/S2 launch control (vwnut8392)
     "coding_plug":       lambda sw: True,
     "boost_chip":        lambda sw: True,
 }
@@ -165,6 +168,7 @@ _RESULT_SCOPE = {
     "MFTS Boost Cut Bypass":         "fw_patches_551",
     "Load Overflow Decap":           "fw_patches_551",
     "Lambda Cold-Start Delay":       "fw_patches_551",
+    "3B Spark-Cut Launch Control":   "fw_patches_404",
 }
 
 
@@ -312,6 +316,88 @@ LAMBDA_DELAY_OFFSET = 0x5EFA   # immediate operand of MOV 30h, #imm
 LAMBDA_DELAY_STOCK  = 0x9F     # 159 cycles
 LAMBDA_DELAY_EXTENDED = 0xFF   # 255 cycles (maximum single-byte)
 LAMBDA_DELAY_MINIMAL  = 0x01   # near-instant lambda enable
+
+
+# ── 3B / RR spark-cut launch control (vwnut8392, S&M Msport Patch V1.01) ───
+#
+# Source: S2Forum m232.org thread 2040975; diffed 2026-09-09 from a TunerPro-
+# patched 447907404A chip against roms/3b_fuel-ign_404a.bin.  86 bytes differ:
+#   0x06C9  MOV A,53h ; SUBB A,58h  ->  LCALL 62A0h ; NOP      (hook in the ignition path)
+#   0x16B1  JNB 21h.0,+8   -> NOP NOP    } bit 21h.0 is ECU pin 38 (a coding-plug
+#   0x3408  JB  21h.0,+4   -> NOP x3     } line); the stock uses are removed so the
+#   0x3657  JNB 21h.0,+2   -> NOP x3     } pin can carry the clutch switch instead
+#   0x62A0  49-byte routine (free FF area)
+#   0x7F00  16-bit checksum (recomputed), 0x7F1A.. ID text "S&M Msport Patch V1.01"
+# The routine:  if 3Ah < RPM_CEIL and ADC ch0 (TPS) >= TPS_MIN and 21h.0 == 0
+#               (clutch down) and 3Ah >= LAUNCH_RPM:  54h = SPARK ; 58h = DWELL
+#               then the two replaced instructions (MOV A,53h ; SUBB A,58h).
+# UrROM keeps the stock ID text (so the K-line identification stays factory)
+# and maintains the 0x7F00 checksum on save.
+
+LC3B_HOOK_OFF   = 0x06C9
+LC3B_HOOK_STOCK = bytes([0xE5, 0x53, 0x95, 0x58])
+LC3B_HOOK_PATCH = bytes([0x12, 0x62, 0xA0, 0x00])
+LC3B_NOP_SITES  = [(0x16B1, bytes([0x30, 0x08])),
+                   (0x3408, bytes([0x20, 0x08, 0x04])),
+                   (0x3657, bytes([0x30, 0x08, 0x02]))]
+LC3B_CODE_OFF   = 0x62A0
+LC3B_CODE       = bytes.fromhex(
+    "c082c083"        # PUSH DPL ; PUSH DPH
+    "e53a b4b800 5014"    # MOV A,3Ah ; CJNE A,#B8h ; JNC exit        (rpm ceiling)
+    "90be00 12135d"       # MOV DPTR,#BE00h ; LCALL 135Dh            (ADC ch0 = TPS)
+    "c3 b4d800 4010"      # CLR C ; CJNE A,#D8h ; JC exit            (TPS >= 216)
+    "20080d"              # JB 21h.0,exit                            (clutch up -> pin 38 grounded)
+    "e53a b47100 4006"    # MOV A,3Ah ; CJNE A,#71h ; JC exit        (rpm >= launch)
+    "755465"              # MOV 54h,#65h                             (spark)
+    "75580d"              # MOV 58h,#0Dh                             (dwell)
+    "c3 e553 9558"        # exit: CLR C ; MOV A,53h ; SUBB A,58h     (replaced instructions)
+    "d083 d082 22".replace(" ", ""))
+assert len(LC3B_CODE) == 49
+LC3B_SCALARS = [
+    # (name, offset, decode, encode, unit, lo, hi)
+    ("Launch RPM",         LC3B_CODE_OFF + 0x1D, lambda b: b * 40,  lambda v: max(0, min(255, v // 40)), "RPM", 1000, 8000),
+    ("Throttle threshold", LC3B_CODE_OFF + 0x13, lambda b: round(b / 255 * 100), lambda v: max(0, min(255, round(v * 255 / 100))), "%", 50, 100),
+    ("RPM ceiling",        LC3B_CODE_OFF + 0x07, lambda b: b * 40,  lambda v: max(0, min(255, v // 40)), "RPM", 2000, 10000),
+    ("Spark (54h raw)",    LC3B_CODE_OFF + 0x23, lambda b: b,       lambda v: max(0, min(255, v)),        "raw", 0, 255),
+    ("Dwell (58h raw)",    LC3B_CODE_OFF + 0x26, lambda b: b,       lambda v: max(0, min(255, v)),        "raw", 0, 255),
+]
+LC3B_COMPATIBLE = {"404", "RR"}
+
+
+def lc3b_status(rom: bytes) -> str:
+    """'PATCHED' | 'STOCK' | 'UNKNOWN' for the 3B launch-control patch."""
+    if len(rom) < 0x8000:
+        return "UNKNOWN"
+    hook = bytes(rom[LC3B_HOOK_OFF:LC3B_HOOK_OFF + 4])
+    code_present = bytes(rom[LC3B_CODE_OFF:LC3B_CODE_OFF + 4]) == LC3B_CODE[:4]
+    if hook == LC3B_HOOK_PATCH and code_present:
+        return "PATCHED"
+    nops_stock = all(bytes(rom[o:o + len(b)]) == b for o, b in LC3B_NOP_SITES)
+    free = all(x == 0xFF for x in rom[LC3B_CODE_OFF:LC3B_CODE_OFF + len(LC3B_CODE)])
+    if hook == LC3B_HOOK_STOCK and nops_stock and free:
+        return "STOCK"
+    return "UNKNOWN"
+
+
+def apply_lc3b(rom: bytearray, launch_rpm: int = 4520) -> None:
+    """Install the launch-control routine on a stock 404 chip (caller re-checksums)."""
+    if lc3b_status(bytes(rom)) != "STOCK":
+        raise ValueError("3B launch control: chip is not in the stock state this patch expects")
+    rom[LC3B_CODE_OFF:LC3B_CODE_OFF + len(LC3B_CODE)] = LC3B_CODE
+    rom[LC3B_HOOK_OFF:LC3B_HOOK_OFF + 4] = LC3B_HOOK_PATCH
+    for off, stock in LC3B_NOP_SITES:
+        rom[off:off + len(stock)] = bytes([0x00] * len(stock))
+    rom[LC3B_CODE_OFF + 0x1D] = max(0, min(255, launch_rpm // 40))
+
+
+def revert_lc3b(rom: bytearray) -> None:
+    """Remove the routine and restore the hook and the three 21h.0 tests."""
+    if lc3b_status(bytes(rom)) != "PATCHED":
+        return
+    rom[LC3B_CODE_OFF:LC3B_CODE_OFF + len(LC3B_CODE)] = bytes([0xFF] * len(LC3B_CODE))
+    rom[LC3B_HOOK_OFF:LC3B_HOOK_OFF + 4] = LC3B_HOOK_STOCK
+    for off, stock in LC3B_NOP_SITES:
+        rom[off:off + len(stock)] = stock
 
 
 def _match_sig(wh: bytes, offset: int, sig: bytes) -> bool:
@@ -665,6 +751,37 @@ def detect_patches(
                        "May be a custom tune, aftermarket, or damaged chip.",
                 confidence="MEDIUM",
             ))
+
+    # ── 3B / RR spark-cut launch control ─────────────────────────────────
+    if variant_name in ("404", "RR", "404V8", "RR_B", "404H"):
+        st = lc3b_status(wh)
+        if st == "PATCHED":
+            detail = ("vwnut8392's spark-cut launch control is INSTALLED: routine at "
+                      f"0x{LC3B_CODE_OFF:04X}, hook at 0x{LC3B_HOOK_OFF:04X}, the three stock "
+                      "uses of bit 21h.0 (ECU pin 38, a coding-plug line) NOPed so pin 38 can carry "
+                      "the clutch switch. With clutch down, throttle above the threshold and rpm "
+                      "between launch and ceiling it forces 54h (spark) and 58h (dwell): a hard "
+                      "spark cut. Off-road use; can damage engine/turbo/exhaust if abused.")
+        elif st == "STOCK":
+            detail = ("Stock. Apply installs vwnut8392's S&M Msport V1.01 launch control "
+                      "(S2Forum m232.org thread 2040975) into the free area at "
+                      f"0x{LC3B_CODE_OFF:04X}. Hardware: cut ECU pin 38 and wire it to a "
+                      "cruise-control clutch switch (clutch up = grounded = disabled). "
+                      "UrROM keeps the stock ID text and re-computes the 0x7F00 checksum on save.")
+        else:
+            detail = ("Bytes at the hook / NOP sites / code area are neither stock nor the "
+                      "V1.01 patch — different firmware base or another modification.")
+        results.append(PatchResult(
+            name="3B Spark-Cut Launch Control",
+            category="firmware",
+            status=st,
+            detail=detail,
+            confidence="HIGH" if st != "UNKNOWN" else "LOW",
+            wh_offset=LC3B_CODE_OFF,
+            applicable=variant_name in LC3B_COMPATIBLE and st in ("STOCK", "PATCHED"),
+            recommended=False,
+            scalars=list(LC3B_SCALARS) if st == "PATCHED" else [],
+        ))
 
     for r in results:
         if not result_in_scope(r.name, variant_name):

@@ -181,3 +181,4 @@ MIT — see LICENSE file.
 
 ### Reverse-engineering notes
 - [docs/3B_KW1281_RE.md](docs/3B_KW1281_RE.md) — the 3B's K-line dialect: ID blocks (coding number in block 3), 0x12 group read → 0xF4 ten-byte block, read-RAM window; KWPBridge `--ecu 3b` mock
+- [docs/3B_launch_control_RE.md](docs/3B_launch_control_RE.md) — vwnut8392's spark-cut launch control (S&M Msport V1.01) diffed and ported: Hardware tab apply/revert + editable launch rpm / throttle / spark / dwell; the 404's 16-bit checksum at 0x7F00

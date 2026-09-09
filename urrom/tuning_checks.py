@@ -253,16 +253,17 @@ def check_checksum(rom: bytes, variant, crc32: int = 0) -> list[TuningIssue]:
     if known[1].startswith("Stock"):
         return []  # stock chips — no computed checksum expected
 
-    from urrom.ecu_profiles import CHECKSUM_VARIANTS
-    sw = variant.software_id if variant else ""
-    if sw not in CHECKSUM_VARIANTS:
+    from urrom.ecu_profiles import checksum_kind, verify_checksum_for
+    kind = checksum_kind(variant)
+    if kind is None:
         return []
-    if not verify_checksum(rom):
+    if not verify_checksum_for(rom, variant):
+        where = "0x7F00 (16-bit sum of 0x0000-0x7EFF)" if kind == "404" else "0x3FFA (PRJmod sum + complement)"
         return [TuningIssue(
             severity='error', category='checksum',
             map_name='ROM',
-            description='PRJmod checksum INVALID — ROM was edited without updating checksum. '
-                        'UrROM applies checksum automatically on save (Ctrl+S).')]
+            description=f'Checksum at {where} INVALID — the ECU logs a fault at boot. '
+                        'UrROM applies the checksum automatically on save (Ctrl+S).')]
     return []
 
 

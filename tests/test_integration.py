@@ -577,10 +577,12 @@ class Test404ChecksumSafety:
 
     def test_404_not_in_checksum_variants(self):
         from urrom.ecu_profiles import CHECKSUM_VARIANTS, has_software_checksum, VARIANT_404, VARIANT_V8_PT
+        from urrom.ecu_profiles import checksum_kind
+        # the 0x3FFA PRJmod checksum is 551-only; the 404 has its own 16-bit sum at 0x7F00
         assert "404" not in CHECKSUM_VARIANTS
         assert "404V8" not in CHECKSUM_VARIANTS
-        assert not has_software_checksum(VARIANT_404)
-        assert not has_software_checksum(VARIANT_V8_PT)
+        assert checksum_kind(VARIANT_404) == "404" and has_software_checksum(VARIANT_404)
+        assert checksum_kind(VARIANT_V8_PT) is None and not has_software_checksum(VARIANT_V8_PT)
 
     def test_551_still_checksummed(self):
         from urrom.ecu_profiles import has_software_checksum, VARIANT_551B, VARIANT_551AA_0202
@@ -1083,7 +1085,8 @@ class TestHardwareScope:
             assert not res[n].in_scope, n
             assert res[n].status.startswith("N/A"), n
         assert not res["MFTS Boost Cut Bypass"].in_scope   # 551 firmware offsets mean nothing here
-        assert all(not r.in_scope for r in res.values()), "every 551 check must be out of scope on a 3B"
+        assert all(not r.in_scope for n, r in res.items() if n != "3B Spark-Cut Launch Control"),             "every 551 check must be out of scope on a 3B"
+        assert res["3B Spark-Cut Launch Control"].in_scope
 
     def test_551_results_in_scope(self):
         from urrom.hw_patches import detect_patches
@@ -1238,3 +1241,76 @@ class TestTempDecode:
     def test_ecu_formula(self):
         from urrom.ecu_profiles import temp_decode
         assert abs(temp_decode(184) - 79.8) < 0.01 and abs(temp_decode(215) - 101.5) < 0.01
+
+
+# -- 404 checksum + vwnut8392 launch control patch (2026-09-09) -----------------
+
+class Test404Checksum:
+    def test_every_404_chip_verifies(self):
+        from urrom.ecu_profiles import verify_checksum_404, compute_checksum_404, read_stored_checksum_404
+        for name in ("3b_fuel-ign_404a.bin", "3b_fuel-ign_404aa.bin", "rr_fuel-ign_404b.bin", "s2_fuel-ign_404.bin"):
+            rom = bytes(load_rom(name))
+            assert verify_checksum_404(rom), (name, hex(compute_checksum_404(rom)), hex(read_stored_checksum_404(rom)))
+
+    def test_apply_restores_after_edit(self):
+        from urrom.ecu_profiles import apply_checksum_404, verify_checksum_404
+        rom = bytearray(load_rom("3b_fuel-ign_404aa.bin"))
+        rom[0x71F8] ^= 0x01                      # touch a map cell
+        assert not verify_checksum_404(bytes(rom))
+        apply_checksum_404(rom)
+        assert verify_checksum_404(bytes(rom))
+
+    def test_detect_marks_404_checksum(self):
+        from urrom.ecu_profiles import detect_rom, checksum_kind, VARIANT_404
+        det = detect_rom(bytes(load_rom("3b_fuel-ign_404aa.bin")))
+        assert det.checksum_ok and checksum_kind(det.variant) == "404"
+        assert checksum_kind(VARIANT_404) == "404"
+
+    def test_tuning_check_flags_bad_404_checksum(self):
+        from urrom.tuning_checks import run_all_checks
+        from urrom.ecu_profiles import VARIANT_404
+        rom = bytearray(load_rom("3b_fuel-ign_404aa.bin")); rom[0x7F00] ^= 0x10
+        issues = run_all_checks(bytes(rom), VARIANT_404)
+        assert any(i.category == "checksum" and i.severity == "error" for i in issues)
+
+
+class TestLaunchControl3B:
+    PATCHED = Path(r"D:/ECU FLASH/Bins/3b_fuel-ign_404apatched.bin")
+
+    def test_stock_chips_are_stock(self):
+        from urrom.hw_patches import lc3b_status
+        for name in ("3b_fuel-ign_404a.bin", "3b_fuel-ign_404aa.bin", "rr_fuel-ign_404b.bin", "s2_fuel-ign_404.bin"):
+            assert lc3b_status(bytes(load_rom(name))) == "STOCK", name
+        assert lc3b_status(bytes(load_rom("pt_fuel-ign_404h.bin"))) == "UNKNOWN"
+
+    def test_apply_matches_vwnut_patch_except_id_text(self):
+        from urrom.hw_patches import apply_lc3b, LC3B_CODE_OFF, LC3B_CODE, lc3b_status
+        from urrom.ecu_profiles import apply_checksum_404, verify_checksum_404
+        rom = bytearray(load_rom("3b_fuel-ign_404a.bin"))
+        apply_lc3b(rom)
+        apply_checksum_404(rom)
+        assert lc3b_status(bytes(rom)) == "PATCHED" and verify_checksum_404(bytes(rom))
+        if self.PATCHED.exists():
+            ref = self.PATCHED.read_bytes()
+            diff = [i for i in range(0x8000) if rom[i] != ref[i]]
+            # only the checksum (we kept the stock ID text) and the ID text itself may differ
+            assert all(0x7F00 <= i < 0x7F40 for i in diff), [hex(i) for i in diff][:10]
+            assert bytes(ref[LC3B_CODE_OFF:LC3B_CODE_OFF + len(LC3B_CODE)]) == LC3B_CODE
+
+    def test_revert_is_byte_exact(self):
+        from urrom.hw_patches import apply_lc3b, revert_lc3b
+        stock = bytes(load_rom("rr_fuel-ign_404b.bin"))
+        rom = bytearray(stock); apply_lc3b(rom, launch_rpm=4000); revert_lc3b(rom)
+        assert bytes(rom) == stock
+
+    def test_scalars_decode(self):
+        from urrom.hw_patches import apply_lc3b, LC3B_SCALARS, detect_patches
+        rom = bytearray(load_rom("3b_fuel-ign_404a.bin")); apply_lc3b(rom, launch_rpm=4000)
+        vals = {name: dec(rom[off]) for name, off, dec, enc, unit, lo, hi in LC3B_SCALARS}
+        assert vals["Launch RPM"] == 4000 and vals["RPM ceiling"] == 7360
+        assert vals["Throttle threshold"] == 85 and vals["Spark (54h raw)"] == 0x65 and vals["Dwell (58h raw)"] == 0x0D
+        res = {r.name: r for r in detect_patches(bytes(rom), "404")}
+        r = res["3B Spark-Cut Launch Control"]
+        assert r.status == "PATCHED" and r.in_scope and r.applicable and len(r.scalars) == 5
+        stock = {r.name: r for r in detect_patches(bytes(load_rom("3b_fuel-ign_404a.bin")), "404")}
+        assert stock["3B Spark-Cut Launch Control"].status == "STOCK" and stock["3B Spark-Cut Launch Control"].applicable
