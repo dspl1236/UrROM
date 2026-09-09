@@ -39,9 +39,11 @@ until resolved**; the ABY/ADU direct reads are the trustworthy 551 baselines.
 
 - 551B/551C ignition decode switched to raw × 0.75 − 22.5 (`ign_decode`);
   the RS2.xdf formula is kept as `ign_decode_rs2xdf()`.
-- 551 map names: map 1 "(fault fallback?)", maps 5 / 7 "(main?)" — the 551
-  selector logic has not been traced; roles are by similarity only.
-- `xcompare` ROLE_MAPS: 551 main ignition = map 5.
+- 551 selector traced (`551_calibration_descriptors_RE.md` §3e): three
+  coding-plug-selected sets; main map = 2 / 4 / 6, alternates 3 / 5 / 7 only
+  under a tester flag, map 1 = fault fallback. Map names updated accordingly.
+- `xcompare` ROLE_MAPS: 551 main ignition = map 4 (set B, the low-resistance
+  coding class); use `--b-map` for a known coding.
 
 ## Sensors (S2Forum thread 65435, vwnut8392 / prj)
 
@@ -64,8 +66,8 @@ reading on the car settles it.
 
 ## Next steps
 
-1. Trace the 551 ignition selector (same method as the 3B: `0x0FF9` READ_MAP,
-   base-pointer stubs, IGN_CALC) to name maps 2–7 properly.
+1. ~~Trace the 551 ignition selector~~ — done (§3e): coding plug picks
+   maps 2 / 4 / 6.
 2. Resolve the prj 0x0E13 timing offset (compare against the RS2 D02 chip's
    own maps, which are the same family).
 3. Log boost on the car → sensor scale → boost-target port.

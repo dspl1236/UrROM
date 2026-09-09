@@ -236,11 +236,14 @@ _LOAD_AXIS_551 = [12,21,29,38,46,57,67,77,86,94,103,112,120,132,149,180]
 # lower half is firmware, the upper half is calibration, and these maps are
 # referenced by the firmware.  Downgrade reverted.
 
-# Roles by raw similarity with the traced 3B chip (2026-09-09): map 1 matches the
-# 3B's fault-fallback map (rms 3.7–4.3 raw), maps 5/7 match the 3B's main map
-# (rms 3.0).  The 551 selector itself is not traced yet — "main" is provisional.
-_IGN_NAMES_2E17 = ["Ign Map 1 (fault fallback?)", "Ign Map 2", "Ign Map 3", "Ign Map 4",
-                   "Ign Map 5 (main?)", "Ign Map 6", "Ign Map 7 (main?)"]
+# Selector traced 2026-09-09 (docs 551_calibration_descriptors_RE.md §3e): three
+# ignition table sets chosen by coding-plug class bits A4h.4/.5 (ADC ch4, tables
+# 0x4FB0-0x4FCF); in each set slot 04 = map 1 (fault fallback), slot 0D = main map,
+# slot 10 = alternate map (only under the tester-set flag XRAM DCh.0).
+_IGN_NAMES_2E17 = ["Ign Map 1 (fault fallback)",
+                   "Ign Map 2 (main, coding set A)", "Ign Map 3 (alt, coding set A)",
+                   "Ign Map 4 (main, coding set B)", "Ign Map 5 (alt, coding set B)",
+                   "Ign Map 6 (main, coding set C)", "Ign Map 7 (alt, coding set C)"]
 
 def _stock_2e17_family(fuel: int, ign: list[int], idle_a: int, idle_b: int,
                        chip_tag: str) -> list[MapDef]:

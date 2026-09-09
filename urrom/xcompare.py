@@ -27,11 +27,12 @@ from urrom.ecu_profiles import (
 # 0E13-family / prjmod: PRJ XDF "Ign P/T (no knock)" 0x125F.  Best current guesses.
 ROLE_MAPS: dict[str, dict[str, int]] = {
     "404":        {"fuel": 0x6A8E, "ign": 0x71F8},
-    # 551 0x2E17 family: map 5 is the closest raw match to the 3B main map (rms 3.0);
-    # map 1 is the fallback-like map.  Selector on the 551 side not traced yet.
-    "551C":       {"fuel": 0x2E17, "ign": 0x36BC},
-    "551B":       {"fuel": 0x2E17, "ign": 0x36B8},
-    "551D":       {"fuel": 0x2E17, "ign": 0x36BC},
+    # 551 0x2E17 family (selector traced, docs §3e): main map = slot 0D of the coding-
+    # plug-selected set → map 2 / 4 / 6.  Set B (map 4) is the middle coding class;
+    # override with --b-map for a known coding.  Maps 3/5/7 are the alternates.
+    "551C":       {"fuel": 0x2E17, "ign": 0x3598},
+    "551B":       {"fuel": 0x2E17, "ign": 0x3594},
+    "551D":       {"fuel": 0x2E17, "ign": 0x3598},
     "551B_D02":   {"fuel": 0x0E13, "ign": 0x125F},
     "551AA":      {"fuel": 0x0DEA, "ign": 0x1224},
     "551A":       {"fuel": 0x0E13, "ign": 0x125F},

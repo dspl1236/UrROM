@@ -944,3 +944,31 @@ class TestXCompare:
         assert rms(0x7076, 0x30AC) < 5.0      # fallback ~ fallback
         assert rms(0x71F8, 0x36BC) < 4.0      # main ~ map 5
         assert rms(0x71F8, 0x30AC) > 12.0     # main is NOT map 1
+
+
+# -- 551 ignition selector (2026-09-09) ----------------------------------------
+
+class Test551IgnSelector:
+    def test_selector_and_coding_bytes(self):
+        """Pin the ADU/ABY ignition table-set selector (0x4E06) and coding tables."""
+        for name in ("adu_fuel-ign_551c.bin", "aby_fuel-ign_551aa.bin"):
+            rom = bytes(load_rom(name))
+            # 4E0F: MOV R0,#A4h ; MOV A,@R0 ; JB ACC.5,4E26 ; JB ACC.4,4E1F ; MOV 77h,#A0 ; MOV 78h,#34
+            assert rom[0x4E0F:0x4E1E] == bytes.fromhex("78a4e620e51120e40775 77a0757834".replace(" ", "")), name
+            assert rom[0x4E1F:0x4E25] == bytes.fromhex("7577a075784f"), name
+            assert rom[0x4E26:0x4E2C] == bytes.fromhex("7577a075786a"), name
+            # coding: thresholds, idx table, A4h codes
+            assert rom[0x4FB0:0x4FB9] == bytes.fromhex("ffdccda985663d321f"), name
+            assert rom[0x4FB9:0x4FC2] == bytes.fromhex("000000010102020202"), name
+            assert rom[0x4FC8:0x4FCE] == bytes.fromhex("14002894 80a8".replace(" ", "")), name
+            # IGN_CALC slot loads: MOV R2,#10h at 197C, MOV R2,#0Dh at 1980, MOV R2,#04h at 193D
+            assert rom[0x197C:0x197E] == b"\x7a\x10" and rom[0x1980:0x1982] == b"\x7a\x0d", name
+            assert rom[0x193D:0x193F] == b"\x7a\x04", name
+
+    def test_551_map_names_reflect_selector(self):
+        from urrom.ecu_profiles import VARIANT_551C
+        names = {m.main_addr: m.name for m in VARIANT_551C.main_maps}
+        assert "fault fallback" in names[0x30AC]
+        assert "main, coding set A" in names[0x3263] and "alt, coding set A" in names[0x3387]
+        assert "main, coding set B" in names[0x3598] and "alt, coding set B" in names[0x36BC]
+        assert "main, coding set C" in names[0x380D] and "alt, coding set C" in names[0x3931]

@@ -192,6 +192,53 @@ reference, ratio thresholds at boost `0x1817`), main board applies a global
 retard-hold-ramp with the block at `0x63F5`. No per-cylinder retard and no
 knock map on the fuel chip.
 
+## 3e. 551 (ADU/ABY) ignition map selection (traced 2026-09-09)
+
+Same method on the ADU firmware (`roms/adu_fuel-ign_551c.bin`, lower half;
+byte-identical code on the ABY). Pointer table `0xA84E`, three ignition
+index tables of 27 slots:
+
+| Table set | index base | slot 04 | slot 0D (**main**) | slot 10 (alternate) |
+|---|---|---|---|---|
+| A | 0xA034 | Ign Map 1 | **Ign Map 2** (0x3263) | Ign Map 3 (0x3387) |
+| B | 0xA04F | Ign Map 1 | **Ign Map 4** (0x3598) | Ign Map 5 (0x36BC) |
+| C | 0xA06A | Ign Map 1 | **Ign Map 6** (0x380D) | Ign Map 7 (0x3931) |
+
+(ADU addresses; ABY = −4.)
+
+**Set selection** (`0x4E06`, called from IGNITION_CALC `0x2118`): RAM `A4h`
+bit 5 → set C, bit 4 → set B, else set A. `A4h` is written by the coding
+routine at `0x4F81`: ADC channel 4 (`DPTR=#BE04`) binned against the same
+threshold ladder the 3B uses (`FF DC CD A9 85 66 3D 32 1F`), then
+`idx = 0x4FB9[band]` (`00 00 00 01 01 02 02 02 02`, +3 if `21h.0`) and
+`A4h = 0x4FC8[idx]` (`14 00 28 94 80 A8`):
+
+| ADC ch4 (coding plug) | band | A4h | ignition set |
+|---|---|---|---|
+| < 87 | 0–2 | 0x14 | **B** (maps 4/5) |
+| 87 – 153 | 3–4 | 0x00 | **A** (maps 2/3) |
+| ≥ 154 | 5–8 | 0x28 | **C** (maps 6/7) |
+
+So on the AAN/ABY/ADU the ignition table set is chosen **purely by the coding
+plug** — no boost-board input, unlike the 3B.
+
+**Slot selection** (IGNITION_CALC `0x18F3`–`0x19B8`):
+
+| Condition | Slot → map |
+|---|---|
+| `28h.1` | slot 01 (small table), sets `2Fh.2` |
+| `23h.7` and (XRAM `0x116.0` or `26h.2`) | slot 04 → **Ign Map 1** (fault fallback) |
+| `26h.1 \| 27h.3 \| 27h.0` | slot 06 (small table); with `2Fh.2` → slot 09 |
+| otherwise | load hysteresis from 1-D slot 12 → `2Fh.0`; XRAM `0xDC.0` set → slot **10** (alternate) else slot **0D** (**main**); low load → slot − 1 |
+
+XRAM `0xDC` is only read by running code (never written outside init), the
+same pattern as the 3B's `CAh` — a tester/diagnostic flag. So in normal
+running the 551 uses **map 2, 4 or 6 by coding plug**, map 1 under faults,
+and maps 3/5/7 only in that diagnostic mode.
+
+Cross-check with the 3B (`docs/AAN_3B_port_notes.md`): the 3B main map
+matches ADU maps 4–7 to within rms 3.0–3.4 raw and map 1 matches map 1.
+
 ## 4. Open items
 
 - Which of the seven ignition maps is active under which condition
