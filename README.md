@@ -124,6 +124,10 @@ python app/main.py
 ## Architecture
 
 ```
+app/main.py             # PyQt5 workbench: map tree dock · editor/compare · inspector dock
+urrom/ui/theme.py       # Shared palette + stylesheet
+urrom/ui/map_tree.py    # Map navigator (grouped by chip/category, live filter)
+urrom/ui/health_panel.py# Tuning health scan results panel
 urrom/ecu_profiles.py   # All 551x/404/V8 variant definitions + KNOWN_CRCS
 urrom/tuning_checks.py  # 7 automated health checks
 urrom/map_export.py     # HTML export (single map + full ROM reference)

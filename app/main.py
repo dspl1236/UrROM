@@ -42,19 +42,14 @@ from urrom.hw_patches import (
     apply_lambda_delay, revert_lambda_delay,
 )
 
-# ── Palette ──────────────────────────────────────────────────────────────────
+# ── Palette (shared with urrom/ui widgets) ───────────────────────────────────
 
-BG       = "#1e1e1e"
-BG2      = "#252526"
-BG3      = "#2d2d2d"
-BORDER   = "#3c3c3c"
-FG       = "#d4d4d4"
-FG_DIM   = "#666666"
-ACCENT   = "#569cd6"
-GREEN    = "#2dff6e"
-AMBER    = "#ff9900"
-RED      = "#ff4444"
-CHANGED  = "#2dff6e"
+from urrom.ui.theme import (
+    BG, BG2, BG3, BORDER, FG, FG_DIM, ACCENT, GREEN, AMBER, RED, CHANGED,
+    STYLESHEET, confidence_colour,
+)
+from urrom.ui.map_tree import MapTree
+from urrom.ui.health_panel import HealthPanel
 
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
@@ -102,85 +97,6 @@ class ChangedCellDelegate(QStyledItemDelegate):
             r = option.rect.adjusted(1, 1, -1, -1)
             painter.drawRect(r)
             painter.restore()
-
-
-# ── App stylesheet ────────────────────────────────────────────────────────────
-
-STYLESHEET = f"""
-QMainWindow, QWidget {{
-    background: {BG};
-    color: {FG};
-    font-family: "Segoe UI", "SF Pro Display", sans-serif;
-    font-size: 12px;
-}}
-QTabWidget::pane {{
-    border: 1px solid {BORDER};
-    background: {BG2};
-}}
-QTabBar::tab {{
-    background: {BG};
-    color: {FG_DIM};
-    padding: 6px 14px;
-    border: 1px solid {BORDER};
-    border-bottom: none;
-    margin-right: 2px;
-    font-size: 11px;
-}}
-QTabBar::tab:selected {{
-    background: {BG2};
-    color: {FG};
-    border-bottom: 2px solid {ACCENT};
-}}
-QPushButton {{
-    background: {BG3};
-    color: {FG};
-    border: 1px solid {BORDER};
-    padding: 5px 14px;
-    border-radius: 3px;
-    font-size: 11px;
-}}
-QPushButton:hover {{ background: #3a3a3a; border-color: {ACCENT}; }}
-QPushButton:pressed {{ background: #444; }}
-QPushButton:disabled {{ color: {FG_DIM}; }}
-QComboBox {{
-    background: {BG3};
-    color: {FG};
-    border: 1px solid {BORDER};
-    padding: 3px 8px;
-    border-radius: 3px;
-    min-width: 220px;
-}}
-QComboBox QAbstractItemView {{
-    background: {BG2};
-    color: {FG};
-    border: 1px solid {BORDER};
-    selection-background-color: #3a3a3a;
-}}
-QTableWidget {{
-    background: {BG2};
-    gridline-color: {BORDER};
-    font-size: 11px;
-    border: 1px solid {BORDER};
-}}
-QHeaderView::section {{
-    background: {BG3};
-    color: {FG_DIM};
-    font-size: 10px;
-    padding: 2px 4px;
-    border: 1px solid {BORDER};
-}}
-QStatusBar {{ background: {BG}; color: {FG_DIM}; font-size: 11px; }}
-QLabel {{ color: {FG}; }}
-QFrame {{ color: {BORDER}; }}
-QScrollBar:vertical {{
-    background: {BG};
-    width: 8px;
-}}
-QScrollBar::handle:vertical {{
-    background: {BORDER};
-    border-radius: 4px;
-}}
-"""
 
 
 # ── Info strip (top of window) ────────────────────────────────────────────────
@@ -334,27 +250,30 @@ class OverviewTab(QWidget):
         self._info = QLabel("")
         self._info.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
         self._info.setWordWrap(True)
+        self._info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self._info)
 
-        # Chip info row
-        chip_row = QHBoxLayout()
+        # Chip info block — stacked so it fits a narrow inspector panel
         self._main_chip_lbl = QLabel("Main chip: —")
         self._main_chip_lbl.setStyleSheet(f"color:{FG};font-size:11px;")
+        self._main_chip_lbl.setWordWrap(True)
         self._boost_chip_lbl = QLabel("Boost chip: —")
         self._boost_chip_lbl.setStyleSheet(f"color:{FG};font-size:11px;")
+        self._boost_chip_lbl.setWordWrap(True)
         self._checksum_lbl = QLabel("")
         self._checksum_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+        self._checksum_lbl.setWordWrap(True)
         self._health_badge = QLabel("")
         self._health_badge.setStyleSheet(
             f"font-size:10px;padding:2px 8px;border-radius:10px;"
             f"background:{BG3};border:1px solid {BORDER};")
-        chip_row.addWidget(self._main_chip_lbl)
-        chip_row.addSpacing(24)
-        chip_row.addWidget(self._boost_chip_lbl)
-        chip_row.addStretch()
+        self._health_badge.setVisible(False)
+        layout.addWidget(self._main_chip_lbl)
+        layout.addWidget(self._boost_chip_lbl)
+        chip_row = QHBoxLayout()
         chip_row.addWidget(self._health_badge)
         chip_row.addSpacing(8)
-        chip_row.addWidget(self._checksum_lbl)
+        chip_row.addWidget(self._checksum_lbl, 1)
         layout.addLayout(chip_row)
 
         # Map inventory table — double-click row to jump to that map
@@ -367,6 +286,7 @@ class OverviewTab(QWidget):
         map_title_row.addStretch()
         map_title_row.addWidget(hint)
         layout.addLayout(map_title_row)
+        self._inventory_widgets = [map_title, hint]
 
         self._map_table = QTableWidget(0, 5)
         self._map_table.setHorizontalHeaderLabels(
@@ -420,6 +340,17 @@ class OverviewTab(QWidget):
     def set_jump_callback(self, fn):
         """Register a callback fn(map_index) called when user double-clicks a map row."""
         self._jump_callback = fn
+
+    def set_compact(self, compact: bool = True):
+        """
+        Workbench mode: the map navigator dock already lists every map, so
+        hide the inventory table and let the panel fit a narrow inspector.
+        """
+        self._map_table.setVisible(not compact)
+        for w in self._inventory_widgets:
+            w.setVisible(not compact)
+        if compact:
+            self.layout().setContentsMargins(10, 10, 10, 10)
 
     def _on_row_jump(self, row, col):
         if self._jump_callback and row < len(self._maps_for_jump):
@@ -571,12 +502,13 @@ class OverviewTab(QWidget):
                 self._health_badge.setText(badge_txt)
                 self._health_badge.setStyleSheet(
                     f"font-size:10px;padding:2px 8px;border-radius:10px;"
-                    f"background:{badge_col}20;border:1px solid {badge_col};"
+                    f"background:{BG3};border:1px solid {badge_col};"
                     f"color:{badge_col};")
+                self._health_badge.setVisible(True)
             else:
-                self._health_badge.setText("—")
+                self._health_badge.setVisible(False)
         except Exception:
-            self._health_badge.setText("—")
+            self._health_badge.setVisible(False)
 
         # Hardware requirements from KNOWN_CRCS description
         from urrom.ecu_profiles import KNOWN_CRCS, get_boost_pairing
@@ -1456,8 +1388,15 @@ class MainChipTab(QWidget):
 
         self._map_combo = QComboBox()
         self._map_combo.currentIndexChanged.connect(self._on_map_selected)
-        toolbar.addWidget(QLabel("Map:"))
+        self._map_lbl = QLabel("Map:")
+        toolbar.addWidget(self._map_lbl)
         toolbar.addWidget(self._map_combo)
+
+        # Current map title — shown in workbench mode where the combo is hidden
+        self._map_title = QLabel("")
+        self._map_title.setStyleSheet(f"font-size:13px;font-weight:bold;color:{FG};")
+        self._map_title.setVisible(False)
+        toolbar.addWidget(self._map_title)
 
         from PyQt5.QtWidgets import QLineEdit
         self._search_box = QLineEdit()
@@ -1617,6 +1556,29 @@ class MainChipTab(QWidget):
         else:
             self._sd_bar.setVisible(False)
 
+    def use_external_selector(self, external: bool = True):
+        """
+        Workbench mode: the MapTree dock selects maps, so hide the inline
+        combo/search and show a plain title label instead.  The combo stays
+        alive (hidden) because find/scan/overlay features drive it.
+        """
+        self._map_lbl.setVisible(not external)
+        self._map_combo.setVisible(not external)
+        self._search_box.setVisible(not external)
+        self._map_title.setVisible(external)
+
+    def current_map(self) -> MapDef | None:
+        return self._table._map_def
+
+    def current_index(self) -> int:
+        m = self._table._map_def
+        if m is None:
+            return -1
+        for i, mm in enumerate(self._maps):
+            if mm is m:
+                return i
+        return -1
+
     def set_session_log_fn(self, fn):
         """Register fn(map_def, r, c, old_raw, new_raw) for per-cell changelog."""
         if fn:
@@ -1682,6 +1644,7 @@ class MainChipTab(QWidget):
             self._table.itemChanged.connect(lambda _: self.on_table_changed())
             if hasattr(self, "_status_fn"):
                 self._table.set_status_callback(self._status_fn)
+            self._map_title.setText(f"{m.name}   <span style='color:{FG_DIM};font-weight:normal;font-size:11px;'>{m.rows}\xd7{m.cols}  {m.unit}</span>")
             self._desc_lbl.setText(m.description)
             self._addr_lbl.setText(f"Address: 0x{m.main_addr:04X}  (working half offset)")
             self._size_lbl.setText(f"{m.rows}\xd7{m.cols} = {m.size} bytes")
@@ -1724,6 +1687,7 @@ class MainChipTab(QWidget):
         self._rom = None
         self._maps = []
         self._map_combo.clear()
+        self._map_title.setText("")
         self._desc_lbl.setText("")
         self._addr_lbl.setText("")
         self._size_lbl.setText("")
@@ -1763,6 +1727,7 @@ class MainChipTab(QWidget):
         # Wire hover → status via callback set by MainWindow
         if hasattr(self, "_status_fn"):
             self._table.set_status_callback(self._status_fn)
+        self._map_title.setText(f"{m.name}   <span style='color:{FG_DIM};font-weight:normal;font-size:11px;'>{m.rows}×{m.cols}  {m.unit}</span>")
         self._desc_lbl.setText(m.description)
         self._addr_lbl.setText(
             f"Address: 0x{m.main_addr:04X}  (working half offset)")
@@ -2059,8 +2024,8 @@ class BoostTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         # ── Toolbar ───────────────────────────────────────────────────────
         tb = QHBoxLayout()
@@ -2068,6 +2033,10 @@ class BoostTab(QWidget):
         self._map_combo.setMinimumWidth(300)
         self._map_combo.currentIndexChanged.connect(self._on_map_selected)
         tb.addWidget(self._map_combo)
+        self._map_title = QLabel("")
+        self._map_title.setStyleSheet(f"font-size:13px;font-weight:bold;color:{FG};")
+        self._map_title.setVisible(False)
+        tb.addWidget(self._map_title)
         tb.addStretch()
         layout.addLayout(tb)
 
@@ -2122,8 +2091,28 @@ class BoostTab(QWidget):
         self._table.load(self._boost_rom, m, rpm_axis, load_axis)
         self._table.setVisible(True)
         self._note.setVisible(False)
+        self._map_title.setText(
+            f"{m.name}   <span style='color:{FG_DIM};font-weight:normal;font-size:11px;'>"
+            f"{m.rows}×{m.cols}  {m.unit}</span>")
+        conf_col = confidence_colour(m.confidence)
         self._status.setText(
-             f"Boost chip  —  {m.name}  [{m.rows}×{m.cols}  {m.confidence}]")
+             f"Boost chip  ·  WH 0x{m.main_addr:04X}  ·  "
+             f"<span style='color:{conf_col};'>{m.confidence}</span>")
+        self._status.setTextFormat(Qt.RichText)
+
+    def use_external_selector(self, external: bool = True):
+        self._map_combo.setVisible(not external)
+        self._map_title.setVisible(external)
+
+    def current_index(self) -> int:
+        m = self._table._map_def
+        if m is None:
+            return -1
+        for i, mm in enumerate(self._maps):
+            if mm is m:
+                return i
+        return -1
+
     def commit_to_rom(self, rom: bytearray) -> bytearray:
         """Write current boost chip edits back into the boost ROM bytearray."""
         # Flush the currently visible map's edits
@@ -2163,20 +2152,20 @@ class HardwareTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 16, 20, 16)
-        outer.setSpacing(10)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
 
         # ── Header row ────────────────────────────────────────────────────
-        hdr = QHBoxLayout()
         title = QLabel("Hardware & Patch Status")
         title.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {FG};")
-        hdr.addWidget(title)
-        hdr.addStretch()
+        outer.addWidget(title)
 
         self._boost_lbl = QLabel("Boost chip: not loaded")
         self._boost_lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
-        hdr.addWidget(self._boost_lbl)
+        self._boost_lbl.setWordWrap(True)
+        outer.addWidget(self._boost_lbl)
 
+        hdr = QHBoxLayout()
         self._open_boost_btn = QPushButton("Load boost chip…")
         self._open_boost_btn.setFixedHeight(26)
         self._open_boost_btn.setStyleSheet(
@@ -2193,6 +2182,7 @@ class HardwareTab(QWidget):
             f"border-radius:3px;padding:0 10px;}}"
             f"QPushButton:hover{{border-color:{ACCENT};}}")
         hdr.addWidget(self._inj_btn)
+        hdr.addStretch()
         outer.addLayout(hdr)
 
         # ── Subtitle ─────────────────────────────────────────────────────
@@ -2228,6 +2218,8 @@ class HardwareTab(QWidget):
         self._patch_layout.setContentsMargins(0, 0, 0, 0)
         self._patch_layout.addStretch()
         scroll.setWidget(self._patch_container)
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._patch_scroll = scroll
         outer.addWidget(scroll, 1)
 
         # ── QLCC / Ben Swann note ─────────────────────────────────────────
@@ -2281,7 +2273,8 @@ class HardwareTab(QWidget):
             row_h.setContentsMargins(0, 0, 0, 0)
             row_h.setSpacing(6)
             n_lbl = QLabel(name)
-            n_lbl.setStyleSheet(f"color:{FG};font-size:11px;min-width:180px;")
+            n_lbl.setStyleSheet(f"color:{FG};font-size:11px;min-width:120px;")
+            n_lbl.setWordWrap(True)
             # Editable spinbox — shows decoded value; accepts decoded input
             from PyQt5.QtWidgets import QSpinBox
             spin = QSpinBox()
@@ -2290,20 +2283,20 @@ class HardwareTab(QWidget):
             spin.setSuffix(f"  {unit}")
             spin.setValue(0)
             spin.setEnabled(False)
-            spin.setFixedWidth(120)
+            spin.setFixedWidth(104)
             spin.setStyleSheet(
                 f"QSpinBox{{background:{BG2};color:{FG};border:1px solid {BORDER};"
                 f"border-radius:3px;padding:1px 4px;font-size:11px;}}"
                 f"QSpinBox:disabled{{color:{FG_DIM};}}")
             r_lbl = QLabel("")
             r_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
-            addr_lbl = QLabel(f"WH 0x{wh_off:04X}")
-            addr_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+            # Working-half address lives in the tooltip to keep the row narrow
+            n_lbl.setToolTip(f"WH 0x{wh_off:04X}")
+            spin.setToolTip(f"WH 0x{wh_off:04X}")
             row_h.addWidget(n_lbl)
             row_h.addWidget(spin)
             row_h.addStretch()
             row_h.addWidget(r_lbl)
-            row_h.addWidget(addr_lbl)
             lc_grid.addWidget(row_w)
             # Wire valueChanged → write back
             _off = wh_off; _enc = encode_fn; _dec = decode_fn
@@ -2314,6 +2307,7 @@ class HardwareTab(QWidget):
         self._lc_inactive = QLabel(
             "LC/NLS scalars require prjmod 0x0202 firmware (551AA_0202 variant).")
         self._lc_inactive.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
+        self._lc_inactive.setWordWrap(True)
         lc_grid.addWidget(self._lc_inactive)
         outer.addWidget(lc_card)
         self._lc_card = lc_card
@@ -2356,8 +2350,8 @@ class HardwareTab(QWidget):
             f"letter-spacing:0.5px;")
         title = QLabel("AAN Cam Sensor → 3B/7A Distributor Hall Adapter")
         title.setStyleSheet(f"color:{FG};font-size:11px;font-weight:bold;")
-        hdr.addWidget(title)
-        hdr.addStretch()
+        title.setWordWrap(True)
+        hdr.addWidget(title, 1)
         hdr.addWidget(badge)
         lay.addLayout(hdr)
 
@@ -2414,15 +2408,13 @@ class HardwareTab(QWidget):
         layout.setSpacing(4)
         layout.setContentsMargins(12, 8, 12, 8)
 
-        row1 = QHBoxLayout()
         lbl = QLabel("MAP Sensor")
         lbl.setStyleSheet(f"color:{FG};font-size:12px;font-weight:bold;")
         self._sensor_type_lbl = QLabel("—")
         self._sensor_type_lbl.setStyleSheet(f"color:{ACCENT};font-size:12px;font-weight:bold;")
-        row1.addWidget(lbl)
-        row1.addStretch()
-        row1.addWidget(self._sensor_type_lbl)
-        layout.addLayout(row1)
+        self._sensor_type_lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+        layout.addWidget(self._sensor_type_lbl)
 
         self._sensor_detail_lbl = QLabel(
             "Load boost chip for sensor identification.  "
@@ -2431,14 +2423,16 @@ class HardwareTab(QWidget):
         self._sensor_detail_lbl.setWordWrap(True)
         layout.addWidget(self._sensor_detail_lbl)
 
-        # Sensor comparison row
-        sensors_row = QHBoxLayout()
-        for kpa, label, notes in [
+        # Sensor comparison grid (2×2 so it fits a narrow inspector)
+        from PyQt5.QtWidgets import QGridLayout
+        sensors_row = QGridLayout()
+        sensors_row.setSpacing(4)
+        for _i, (kpa, label, notes) in enumerate([
             ("200 kPa", "Stock Bosch",   "≤1.0 bar gauge\nMAF builds only"),
             ("250 kPa", "MPX4250",        "≤1.5 bar gauge\nQLCC-era"),
             ("300 kPa", "MPX4300",        "≤2.0 bar gauge\n034EFI / R201 swap"),
             ("400 kPa", "MPXH6400A",      "≤2.9 bar gauge\nprjmod SD std"),
-        ]:
+        ]):
             cell = QFrame()
             cell.setStyleSheet(
                 f"QFrame{{background:{BG2};border:1px solid {BORDER};"
@@ -2454,7 +2448,7 @@ class HardwareTab(QWidget):
             notes_lbl.setStyleSheet(f"color:{FG_DIM};font-size:9px;")
             for w in (kpa_lbl, name_lbl, notes_lbl):
                 cell_l.addWidget(w)
-            sensors_row.addWidget(cell)
+            sensors_row.addWidget(cell, _i // 2, _i % 2)
         layout.addLayout(sensors_row)
         return card
 
@@ -2505,16 +2499,22 @@ class HardwareTab(QWidget):
         conf_lbl = QLabel(result.confidence)
         conf_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
 
-        top.addWidget(name_lbl)
+        name_lbl.setWordWrap(True)
+        top.addWidget(name_lbl, 1)
         top.addWidget(cat_lbl)
-        top.addStretch()
+        layout.addLayout(top)
+
+        # Status line (own row so the card fits a narrow inspector)
+        st_row = QHBoxLayout()
+        st_row.setSpacing(8)
+        st_row.addWidget(st_lbl)
+        st_row.addWidget(conf_lbl)
         if result.wh_offset is not None:
             off_lbl = QLabel(f"WH 0x{result.wh_offset:04X}")
             off_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
-            top.addWidget(off_lbl)
-        top.addWidget(st_lbl)
-        top.addWidget(conf_lbl)
-        layout.addLayout(top)
+            st_row.addWidget(off_lbl)
+        st_row.addStretch()
+        layout.addLayout(st_row)
 
         detail_lbl = QLabel(result.detail)
         detail_lbl.setStyleSheet(f"color:{FG_DIM};font-size:11px;")
@@ -2765,6 +2765,11 @@ class HardwareTab(QWidget):
             card = self._make_patch_card(r)
             self._patch_layout.insertWidget(insert_pos, card)
             insert_pos += 1
+        # The panel lives inside the inspector's own scroll area, so size this
+        # nested list to its content instead of letting it collapse.
+        self._patch_container.adjustSize()
+        self._patch_scroll.setMinimumHeight(
+            min(self._patch_container.sizeHint().height() + 6, 1400))
 
         # ── Update LC/NLS scalars ─────────────────────────────────────────
         is_0202 = (self._variant_name == "551AA_0202")
@@ -3408,6 +3413,9 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self):
         self.setStyleSheet(STYLESHEET)
+        self.setDockOptions(QMainWindow.AnimatedDocks)
+
+        from PyQt5.QtWidgets import QDockWidget, QStackedWidget
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -3415,9 +3423,9 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # File bar
+        # ── File bar ─────────────────────────────────────────────────────────
         file_bar = QFrame()
-        file_bar.setFixedHeight(44)
+        file_bar.setFixedHeight(40)
         file_bar.setStyleSheet(
             f"background: {BG2}; border-bottom: 1px solid {BORDER};")
         fb_layout = QHBoxLayout(file_bar)
@@ -3446,46 +3454,90 @@ class MainWindow(QMainWindow):
         self._kwp_badge.setStyleSheet(
             f"color: {FG_DIM}; font-size: 10px; padding: 0 8px;")
         fb_layout.addWidget(self._kwp_badge)
-
         fb_layout.addWidget(self._save_btn)
-
         root.addWidget(file_bar)
 
-        # Info strip
+        # ── Info strip ───────────────────────────────────────────────────────
         self._info_strip = InfoStrip()
         root.addWidget(self._info_strip)
 
-        # Tabs
-        self._tabs = QTabWidget()
+        # ── Panels ───────────────────────────────────────────────────────────
         self._overview_tab  = OverviewTab()
         self._main_chip_tab = MainChipTab()
         self._boost_tab     = BoostTab()
         self._compare_tab   = CompareTab()
         self._hardware_tab  = HardwareTab()
+        self._health_panel  = HealthPanel()
 
-        self._tabs.addTab(self._overview_tab,  "Overview")
-        self._tabs.addTab(self._main_chip_tab, "Main Chip Maps")
-        self._tabs.addTab(self._boost_tab,     "Boost Chip")
-        self._tabs.addTab(self._compare_tab,   "Compare")
-        self._tabs.addTab(self._hardware_tab,  "Hardware")
-        root.addWidget(self._tabs)
+        # Workbench mode: the map tree selects maps, editors show a title only
+        self._main_chip_tab.use_external_selector(True)
+        self._boost_tab.use_external_selector(True)
+        self._overview_tab.set_compact(True)
 
-        # Wire Overview double-click → jump to map in Main Chip Maps tab
-        def _jump_to_map(main_map_idx: int):
-            if main_map_idx < 0:
-                return
-            self._tabs.setCurrentWidget(self._main_chip_tab)
-            self._main_chip_tab._map_combo.setCurrentIndex(main_map_idx)
-        self._overview_tab.set_jump_callback(_jump_to_map)
+        # ── Centre: Editor (welcome / main / boost) + Compare ────────────────
+        self._editor_stack = QStackedWidget()
+        self._welcome = self._make_welcome()
+        self._editor_stack.addWidget(self._welcome)         # 0
+        self._editor_stack.addWidget(self._main_chip_tab)   # 1
+        self._editor_stack.addWidget(self._boost_tab)       # 2
 
-        # Wire hover status bar for map table
+        self._center_tabs = QTabWidget()
+        self._center_tabs.setDocumentMode(True)
+        self._center_tabs.addTab(self._editor_stack, "Editor")
+        self._center_tabs.addTab(self._compare_tab,  "Compare")
+        root.addWidget(self._center_tabs, 1)
+
+        # ── Left dock: map navigator ─────────────────────────────────────────
+        self._map_tree = MapTree()
+        self._map_tree.mapActivated.connect(self._on_tree_map_activated)
+        self._maps_dock = QDockWidget("MAPS", self)
+        self._maps_dock.setObjectName("MapsDock")
+        self._maps_dock.setWidget(self._map_tree)
+        self._maps_dock.setFeatures(
+            QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
+        self._maps_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._map_tree.setMinimumWidth(200)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self._maps_dock)
+
+        # ── Right dock: inspector (ROM / Hardware / Health) ──────────────────
+        def _scrolled(w: QWidget) -> QScrollArea:
+            sa = QScrollArea()
+            sa.setWidgetResizable(True)
+            sa.setWidget(w)
+            sa.setFrameShape(QFrame.NoFrame)
+            return sa
+
+        self._inspector = QTabWidget()
+        self._inspector.setDocumentMode(True)
+        self._inspector.addTab(_scrolled(self._overview_tab), "ROM")
+        self._inspector.addTab(_scrolled(self._hardware_tab), "Hardware")
+        self._inspector.addTab(self._health_panel,            "Health")
+        self._inspector_dock = QDockWidget("INSPECTOR", self)
+        self._inspector_dock.setObjectName("InspectorDock")
+        self._inspector_dock.setWidget(self._inspector)
+        self._inspector_dock.setFeatures(
+            QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
+        self._inspector_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._inspector.setMinimumWidth(300)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._inspector_dock)
+
+        self.resizeDocks([self._maps_dock, self._inspector_dock], [250, 400], Qt.Horizontal)
+
+        # ── Cross-wiring ─────────────────────────────────────────────────────
+        # Overview inventory double-click → editor
+        self._overview_tab.set_jump_callback(self._show_main_map_by_variant_index)
+        # Editor combo changes (find / scan / overlays drive it) → tree highlight
+        self._main_chip_tab._map_combo.currentIndexChanged.connect(
+            lambda _i: self._sync_tree_selection())
+        self._boost_tab._map_combo.currentIndexChanged.connect(
+            lambda _i: self._sync_tree_selection())
+        # Health panel
+        self._health_panel.issueActivated.connect(self._on_health_issue)
+        self._health_panel.rescanRequested.connect(self._run_health_scan)
+
+        # Hover status + session log + title
         self._main_chip_tab.set_status_fn(self._update_status)
-        # Restore window geometry from previous session
-        geom = self._settings.value("geometry")
-        if geom:
-            self.restoreGeometry(geom)
 
-        # Wire session log — per-cell recording via MapTable._log_fn
         def _log_cell(map_def, r, c, old_raw, new_raw):
             self._session_log.record(map_def, r, c, old_raw, new_raw)
         self._main_chip_tab.set_session_log_fn(_log_cell)
@@ -3495,10 +3547,193 @@ class MainWindow(QMainWindow):
         self._status = QStatusBar()
         self.setStatusBar(self._status)
 
-        # Wire signals
+        # Buttons
         self._open_btn.clicked.connect(self._on_open_main)
         self._boost_btn.clicked.connect(self._on_open_boost)
         self._save_btn.clicked.connect(self._on_save)
+
+        # Restore window geometry + dock layout from previous session
+        geom = self._settings.value("geometry")
+        if geom:
+            self.restoreGeometry(geom)
+        state = self._settings.value("windowState")
+        if state:
+            self.restoreState(state)
+
+    # ── Workbench plumbing ────────────────────────────────────────────────────
+
+    def _make_welcome(self) -> QWidget:
+        """Centre-pane placeholder shown until a ROM is loaded."""
+        from PyQt5.QtWidgets import QListWidget
+        w = QWidget()
+        outer = QVBoxLayout(w)
+        outer.addStretch(2)
+        box = QWidget()
+        box.setMaximumWidth(520)
+        lay = QVBoxLayout(box)
+        lay.setSpacing(10)
+        title = QLabel(f"{APP_NAME}")
+        title.setStyleSheet(f"font-size:26px;font-weight:bold;color:{FG};")
+        title.setAlignment(Qt.AlignCenter)
+        sub = QLabel("Bosch Motronic M2.3 / M2.3.2 ROM editor")
+        sub.setStyleSheet(f"font-size:12px;color:{FG_DIM};")
+        sub.setAlignment(Qt.AlignCenter)
+        hint = QLabel(
+            "Open a ROM (Ctrl+O), or drop a .bin / .034 file anywhere in this window.\n"
+            "Load the boost chip afterwards to unlock boost maps and MAP-sensor detection.")
+        hint.setStyleSheet(f"font-size:11px;color:{FG_DIM};")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setWordWrap(True)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        open_btn = QPushButton("Open ROM…")
+        open_btn.clicked.connect(self._on_open_main)
+        btn_row.addWidget(open_btn)
+        btn_row.addStretch()
+        recent_lbl = QLabel("RECENT")
+        recent_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;letter-spacing:1px;")
+        self._welcome_recent = QListWidget()
+        self._welcome_recent.setStyleSheet(
+            f"QListWidget{{background:{BG2};border:1px solid {BORDER};font-size:11px;}}"
+            f"QListWidget::item{{padding:4px 8px;}}"
+            f"QListWidget::item:selected{{background:{ACCENT}30;color:{FG};}}")
+        self._welcome_recent.setMaximumHeight(170)
+        self._welcome_recent.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._welcome_recent.setTextElideMode(Qt.ElideMiddle)
+        self._welcome_recent.itemActivated.connect(
+            lambda it: self._load_main(Path(it.data(Qt.UserRole))))
+        lay.addWidget(title)
+        lay.addWidget(sub)
+        lay.addSpacing(6)
+        lay.addWidget(hint)
+        lay.addLayout(btn_row)
+        lay.addSpacing(10)
+        lay.addWidget(recent_lbl)
+        lay.addWidget(self._welcome_recent)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(box)
+        row.addStretch()
+        outer.addLayout(row)
+        outer.addStretch(3)
+        self._refresh_welcome_recent()
+        return w
+
+    def _refresh_welcome_recent(self):
+        if not hasattr(self, "_welcome_recent"):
+            return
+        from PyQt5.QtWidgets import QListWidgetItem
+        self._welcome_recent.clear()
+        for p in self._recent_files:
+            pp = Path(p)
+            it = QListWidgetItem(pp.name)
+            it.setData(Qt.UserRole, str(pp))
+            it.setToolTip(str(pp))
+            self._welcome_recent.addItem(it)
+        self._welcome_recent.setVisible(bool(self._recent_files))
+
+    def _refresh_map_tree(self):
+        """Rebuild the map navigator from the editor tabs' current map lists."""
+        if self._det is None or self._det.variant is None:
+            self._map_tree.clear()
+            return
+        main_maps = self._main_chip_tab._maps
+        if self._boost_rom is not None and self._boost_tab._maps:
+            boost_maps = self._boost_tab._maps
+        else:
+            boost_maps = [m for m in (self._det.variant.boost_maps or []) if m.rows > 1]
+        self._map_tree.populate(main_maps, boost_maps, self._boost_rom is not None)
+        self._sync_tree_selection()
+
+    def _show_editor(self, chip: str = "main"):
+        """Bring the Editor tab forward on the given chip page."""
+        self._center_tabs.setCurrentIndex(0)
+        self._editor_stack.setCurrentIndex(1 if chip == "main" else 2)
+        self._sync_tree_selection()
+
+    def _sync_tree_selection(self):
+        if not hasattr(self, "_map_tree"):
+            return
+        page = self._editor_stack.currentIndex()
+        if page == 1:
+            i = self._main_chip_tab.current_index()
+            if i >= 0:
+                self._map_tree.select("main", i)
+        elif page == 2:
+            i = self._boost_tab.current_index()
+            if i >= 0:
+                self._map_tree.select("boost", i)
+
+    def _on_tree_map_activated(self, chip: str, idx: int):
+        self._center_tabs.setCurrentIndex(0)
+        if chip == "main":
+            self._editor_stack.setCurrentIndex(1)
+            tab = self._main_chip_tab
+        else:
+            self._editor_stack.setCurrentIndex(2)
+            tab = self._boost_tab
+        if 0 <= idx < tab._map_combo.count():
+            if tab._map_combo.currentIndex() == idx:
+                tab._on_map_selected(idx)      # re-select same map (e.g. after grid)
+            else:
+                tab._map_combo.setCurrentIndex(idx)
+
+    def _show_main_map_by_variant_index(self, main_map_idx: int):
+        """Overview inventory jump: index into variant.main_maps → editor."""
+        if main_map_idx < 0 or self._det is None or self._det.variant is None:
+            return
+        try:
+            m = self._det.variant.main_maps[main_map_idx]
+        except IndexError:
+            return
+        tab = self._main_chip_tab
+        for i, mm in enumerate(tab._maps):
+            if mm is m:
+                self._on_tree_map_activated("main", i)
+                return
+
+    def _run_health_scan(self):
+        """Run tuning checks and publish them to the Health inspector panel."""
+        if self._main_rom is None or self._det is None or not self._det.variant:
+            self._health_panel.clear()
+            return
+        from urrom.tuning_checks import run_all_checks
+        boost = bytes(self._boost_rom) if self._boost_rom else None
+        issues = run_all_checks(bytes(self._main_rom), self._det.variant,
+                                boost_rom=boost, crc32=self._det.crc32)
+        self._health_panel.set_issues(issues, self._det.variant.name)
+        n_err  = sum(1 for i in issues if i.severity == "error")
+        n_warn = sum(1 for i in issues if i.severity == "warning")
+        label = (f"Health ✗{n_err}" if n_err else
+                 f"Health ⚠{n_warn}" if n_warn else "Health ✓")
+        self._inspector.setTabText(2, label)
+
+    def _on_health_issue(self, iss):
+        """Jump to the cell an issue refers to."""
+        if not iss or not iss.cell or iss.cell[1] is None:
+            return
+        tab = self._main_chip_tab
+        try:
+            map_idx = next(i for i, m in enumerate(tab._maps) if m.name == iss.map_name)
+        except StopIteration:
+            return
+        self._on_tree_map_activated("main", map_idx)
+        try:
+            r, c = iss.cell
+            disp_r = tab._table._map_def.rows - 1 - r
+            tab._table.scrollToItem(tab._table.item(disp_r, c))
+            tab._table.setCurrentCell(disp_r, c)
+        except Exception:
+            pass
+
+    def _reset_layout(self):
+        """Restore the default dock arrangement."""
+        for d in (self._maps_dock, self._inspector_dock):
+            d.setFloating(False)
+            d.show()
+        self.addDockWidget(Qt.LeftDockWidgetArea,  self._maps_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._inspector_dock)
+        self.resizeDocks([self._maps_dock, self._inspector_dock], [250, 400], Qt.Horizontal)
 
     def _build_menu(self):
         mb = self.menuBar()
@@ -3574,6 +3809,35 @@ class MainWindow(QMainWindow):
         self._kwp_menu_timer = QTimer(self)
         self._kwp_menu_timer.timeout.connect(self._refresh_kwp_menu_label)
         self._kwp_menu_timer.start(2000)
+
+        # ── View ─────────────────────────────────────────────────────────────
+        view_menu = mb.addMenu("View")
+        maps_act = self._maps_dock.toggleViewAction()
+        maps_act.setText("Maps panel")
+        maps_act.setShortcut("Ctrl+1")
+        view_menu.addAction(maps_act)
+        insp_act = self._inspector_dock.toggleViewAction()
+        insp_act.setText("Inspector panel")
+        insp_act.setShortcut("Ctrl+2")
+        view_menu.addAction(insp_act)
+        view_menu.addSeparator()
+        filt_act = QAction("Filter maps…", self)
+        filt_act.setShortcut("Ctrl+L")
+        filt_act.triggered.connect(
+            lambda: (self._maps_dock.show(), self._map_tree.focus_search()))
+        view_menu.addAction(filt_act)
+        editor_act = QAction("Editor", self)
+        editor_act.setShortcut("Ctrl+E")
+        editor_act.triggered.connect(lambda: self._center_tabs.setCurrentIndex(0))
+        view_menu.addAction(editor_act)
+        cmp_act = QAction("Compare", self)
+        cmp_act.setShortcut("Ctrl+Shift+C")
+        cmp_act.triggered.connect(lambda: self._center_tabs.setCurrentIndex(1))
+        view_menu.addAction(cmp_act)
+        view_menu.addSeparator()
+        reset_act = QAction("Reset layout", self)
+        reset_act.triggered.connect(self._reset_layout)
+        view_menu.addAction(reset_act)
 
         # ── Help ─────────────────────────────────────────────────────────────
         help_menu = mb.addMenu("Help")
@@ -3766,7 +4030,9 @@ class MainWindow(QMainWindow):
             self._try_auto_xdf(det.variant)
             self._main_chip_tab.load(self._main_rom, det.variant)
             self._compare_tab.set_rom_a(bytes(self._main_rom), det.variant)
-            self._tabs.setCurrentIndex(1)  # jump to map editor
+            self._refresh_map_tree()
+            self._show_editor("main")
+            self._run_health_scan()
             # Tell KWP monitor which PNs are valid for this variant
             self._kwp_monitor.set_rom_part_numbers(det.variant.ecu_pns)
             self._refresh_kwp_badge()
@@ -3785,7 +4051,10 @@ class MainWindow(QMainWindow):
             self._main_chip_tab.clear()
             self._compare_tab.clear()
             self._kwp_monitor.set_rom_part_numbers([])
-            self._tabs.setCurrentIndex(0)
+            self._map_tree.clear()
+            self._health_panel.clear()
+            self._editor_stack.setCurrentIndex(0)
+            self._inspector.setCurrentIndex(0)
             QMessageBox.warning(
                 self, "Unknown ROM",
                 f"ROM not recognised.\n\n"
@@ -3837,6 +4106,10 @@ class MainWindow(QMainWindow):
         self._boost_tab.load(boost_raw, self._det.variant)
         self._hardware_tab.set_boost(bytes(raw), path.name)
         self._overview_tab.update(self._det, boost_det)
+        self._refresh_map_tree()
+        if self._boost_tab._maps:
+            self._show_editor("boost")
+        self._run_health_scan()
 
         bld = boost_det.build_number if boost_det else 0
         crc = boost_det.crc32 if boost_det else 0
@@ -4062,101 +4335,13 @@ class MainWindow(QMainWindow):
         dlg.exec_()
 
     def _on_scan_issues(self):
-        """Run automated tuning health checks and show results dialog."""
+        """Run automated tuning health checks and show them in the inspector."""
         if self._main_rom is None or self._det is None or not self._det.variant:
             QMessageBox.information(self, "Scan for issues", "Load a ROM first.")
             return
-
-        from urrom.tuning_checks import run_all_checks
-        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
-                                      QLabel, QTableWidget, QTableWidgetItem,
-                                      QDialogButtonBox, QHeaderView, QProgressBar)
-
-        v   = self._det.variant
-        crc = self._det.crc32
-        boost = bytes(self._boost_rom) if self._boost_rom else None
-
-        # Run checks (may take a moment for large map sets)
-        issues = run_all_checks(bytes(self._main_rom), v, boost_rom=boost, crc32=crc)
-
-        # Build results dialog
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"Scan results — {v.name}")
-        dlg.setMinimumSize(700, 440)
-        dlg.setStyleSheet(f"background:{BG};color:{FG};")
-        lay = QVBoxLayout(dlg)
-
-        # Summary row
-        n_err  = sum(1 for i in issues if i.severity == 'error')
-        n_warn = sum(1 for i in issues if i.severity == 'warning')
-        n_info = sum(1 for i in issues if i.severity == 'info')
-
-        summary_lbl = QLabel(
-            f"<b style='color:{'#ff4444' if n_err else '#2dff6e'};'>"
-            f"{'⚠ ' if n_err else '✓ '}{n_err} errors</b>"
-            f"  ·  <span style='color:#ffaa00;'>{n_warn} warnings</span>"
-            f"  ·  <span style='color:#6e7681;'>{n_info} info</span>"
-            f"  ·  {len(issues)} total")
-        summary_lbl.setTextFormat(Qt.RichText)
-        summary_lbl.setStyleSheet("font-size:12px;padding:4px 0;")
-        lay.addWidget(summary_lbl)
-
-        # Issues table
-        tbl = QTableWidget(len(issues), 4)
-        tbl.setHorizontalHeaderLabels(["Severity", "Category", "Map", "Description"])
-        tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        tbl.setEditTriggers(QTableWidget.NoEditTriggers)
-        tbl.setAlternatingRowColors(True)
-        tbl.setStyleSheet(
-            f"QTableWidget{{background:{BG2};color:{FG};gridline-color:{BORDER};}}"
-            f"QTableWidget::item:alternate{{background:{BG};}}")
-        tbl.verticalHeader().setVisible(False)
-        lay.addWidget(tbl)
-
-        SEV_COLOURS = {'error': RED, 'warning': AMBER, 'info': FG_DIM}
-        for row_i, iss in enumerate(issues):
-            col = SEV_COLOURS.get(iss.severity, FG)
-            for col_i, text in enumerate([
-                iss.severity.upper(), iss.category,
-                iss.map_name, iss.description
-            ]):
-                it = QTableWidgetItem(text)
-                it.setData(Qt.UserRole, iss)
-                if col_i == 0:
-                    it.setForeground(QBrush(QColor(col)))
-                tbl.setItem(row_i, col_i, it)
-
-        def _on_issue_click(row, col):
-            it = tbl.item(row, 0)
-            if not it: return
-            iss = it.data(Qt.UserRole)
-            if not iss or not iss.cell or iss.cell[1] is None:
-                return
-            # Jump to the cell in the map editor
-            try:
-                map_idx = next(i for i, m in enumerate(self._main_chip_tab._maps)
-                               if m.name == iss.map_name)
-                self._tabs.setCurrentWidget(self._main_chip_tab)
-                self._main_chip_tab._map_combo.setCurrentIndex(map_idx)
-                r, c = iss.cell
-                disp_r = self._main_chip_tab._table._map_def.rows - 1 - r
-                self._main_chip_tab._table.scrollToItem(
-                    self._main_chip_tab._table.item(disp_r, c))
-                self._main_chip_tab._table.setCurrentCell(disp_r, c)
-            except (StopIteration, Exception):
-                pass
-
-        tbl.cellDoubleClicked.connect(_on_issue_click)
-
-        hint = QLabel("Double-click a row to jump to that cell in the map editor.")
-        hint.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
-        lay.addWidget(hint)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Close)
-        btns.rejected.connect(dlg.reject)
-        lay.addWidget(btns)
-        dlg.exec_()
+        self._run_health_scan()
+        self._inspector_dock.show()
+        self._inspector.setCurrentWidget(self._health_panel)
 
     def _try_auto_xdf(self, variant) -> None:
         """
@@ -4296,7 +4481,7 @@ class MainWindow(QMainWindow):
         from urrom.ecu_profiles import normalize_rom
         stock_wh, _ = normalize_rom(stock_raw)
         self._compare_tab.set_rom_b_direct(bytes(stock_wh), stock_path.name)
-        self._tabs.setCurrentWidget(self._compare_tab)
+        self._center_tabs.setCurrentWidget(self._compare_tab)
         self._update_status(f"Comparing to stock: {stock_path.name}")
 
     def _on_find_in_maps(self):
@@ -4392,7 +4577,7 @@ class MainWindow(QMainWindow):
             # Jump to that map
             try:
                 map_idx = next(i for i,mm in enumerate(self._main_chip_tab._maps) if mm is m)
-                self._tabs.setCurrentWidget(self._main_chip_tab)
+                self._show_editor("main")
                 self._main_chip_tab._map_combo.setCurrentIndex(map_idx)
                 # Scroll to cell in table
                 disp_r = m.rows - 1 - r
@@ -4733,7 +4918,7 @@ class MainWindow(QMainWindow):
             for (raw_r, c) in stats['unvisited']:
                 tbl._annotations[(raw_r, c)] = "✗ never logged"
             tbl._redraw()
-            self._tabs.setCurrentWidget(self._main_chip_tab)
+            self._show_editor("main")
             self._update_status(
                 f"Log overlay applied: {pct:.0f}% coverage — "
                 f"{n_zero} unvisited cells — hover cells for hit count")
@@ -4958,7 +5143,7 @@ class MainWindow(QMainWindow):
                 f"{prefix} {afr:.1f} AFR  Δ{d:+.1f}  n={count}")
 
         tbl._redraw()
-        self._tabs.setCurrentWidget(self._main_chip_tab)
+        self._show_editor("main")
         self._update_status(
             f"Wideband overlay: {len(overlay)} cells logged  —  "
             f"lean: {lean_count}  rich: {rich_count}  on-target: {on_target}  "
@@ -5041,7 +5226,8 @@ class MainWindow(QMainWindow):
         self._settings.setValue("recent_files", self._recent_files)
 
     def _refresh_recent_menu(self) -> None:
-        """Rebuild the Recent files submenu."""
+        """Rebuild the Recent files submenu (and the welcome-page list)."""
+        self._refresh_welcome_recent()
         self._recent_menu.clear()
         if not self._recent_files:
             self._recent_menu.addAction("(no recent files)").setEnabled(False)
@@ -5077,6 +5263,8 @@ class MainWindow(QMainWindow):
             if r != QMessageBox.Yes:
                 event.ignore()
                 return
+        self._settings.setValue("geometry", self.saveGeometry())
+        self._settings.setValue("windowState", self.saveState())
         self._kwp_monitor.stop()
         event.accept()
 
