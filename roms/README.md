@@ -25,6 +25,9 @@ including blank/erased chips not stored here.
 | `rr_boost_404b.bin` | 857907404B boost | RR boost MCU (8KB exec code) | — | `0xEA8D46DF` | ✓ REAL |
 
 **Notes — M2.3 (404 family):**
+- **Burning to 27C512:** the 32KB fuel/ign image goes on twice, the 8KB boost image eight
+  times (`python -m urrom.cli chip <file>` or File → Write 27C512 images). Dumps of such
+  chips are folded back to native size on load.
 - Single 27C256 (32KB) fuel/ign chip per ECU, plus a separate 27C64 (8KB) boost chip
 - The boost chip is an **executable 8051 MCU**, not a data-only ROM — it runs on a
   second independent processor on the MAP sub-board

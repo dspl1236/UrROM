@@ -245,12 +245,47 @@ def cmd_maps(args):
         print(f"0x{m['data']:04X}   0x{m['desc']:04X} {shape:7s} {nm(m['x_input']):9s} {nm(m['y_input']):9s} {ax}")
 
 
+def cmd_chip(args):
+    """Convert between native chip images and 27C512 (fill) images."""
+    import argparse
+    p = argparse.ArgumentParser(prog='urrom chip')
+    p.add_argument('rom', help='chip image (.bin, or .034 for the main chip)')
+    p.add_argument('--to', choices=['27c512', 'native'], default='27c512',
+                   help="27c512: repeat the native image to fill 64KB (default); "
+                        "native: fold a repeated 64KB image back to the chip's own size")
+    p.add_argument('-o', '--out', metavar='FILE', help='output file (default: <rom>_<to>.bin)')
+    ns = p.parse_args(args)
+    path = Path(ns.rom)
+    if not path.exists():
+        print(f"ERROR: {path} not found"); sys.exit(3)
+    raw = path.read_bytes()
+    if path.suffix.lower() == '.034':
+        from urrom.descramble import descramble_034
+        raw = bytes(descramble_034(raw))
+    from urrom.ecu_profiles import fold_repeated_image, expand_to_chip, chip_name_for_size
+    native, copies, notes = fold_repeated_image(raw)
+    for n in notes:
+        print(f"note: {n}")
+    if ns.to == 'native':
+        out = native
+    else:
+        try:
+            out = expand_to_chip(native, '27C512')
+        except ValueError as e:
+            print(f"ERROR: {e}"); sys.exit(3)
+    out_path = Path(ns.out) if ns.out else path.with_name(f"{path.stem}_{ns.to}.bin")
+    out_path.write_bytes(out)
+    print(f"{path.name}: {chip_name_for_size(len(native))} native image "
+          f"({len(native):,} B) -> {out_path.name} {chip_name_for_size(len(out))} ({len(out):,} B)")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
         print("urrom <command> [options]")
         print("  scan <rom>  [--strict] [--json]  — check for tuning issues")
         print("  info <rom>                        — print ROM identification")
         print("  maps <rom>  [--all] [--json]      — list maps the firmware references (551 64KB)")
+        print("  chip <rom>  [--to 27c512|native]  — fill a 27C512 image / fold one back to native size")
         sys.exit(0)
     cmd = sys.argv[1]
     rest = sys.argv[2:]
@@ -260,6 +295,8 @@ def main():
         cmd_info(rest)
     elif cmd == 'maps':
         cmd_maps(rest)
+    elif cmd == 'chip':
+        cmd_chip(rest)
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(3)

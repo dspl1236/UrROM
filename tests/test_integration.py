@@ -800,3 +800,47 @@ class Test404Descriptors:
         assert rom[0x1690:0x1692] == b"\x7a\x18"
         # 20h ← XRAM 0xA040 XOR 0x0E (boost-board status), at 137B-1384
         assert rom[0x137B:0x137E] == bytes.fromhex("e2640e")
+
+
+# -- 27C512 chip images: fold / expand (2026-09-09) ---------------------------
+
+class TestChipImages:
+    def test_expand_and_fold_8kb_boost(self):
+        from urrom.ecu_profiles import expand_to_chip, fold_repeated_image
+        boost = bytes(load_rom("3b_boost_404aa.bin"))
+        assert len(boost) == 0x2000
+        img = expand_to_chip(boost, "27C512")
+        assert len(img) == 0x10000 and img[0x2000 * 7:] == boost
+        native, copies, notes = fold_repeated_image(img)
+        assert native == boost and copies == 8 and notes
+
+    def test_expand_and_fold_32kb_404(self):
+        from urrom.ecu_profiles import expand_to_chip, fold_repeated_image, normalize_rom, detect_rom
+        fuel = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        img = expand_to_chip(fuel)
+        assert img == fuel * 2
+        native, copies, _ = fold_repeated_image(img)
+        assert native == fuel and copies == 2
+        # normalize_rom folds a 27C512-doubled 404 image back to the 32KB flat chip
+        wh, notes = normalize_rom(img)
+        assert bytes(wh) == fuel and any("folded" in n for n in notes)
+        assert detect_rom(bytes(wh)).variant.software_id == "404"
+
+    def test_551_split_bank_not_folded(self):
+        from urrom.ecu_profiles import fold_repeated_image, normalize_rom
+        rom = bytes(load_rom("adu_fuel-ign_551c.bin"))
+        native, copies, _ = fold_repeated_image(rom)
+        assert copies == 1 and native == rom
+        wh, _ = normalize_rom(rom)
+        assert bytes(wh) == rom[0x8000:]
+
+    def test_expand_rejects_short_dump(self):
+        import pytest
+        from urrom.ecu_profiles import expand_to_chip
+        with pytest.raises(ValueError):
+            expand_to_chip(b"\x02" * 65535)
+
+    def test_64kb_passthrough(self):
+        from urrom.ecu_profiles import expand_to_chip
+        rom = bytes(load_rom("aby_fuel-ign_551aa.bin"))
+        assert expand_to_chip(rom) == rom

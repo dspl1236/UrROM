@@ -2309,6 +2309,66 @@ def _is_v8_split_bank(raw: bytes) -> bool:
     return reset_target in _V8_RESET_TARGETS
 
 
+# ── EPROM chip images: fold repeated copies / expand to a bigger chip ─────────
+#
+# Small EPROMs (27C64 8KB boost, 27C256 32KB fuel/ign) are hard to buy now; a
+# 27C512 (64KB) in the same socket sees its extra address lines tied high or
+# low by the board, so the same content must be present in every bank.  A
+# 27C512 image of an 8KB boost chip is therefore that 8KB repeated 8 times,
+# and a 27C512 image of a 32KB 404 chip is the 32KB repeated twice.
+#
+# The reverse — a programmer dump of such a chip — is a 64KB file made of
+# identical banks.  fold_repeated_image() collapses it back to the native
+# size.  A 551 27C512 is NOT folded: its two halves differ (firmware / cal).
+
+CHIP_SIZES: dict[str, int] = {
+    "27C64": 0x2000, "27C128": 0x4000, "27C256": 0x8000, "27C512": 0x10000,
+}
+
+
+def chip_name_for_size(size: int) -> str:
+    for name, n in CHIP_SIZES.items():
+        if n == size:
+            return name
+    return f"{size} B"
+
+
+def fold_repeated_image(raw: bytes, min_period: int = 0x2000) -> tuple[bytes, int, list[str]]:
+    """
+    If `raw` is N identical copies of a smaller image (period a power of two
+    >= min_period), return (native_image, copies, notes).  Otherwise return
+    (raw, 1, []).  Only exact repeats fold, so a real 64KB 551 chip (different
+    halves) is left alone.
+    """
+    n = len(raw)
+    period = min_period
+    while period < n:
+        if n % period == 0:
+            first = raw[:period]
+            if all(raw[i:i + period] == first for i in range(period, n, period)):
+                copies = n // period
+                return bytes(first), copies, [
+                    f"{chip_name_for_size(n)} image holds {copies} identical copies of a "
+                    f"{chip_name_for_size(period)} image — folded to {period:,} bytes"]
+        period <<= 1
+    return raw, 1, []
+
+
+def expand_to_chip(native: bytes, chip: str = "27C512") -> bytes:
+    """
+    Repeat a native chip image to fill a larger EPROM (default 27C512).
+    A 64KB image is returned unchanged.  Raises ValueError if the native size
+    does not divide the target size (e.g. a 65535-byte short dump).
+    """
+    target = CHIP_SIZES[chip]
+    n = len(native)
+    if n == target:
+        return bytes(native)
+    if n == 0 or target % n:
+        raise ValueError(f"{n} bytes does not tile a {chip} ({target} bytes)")
+    return bytes(native) * (target // n)
+
+
 def normalize_rom(raw: bytes, variant: ROMVariant | None = None
                   ) -> tuple[bytes, list[str]]:
     """
@@ -2325,6 +2385,15 @@ def normalize_rom(raw: bytes, variant: ROMVariant | None = None
     """
     notes = []
     size = len(raw)
+
+    # A 27C512 written with a smaller chip's image repeated (64KB = 2 × 32KB
+    # flat 404 image, etc.) — fold back to the native size first.
+    if size > MAIN_CHIP_WORKING:
+        folded, copies, fnotes = fold_repeated_image(raw, min_period=MAIN_CHIP_WORKING)
+        if copies > 1:
+            raw = folded
+            size = len(raw)
+            notes.extend(fnotes)
 
     # Some programmer dumps drop the last byte (65535 B).  Pad so the split-bank
     # logic below applies; the missing byte is the last byte of the cal tag.

@@ -3767,6 +3767,23 @@ class MainWindow(QMainWindow):
         find_act.triggered.connect(self._on_find_in_maps)
         file_menu.addAction(save_act)
 
+        save_boost_act = QAction("Save Boost Chip…", self)
+        save_boost_act.triggered.connect(self._on_save_boost)
+        file_menu.addAction(save_boost_act)
+
+        # 27C512s are what you can still buy: fill the 64KB with the native
+        # image repeated (32KB ×2, 8KB ×8) so the chip works in the old socket.
+        self._act_27c512 = QAction("Write 27C512 images (fill 64KB)", self)
+        self._act_27c512.setCheckable(True)
+        self._act_27c512.setChecked(
+            str(self._settings.value("save_as_27c512", "false")).lower() in ("true", "1"))
+        self._act_27c512.setStatusTip(
+            "Save every chip as a 64KB 27C512 image: the native image is repeated to fill "
+            "the chip (8KB boost ×8, 32KB 3B/RR ×2). 551 main chips are already 64KB.")
+        self._act_27c512.toggled.connect(
+            lambda v: self._settings.setValue("save_as_27c512", "true" if v else "false"))
+        file_menu.addAction(self._act_27c512)
+
         file_menu.addSeparator()
 
         quit_act = QAction("Quit\t", self)
@@ -4109,16 +4126,23 @@ class MainWindow(QMainWindow):
              QMessageBox.critical(self, "Error", f"Cannot read file:\n{e}")
              return
 
-        # Normalise: accept 8KB, 16KB, 32KB, or 64KB doubled boost chips.
-        # 551x boost chips are 32KB (27C256); 3B/551A are 8KB (27C64).
-        if len(raw) == 65536:
-             boost_raw = bytearray(raw[0x8000:])  # doubled — take upper half
-        elif len(raw) == 32768:
+        # Normalise: a boost chip burned onto a bigger EPROM (27C64 image ×8 or
+        # 27C256 image ×2 on a 27C512) is N identical copies — fold it back.
+        # 551x boost chips are 32KB (27C256); 3B/RR/S2 and 551A are 8KB (27C64).
+        from urrom.ecu_profiles import fold_repeated_image
+        folded, copies, fold_notes = fold_repeated_image(raw)
+        if copies > 1:
+             boost_raw = bytearray(folded)
+             self._update_status(fold_notes[0])
+        elif len(raw) in (8192, 16384, 32768):
              boost_raw = bytearray(raw)
-        elif len(raw) <= 8192:
+        elif len(raw) == 65536:
+             boost_raw = bytearray(raw[0x8000:])  # non-identical halves: assume upper
+        elif len(raw) < 8192:
              boost_raw = bytearray(raw)
         else:
              boost_raw = bytearray(raw[:32768])
+        self._boost_native_size = len(boost_raw)
 
         boost_det = detect_rom(bytes(boost_raw))
         self._boost_det  = boost_det
@@ -4184,9 +4208,11 @@ class MainWindow(QMainWindow):
             if r != QMessageBox.Ok:
                 return
 
+        fill_512 = self._save_as_27c512()
         stem   = self._main_path.stem
         suffix = self._main_path.suffix.lower()
-        default_name = stem + "_edited" + (suffix if suffix in (".bin", ".034") else ".bin")
+        tag = "_edited" + ("_27c512" if fill_512 and len(out_bytes) < MAIN_CHIP_PHYSICAL else "")
+        default_name = stem + tag + (suffix if suffix in (".bin", ".034") else ".bin")
         path, sel_filter = QFileDialog.getSaveFileName(
             self, "Save ROM", default_name,
             "Binary ROM (*.bin *.BIN);;034 Rip Chip (*.034);;All files (*.*)")
@@ -4196,6 +4222,14 @@ class MainWindow(QMainWindow):
         if path.lower().endswith(".034") or "034" in sel_filter:
             from urrom.descramble import scramble_034
             out_bytes = bytes(scramble_034(out_bytes))
+        elif fill_512 and len(out_bytes) < MAIN_CHIP_PHYSICAL:
+            from urrom.ecu_profiles import expand_to_chip
+            try:
+                out_bytes = expand_to_chip(out_bytes, "27C512")
+                asm_notes.append(f"27C512 image ({MAIN_CHIP_PHYSICAL // len(rom_out)}× native)")
+            except ValueError as e:
+                QMessageBox.warning(self, "27C512 image", str(e))
+                return
 
         try:
             Path(path).write_bytes(out_bytes)
@@ -4211,18 +4245,9 @@ class MainWindow(QMainWindow):
 
         # Save boost chip if it has edits
         if (hasattr(self, '_boost_tab') and self._boost_tab.has_changes()):
-            boost_rom = self._boost_tab.get_boost_rom()
-            if boost_rom is not None:
-                boost_stem = Path(path).stem.replace("_edited", "") + "_boost_edited.bin"
-                boost_path, _ = QFileDialog.getSaveFileName(
-                    self, "Save Boost Chip", boost_stem,
-                    "Binary ROM (*.bin *.BIN);;All files (*.*)")
-                if boost_path:
-                    try:
-                        Path(boost_path).write_bytes(bytes(boost_rom))
-                        notes.append(f"boost chip saved")
-                    except OSError as e:
-                        QMessageBox.warning(self, "Boost Save Error", str(e))
+            boost_stem = Path(path).stem.replace("_edited", "").replace("_27c512", "") + "_boost_edited"
+            if self._write_boost_chip(boost_stem):
+                notes.append("boost chip saved")
 
         note_str = f"  ({', '.join(notes)})" if notes else ""
         self._main_chip_tab._table.accept_current_as_baseline()
@@ -4241,6 +4266,45 @@ class MainWindow(QMainWindow):
                 'maps': list(self._session_log.changed_maps),
             })
         self._update_status(f"Saved → {Path(path).name}  ({len(out_bytes):,} bytes){note_str}")
+
+    def _save_as_27c512(self) -> bool:
+        act = getattr(self, "_act_27c512", None)
+        return bool(act.isChecked()) if act is not None else False
+
+    def _write_boost_chip(self, default_stem: str) -> bool:
+        """Ask for a path and write the boost chip (optionally as a 27C512 image)."""
+        boost_rom = self._boost_tab.get_boost_rom() if hasattr(self, "_boost_tab") else None
+        if boost_rom is None:
+            QMessageBox.information(self, "Save Boost Chip", "No boost chip loaded.")
+            return False
+        out = bytes(boost_rom)
+        note = ""
+        if self._save_as_27c512() and len(out) < MAIN_CHIP_PHYSICAL:
+            from urrom.ecu_profiles import expand_to_chip, chip_name_for_size
+            try:
+                native = chip_name_for_size(len(out))
+                out = expand_to_chip(out, "27C512")
+                default_stem += "_27c512"
+                note = f"  ({native} image ×{MAIN_CHIP_PHYSICAL // len(boost_rom)} → 27C512)"
+            except ValueError as e:
+                QMessageBox.warning(self, "27C512 image", str(e))
+                return False
+        boost_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Boost Chip", default_stem + ".bin",
+            "Binary ROM (*.bin *.BIN);;All files (*.*)")
+        if not boost_path:
+            return False
+        try:
+            Path(boost_path).write_bytes(out)
+        except OSError as e:
+            QMessageBox.warning(self, "Boost Save Error", str(e))
+            return False
+        self._update_status(f"Boost chip saved → {Path(boost_path).name}  ({len(out):,} bytes){note}")
+        return True
+
+    def _on_save_boost(self):
+        stem = (self._boost_path.stem if getattr(self, "_boost_path", None) else "boost") + "_edited"
+        self._write_boost_chip(stem)
 
     # ── KWPBridge overlay ──────────────────────────────────────────────────────
 

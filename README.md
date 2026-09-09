@@ -83,6 +83,8 @@ All files fingerprinted by CRC32, boost chip pairing validated automatically.
 ### Import/Export
 - Open .bin / .034 (auto-descramble), drag & drop
 - Save .bin or .034 Rip Chip, checksum auto-applied
+- **File → Write 27C512 images**: fills a 64KB 27C512 with the native image repeated (8KB boost ×8, 32KB 3B/RR ×2) — 27C512s are what you can still buy. Loading a chip burned that way folds it back automatically.
+- **File → Save Boost Chip…** (edited or not), same 27C512 option
 - Import TunerPro XDF v1.50 (auto-inject for 551AA_0202)
 - Export map as HTML / full ROM reference (printable)
 - Export session changelog (per-cell edit history)
@@ -94,6 +96,7 @@ python -m urrom.cli scan rom.034           # exit 2 on errors
 python -m urrom.cli scan rom.034 --json    # machine-readable
 python -m urrom.cli info rom.034           # identification
 python -m urrom.cli maps rom.bin           # every map the 551 firmware references
+python -m urrom.cli chip boost.bin         # 8KB/32KB image → 64KB 27C512 image (--to native folds back)
 ```
 
 ### Tools Menu
