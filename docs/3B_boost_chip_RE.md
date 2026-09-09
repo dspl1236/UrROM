@@ -105,21 +105,39 @@ So the nibble is a **five-band level code of the 16-bit value `67h:66h`**
 in raw units; `BEh–C2h` / `C5h–C9h` are 4-deep histories of 66h / 67h that
 also feed a 5-sample moving average at `0x0C57`).
 
-`67h:66h` is **not a knock counter**. It is an adaptation state: initialised
-to 0x000F (`0x08C2`), then updated in place at `0x0756–0x07EA` by a scaled
-multiply/divide of itself with gains from the table at `0x1817`, moving up
-or down according to how the ratio `37h` compares with targets. `37h` is
-computed at `0x0721–0x074A` as `(34h + 69h) × B / (67h:66h)` (34h = control
-loop state, 69h = ADC ch0). The same comparison drives port line **P5.5**
-straight out. The tables involved (`0x1805–0x182F`, `0x183B–0x1850`) are
-byte-identical on the 3B, RR and S2 boost chips.
+`67h:66h` is the **adaptive knock reference** (background noise level), and
+the routine at `0x0700–0x07EA` is the knock evaluator (traced 2026-09-09):
 
-On the main-ECU side the nibble's bit 2 (band 80–159) toggles which coding
-gets the +1° part-load ignition map (see `551_calibration_descriptors_RE.md`
-§3c); bit 1 gates a small slot-06 table. Given the maps involved differ in at most 62
-cells by at most 3°, all in the mid-rpm part-load zone, this is a fine adaptive trim,
-not a knock strategy. What physical quantity `67h:66h` converges on (the
-`34h`/`69h` inputs still need naming) is the remaining open item.
+- **Knock window ISR** (`0x006D`, ADC-complete vector, three phases on flags
+  `26h.4/.5/.6`): at the window start it samples ADC **ch0** into `6Ah`,
+  resets/arms the knock IC integrator via **P4.4 / P4.5**, and extends compare
+  register 3 by `5Ah:5Bh` (window length × period, from the 5×8 tables at
+  `0x1649/0x1671`); at the window end it samples ch0 again, inverted, into
+  **`6Bh`** = integrated knock signal; a third sample lands in **`69h`**.
+  `2Bh` → P4.4–P4.7 is the knock-amplifier **gain word** (0x50 / 0xA0 / 0xC0),
+  auto-ranged at `0x0110–0x0131` from the `69h` vs `6Ah` comparison (`0x014D`).
+- `6Bh` → `6Ch` (`0x0245`) → **`34h`** (`0x02FC`, in the ignition-event ISR).
+  So **34h = integrated knock signal of the last window, 69h = the companion
+  ch0 sample** used for gain ranging and as the signal offset.
+- `37h = (34h + 69h) × B / (67h:66h)` (`0x0721–0x074A`) is the **knock ratio**
+  (signal over reference). It is compared with thresholds from `0x1817`
+  (`1F 04 08 08 10 04 08 19`); the result sets `24h.0/24h.2/24h.3` and is
+  driven out on **P5.5 = knock recognised**.
+- `67h:66h` starts at 0x000F (`0x08C2`) and is adapted each cycle at
+  `0x0756–0x07EA` (scaled multiply/divide, gains from `0x1805–0x1816`),
+  tracking the background level — classic Bosch adaptive knock reference.
+  `BEh–C2h` / `C5h–C9h` are 4-deep histories of it; `0x0C57` takes a
+  5-sample mean for the plausibility check that sets `22h.0/22h.1`.
+
+So the P4 low nibble sent to the main ECU is the **band of the knock
+reference level** (how noisy the engine currently is), not the knock event.
+The knock event itself is the P5.5 line. On the main-ECU side bit 2 of the
+nibble (reference in band 80–159) and P4.4 (`20h.4`, the gain word's low
+bit) pick the ignition table set; the maps involved differ in at most 62
+cells by at most 3° at part load (`551_calibration_descriptors_RE.md` §3c),
+i.e. a mild timing trim by noise class. Bits 0, 3, 6 and 7 of `20h` are used
+elsewhere in the main firmware (`0x1740`, `0x18D8`, `0x2B99`, `0x37F9`…) —
+not yet traced. All tables involved are byte-identical on 3B, RR and S2.
 
 ## Chip differences
 

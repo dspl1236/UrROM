@@ -864,3 +864,19 @@ class TestChipImages:
                         x, y = rom[A[a]:A[a] + 256], rom[A[b]:A[b] + 256]
                         d = [abs(x[i] - y[i]) for i in range(256)]
                         assert max(d) <= 4 and sum(1 for v in d if v) <= 64, f"{name} {a}v{b}"
+
+    def test_boost_mcu_knock_reference_tables(self):
+        """Pin the boost-side bytes the status-nibble / knock-evaluator analysis rests on."""
+        for name in ("3b_boost_404aa.bin", "rr_boost_404b.bin", "s2_boost_404.bin"):
+            rom = bytes(load_rom(name))
+            # band thresholds 40 20 10 5 3 and one-hot codes 00 01 02 04 08 0F
+            assert rom[0x183C:0x1841] == bytes.fromhex("28140a0503"), name
+            assert rom[0x1847:0x184D] == bytes.fromhex("00010204080f"), name
+            # 0x08A8: MOV R0,#BFh ; MOV A,@R0 ; MOV R2,A   (reads the 67h:66h history)
+            assert rom[0x08A8:0x08AC] == bytes.fromhex("78bfe6fa"), name
+            # 0x0349: MOV 5Fh,A after LCALL 08A8 ; 0x00FA: ORL A,5Fh (P4 nibble emit)
+            assert rom[0x0346:0x034B] == bytes.fromhex("1208a8f55f"), name
+            assert rom[0x00FA:0x00FC] == bytes.fromhex("455f"), name
+            # 0x02FC: MOV 34h,6Ch (knock integrator sample) ; 0x0086: MOV 69h,ADDAT
+            assert rom[0x02FC:0x02FF] == bytes.fromhex("856c34"), name
+            assert rom[0x0086:0x0089] == bytes.fromhex("85d969"), name

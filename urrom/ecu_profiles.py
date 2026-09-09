@@ -438,7 +438,8 @@ _MAPS_3B_MAIN = [
     _b3_ign("Ignition Map 6 (main, boost-board flag, coding A)", 0x77CF,
             "MAIN high-load ignition map when boost-board status bit 20h.2 is SET and coding bit A0h.6 "
             "is clear (identical to map 5 on the 3B chip). The bit is band 4 of a one-hot level code "
-            "of the boost MCU's adaptation state 67h:66h — NOT knock; see docs/3B_boost_chip_RE.md."),
+            "of the boost MCU's adaptive KNOCK REFERENCE (background noise level 67h:66h) — the knock "
+            "event itself is the P5.5 line; see docs/3B_boost_chip_RE.md."),
     _b3_ign("Ignition Map 7 (main, boost-board flag, coding B)", 0x7937,
             "MAIN high-load ignition map when boost-board bit 20h.2 is set and coding bit A0h.6 is set "
             "(identical to map 2 on the RR and S2 chips; 3 cells differ on the 3B). Was listed as map 4."),

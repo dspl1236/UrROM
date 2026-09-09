@@ -129,8 +129,10 @@ The ignition table set (which map sits in slot 12) is chosen by the chain at
 - `20h` = byte read from the boost board over the inter-board bus at
   `0xA040`, XOR 0x0E (`0x1376–0x1384`, `0x4A31`). Traced on the boost side
   (`3B_boost_chip_RE.md`, "Status nibble"): it is a one-hot five-band level
-  code (`00 01 02 04 08 0F`) of an adaptation state `67h:66h`, **not a knock
-  flag**. Bit 2 = band 80–159.
+  code (`00 01 02 04 08 0F`) of the boost MCU's **adaptive knock reference**
+  `67h:66h` (background noise level) — not the knock event, which goes out on
+  the P5.5 line. Bit 2 = reference in band 80–159; `20h.4` = P4.4, the low bit
+  of the knock-amplifier gain word.
 - The four "main" maps are one calibration with small trims: at most 62
   cells differ between any two of them, by at most 3°, all in the mid-rpm
   part-load zone. Exact equalities vary per chip (3B: 5 == 6; RR: 2 == 5 == 7;
