@@ -178,3 +178,6 @@ The following items are known and tracked for future work:
 ## License
 
 MIT — see LICENSE file.
+
+### Reverse-engineering notes
+- [docs/3B_KW1281_RE.md](docs/3B_KW1281_RE.md) — the 3B's K-line dialect: ID blocks (coding number in block 3), 0x12 group read → 0xF4 ten-byte block, read-RAM window; KWPBridge `--ecu 3b` mock

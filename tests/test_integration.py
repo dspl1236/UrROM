@@ -1189,3 +1189,43 @@ class TestKWPLiveValues:
         assert lv.rpm == 3000 and lv.ect == 92 and lv.lambda_ == 1.0
         assert abs(lv.timing - (50 * 0.6491 - 8.2186)) < 1e-6
         assert lv.load == 100 and abs(lv.tps - 29.95) < 0.01 and lv.iat == 38
+
+
+class TestKWPLiveValues3B:
+    def _cell(self, i, v, u=""):
+        return {"index": i, "value": v, "unit": u, "display": f"{v} {u}"}
+
+    def test_ram_window_preferred(self):
+        from urrom.kwp import LiveValues
+        c = self._cell
+        st = {"connected": True, "ecu_id": {"part_number": "447907404AA"},
+              "groups": {"0": {"cells": [c(1, 90.0, "°C"), c(2, 100.0), c(3, 2550.0, "RPM"),
+                                         c(4, 0), c(5, 100), c(6, 128), c(7, 0), c(8, 131.0),
+                                         c(9, 126), c(10, 20.0, "° BTDC")]},
+                         "100": {"cells": [c(1, 13.9, "V"), c(2, 36.0, "°C"), c(3, 92.0, "°C"),
+                                           c(4, 5800.0, "RPM"), c(5, 185.0), c(6, 17.0, "° BTDC"),
+                                           c(7, 18.5, "° BTDC")]}}}
+        lv = LiveValues(st)
+        assert lv.family == "404" and lv.valid
+        assert lv.rpm == 5800 and lv.load == 185 and lv.ect == 92 and lv.iat == 36
+        assert lv.timing == 17 and lv.battery == 13.9
+        assert lv.lambda_ctrl == 131 and abs(lv.lambda_ - 1.0117) < 0.001
+
+    def test_block_only_fallback(self):
+        from urrom.kwp import LiveValues
+        c = self._cell
+        st = {"connected": True, "ecu_id": {"part_number": "857907404B"},
+              "groups": {"0": {"cells": [c(1, 88.0, "°C"), c(2, 24.0), c(3, 800.0, "RPM"),
+                                         c(4, 0), c(5, 0), c(6, 0), c(7, 0), c(8, 128.0),
+                                         c(9, 0), c(10, 10.0, "° BTDC")]}}}
+        lv = LiveValues(st)
+        assert lv.family == "404" and lv.rpm == 800 and lv.load == 24 and lv.timing == 10
+        assert lv.lambda_ == 1.0
+
+    def test_551_untouched(self):
+        from urrom.kwp import LiveValues
+        c = self._cell
+        st = {"connected": True, "ecu_id": {"part_number": "4A0907551AA"},
+              "groups": {"1": {"cells": [c(1, 3000.0, "RPM"), c(2, 92.0, "°C"), c(3, 1.0, "λ"), c(4, 24.0)]}}}
+        lv = LiveValues(st)
+        assert lv.family == "551" and lv.rpm == 3000

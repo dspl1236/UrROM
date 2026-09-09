@@ -83,6 +83,8 @@ class LiveValues:
         self.vss:      Optional[float] = None   # km/h
         self.battery:  Optional[float] = None   # V
         self.knock:    Optional[list]  = None   # [V × 5 cylinders] from group 5
+        self.lambda_ctrl: Optional[float] = None  # 3B block cell 8 (128 = centre)
+        self.family:   str = "551"
         self.ecu_pn:   str = ""
 
         if not state or not state.get("connected"):
@@ -131,6 +133,35 @@ class LiveValues:
         def _ign(v):   return None if v is None else (v * 0.6491 - 8.2186 if raw() else v)
         def _tps(v):   return None if v is None else (v * 0.416 if raw() else v)
         def _iat(v):   return None if v is None else (v - 70 if raw() else v)
+
+        # ── Bosch M2.3 (3B / RR / S2-3B, 447907404): early KW1281 dialect ──
+        # KWPBridge serves group 0 = the ECU's 10-byte raw block and group 100 =
+        # a read-RAM window (36h..3Fh, 53h/54h).  Prefer the RAM window: its RPM
+        # (3Ah x40) does not saturate at 2550 like the block's 3Bh/10 byte, and
+        # its load is RAM 3Fh, the fuel/ignition map's own load axis.
+        self.family = "404" if (self.ecu_pn.startswith(("447907404", "857907404", "895907404"))
+                                or ("100" in groups and "1" not in groups)) else "551"
+        if self.family == "404":
+            g100 = _cells(100)
+            g0 = _cells(0)
+            if g100:
+                self.battery = _v(g100, 1)
+                self.iat     = _v(g100, 2)
+                self.ect     = _v(g100, 3)
+                self.rpm     = _v(g100, 4)
+                self.load    = _v(g100, 5)
+                self.timing  = _v(g100, 6)
+            if g0:
+                if self.ect is None:    self.ect    = _v(g0, 1)
+                if self.load is None:   self.load   = _v(g0, 2)
+                if self.rpm is None:    self.rpm    = _v(g0, 3)
+                if self.timing is None: self.timing = _v(g0, 10)
+                lc = _v(g0, 8)
+                self.lambda_ctrl = lc                       # 128 = no correction
+                # the 3B has no wideband/lambda-factor cell; approximate the
+                # control deviation as a factor so the overlay colour still works
+                self.lambda_ = None if lc is None else round(1.0 + (lc - 128) / 256.0, 3)
+            return
 
         g1 = _cells(1)
         if g1:
