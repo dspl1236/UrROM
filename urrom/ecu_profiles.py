@@ -418,14 +418,29 @@ _MAPS_3B_MAIN = [
     _b3_fuel("Fuel Map 2", 0x6C1C, "Fuel map 2 — identical to map 1 in stock chips (alternate/failsafe copy)."),
     _b3_fuel("Fuel Map 3", 0x6D74, "Fuel map 3 — identical to map 1 in stock chips (alternate copy)."),
     _b3_fuel("Fuel Map 4", 0x6E98, "Fuel map 4 — WOT / high-load enrichment (up to raw 205 on the S2 chip)."),
-    _b3_ign("Ignition Map 1 (PT primary)", 0x7076,
-            "Primary part-throttle ignition. Byte-identical on 3B / RR / S2. Decode raw×0.75−22.5."),
-    _b3_ign("Ignition Map 2", 0x71F8, "Ignition map 2 (newly found 2026-09; differs S2 vs 3B)."),
-    _b3_ign("Ignition Map 3", 0x731C, "Ignition map 3 (newly found 2026-09)."),
-    _b3_ign("Ignition Map 4", 0x7440, "Ignition map 4 (newly found 2026-09)."),
-    _b3_ign("Ignition Map 5", 0x7667, "Ignition map 5 (was listed as map 2)."),
-    _b3_ign("Ignition Map 6", 0x77CF, "Ignition map 6 (was listed as map 3)."),
-    _b3_ign("Ignition Map 7", 0x7937, "Ignition map 7 (was listed as map 4)."),
+    _b3_ign("Ignition Map 1 (fault fallback)", 0x7076,
+            "Read via slot 04 when any of the fault flags XRAM F3.0 / F4.0 / D9.0 / D9.1 is set "
+            "(IGN_CALC 0x1611-0x162F). Byte-identical on 3B / RR / S2. Decode raw×0.75−22.5."),
+    _b3_ign("Ignition Map 2 (main, coding A)", 0x71F8,
+            "MAIN high-load ignition map (slot 12) when the boost-board status bit 20h.2 is clear "
+            "and coding-plug bit A0h.6 is clear. Selector at 0x34B7. Differs S2 vs 3B in 90 cells."),
+    _b3_ign("Ignition Map 3 (correction / alt set)", 0x731C,
+            "Slot 0F/18 in every table set. Added as a correction in routine 0x1B2A (slot 0F) and "
+            "used instead of the main map when XRAM CAh.0 is set (slot 18; that flag is not written "
+            "by running code — tester/diag). S2 differs in 251/256 cells."),
+    _b3_ign("Ignition Map 4 (scaled correction)", 0x7440,
+            "Slot 15. Read in routine 0x1B2A when flag 2Eh.4 (XRAM 7Ch.0) is set; result is scaled by "
+            "table 0x6750[XRAM 15B] and added to timing. Identical on 3B / RR / S2."),
+    _b3_ign("Ignition Map 5 (main, coding B)", 0x7667,
+            "MAIN high-load ignition map when boost-board bit 20h.2 is clear and coding-plug bit "
+            "A0h.6 is set (coding plug = ADC ch4, 9 bands, table 0x3672). Was listed as map 2."),
+    _b3_ign("Ignition Map 6 (main, boost-board flag, coding A)", 0x77CF,
+            "MAIN high-load ignition map when boost-board status bit 20h.2 is SET (IPC byte 0xA040 "
+            "XOR 0x0E; the boost MCU hosts knock detection, so a knock/retard flag is the prime "
+            "candidate — unconfirmed) and coding bit A0h.6 is clear. Was listed as map 3."),
+    _b3_ign("Ignition Map 7 (main, boost-board flag, coding B)", 0x7937,
+            "MAIN high-load ignition map when boost-board bit 20h.2 is set and coding bit A0h.6 is set. "
+            "Was listed as map 4."),
 
     # Smaller RPM x LOAD tables the firmware references (function TBD)
     _b3_raw("Idle/Low-load Ign A (0x7C06)", 0x7C06, 4, 6,

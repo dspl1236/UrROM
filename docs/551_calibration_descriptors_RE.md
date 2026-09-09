@@ -105,6 +105,49 @@ lists everything, including the 4×6 idle-ignition family at 0x7C06–0x7D16,
 the 12×12 RPM×UBAT (dwell-shaped) table at 0x68BA and the ECT×IAT warm-up
 tables.
 
+## 3c. 3B ignition map selection (traced 2026-09-08)
+
+The ignition calculation (`0x1601`–`0x16F3`, READ_MAP call at `0x16FB`) picks a
+slot in the active ignition table set:
+
+| Step | Code | Slot → map |
+|---|---|---|
+| Any fault flag XRAM `F3.0 / F4.0 / D9.0 / D9.1` set | `0x1611–0x162F` | slot 04 → **Ign Map 1** (fault fallback; identical on all three chips) |
+| `20h.1 \| 27h.3 \| 27h.0` set | `0x1632–0x163C` | slot 06 (small table) |
+| Load / RPM window from 1-D tables slots 1C / 1D (hysteresis flags 2Fh.0/2Fh.1) | `0x163F–0x167B` | high load → slot **12** (main map), or slot 18 (**Ign Map 3**) if XRAM `CAh.0`; low load → slot 0A/0E (idle family), slot −1 if 2Fh.0 |
+
+The ignition table set (which map sits in slot 12) is chosen by the chain at
+`0x34B7`–`0x3537`, pointer table `0x6628`:
+
+| boost-board bit `20h.2` | coding bit `A0h.6` | slot 12 → | table sets |
+|---|---|---|---|
+| 0 | 0 | **Ign Map 2** (0x71F8) | 0x6093 / 0x60B7 (± `A0h.2`) |
+| 0 | 1 | **Ign Map 5** (0x7667) | 0x60DB / 0x60FF |
+| 1 | 0 | **Ign Map 6** (0x77CF) | 0x6123 / 0x6147 (`20h.4`=1), 0x61B3 / 0x61D7 (`20h.4`=0) |
+| 1 | 1 | **Ign Map 7** (0x7937) | 0x616B / 0x618F, 0x61FB / 0x621F |
+
+- `20h` = byte read from the boost board over the inter-board bus at
+  `0xA040`, XOR 0x0E (`0x1376–0x1384`, `0x4A31`). The boost MCU also hosts
+  knock detection, so bit 2 being a knock / retard-active flag is the prime
+  candidate. **Unconfirmed** — the boost-side composition (`0x08A8` → `5Fh` →
+  P4 nibble) still needs tracing.
+- `A0h` = coding-plug class: ADC channel 4 (`0x3637`) binned against
+  thresholds `0x3669` (`FF DC CD A9 85 66 3D 32 1F`, 9 bands), then
+  `A0h = table 0x3672[band]` = `4C 04 14 08 00 44 40 10 20`. Bit 6 set for
+  bands 0, 5, 6; bit 2 for bands 0, 1, 5. `21h.0` and `20h.2` further
+  offset a variant number written to `9Eh` (`0x3657–0x3667`).
+- **Ign Map 3** (slots 0F / 18 in every set) is added as a correction in
+  routine `0x1B2A` (`0x1B38`, plus two more slots when `2Eh.6`), and is the
+  base map when XRAM `CAh.0` is set — that flag is only zeroed by init in
+  running code, so it looks tester-controlled.
+- **Ign Map 4** (slot 15) is a scaled correction: `0x1B5D`, gated by
+  `2Eh.4` (mirrored to XRAM `7Ch.0`), scaled by `0x6750[XRAM 15B]`.
+
+So for the S2-chip question: map 1 and map 4 are identical on all chips; the
+S2 differs in the main maps 2 / 5 / 6 / 7 (~90 cells each) and massively in
+the map-3 correction (251 cells). Which of maps 2 / 5 / 6 / 7 the car
+actually runs depends on the coding plug and on the boost-board flag.
+
 ## 4. Open items
 
 - Which of the seven ignition maps is active under which condition

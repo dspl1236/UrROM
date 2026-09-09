@@ -785,3 +785,18 @@ class Test404Descriptors:
             m = next(m for m in VARIANT_404.main_maps if m.main_addr == addr)
             vals = [v for row in read_map_decoded(rom, m) for v in row]
             assert 5.0 <= min(vals) and max(vals) <= 45.0, hex(addr)
+
+    def test_3b_ign_selector_chain_bytes(self):
+        """Pin the ignition table-set selector (0x34B7) and IGN_CALC slot loads the
+        analysis relies on, so a different 404 firmware build is noticed."""
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        # 34B7: MOV DPTR,#636F ; MOV 75h,#66h ; MOV 76h,#28h  (ignition pointer table 0x6628)
+        assert rom[0x34B7:0x34C0] == bytes.fromhex("90636f757566757628")
+        # 34E4: MOV 77h,#60h ; MOV 78h,#93h ; RET   (table set 0x6093 = maps 2/…)
+        assert rom[0x34E4:0x34EB] == bytes.fromhex("75776075789322")
+        # IGN_CALC: MOV R2,#04h at 162B, #12h at 1685, #18h at 1690
+        assert rom[0x162B:0x162D] == b"\x7a\x04"
+        assert rom[0x1685:0x1687] == b"\x7a\x12"
+        assert rom[0x1690:0x1692] == b"\x7a\x18"
+        # 20h ← XRAM 0xA040 XOR 0x0E (boost-board status), at 137B-1384
+        assert rom[0x137B:0x137E] == bytes.fromhex("e2640e")

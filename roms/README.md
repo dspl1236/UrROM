@@ -179,13 +179,17 @@ Addresses are direct ROM offsets in the 32KB chip.
 | Fuel Map 2 (mirror) | 0x6C1C | 16×16 |
 | Fuel Map 3 (mirror) | 0x6D74 | 16×16 |
 | Fuel Map 4 (WOT enrichment) | 0x6E98 | 16×16 |
-| Ign Map 1 (identical 3B/RR/S2) | 0x7076 | 16×16 |
-| Ign Map 2 | 0x71F8 | 16×16 |
-| Ign Map 3 (S2 differs in 251/256 cells) | 0x731C | 16×16 |
-| Ign Map 4 | 0x7440 | 16×16 |
-| Ign Map 5 | 0x7667 | 16×16 |
-| Ign Map 6 | 0x77CF | 16×16 |
-| Ign Map 7 | 0x7937 | 16×16 |
+| Ign Map 1 — fault fallback (identical 3B/RR/S2) | 0x7076 | 16×16 |
+| Ign Map 2 — main, boost-flag clear, coding A | 0x71F8 | 16×16 |
+| Ign Map 3 — correction / alt set (S2 differs in 251/256 cells) | 0x731C | 16×16 |
+| Ign Map 4 — scaled correction (identical 3B/RR/S2) | 0x7440 | 16×16 |
+| Ign Map 5 — main, boost-flag clear, coding B | 0x7667 | 16×16 |
+| Ign Map 6 — main, boost-flag set, coding A | 0x77CF | 16×16 |
+| Ign Map 7 — main, boost-flag set, coding B | 0x7937 | 16×16 |
+
+Selection traced in docs/551_calibration_descriptors_RE.md §3c: the boost board's
+status bit (IPC 0xA040 bit 2) and the coding plug (ADC ch4, bit 6 of the class byte)
+pick the main map; faults force map 1.
 
 All eleven confirmed from the firmware's own descriptor tables (2026-09); axes
 RPM 600–7200, load 14–190. `python -m urrom.cli maps <chip>` lists all 126 tables.
