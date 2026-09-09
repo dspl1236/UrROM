@@ -68,16 +68,23 @@ def temp_decode(raw: int) -> float:
 
 def ign_decode(raw: int) -> float:
     """
-    Ignition timing decode for 551C/551AA/551A variants (AAN, ABY, ADU).
-    Formula from RS2 XDF (vwnut8392): raw × 0.6491 − 8.2186 = °BTDC.
-    Input is unsigned byte (0–255).
-    Verified: raw=49 → 23.6°BTDC ✓ (RS2 stock part-throttle).
+    Ignition timing decode for the 551B/551C (ABY/ADU) 0x2E17-family maps.
+
+    Standard Bosch M2.3 formula: raw × 0.75 − 22.5 = °BTDC (same as the 3B, PRJ's
+    m232.xdf and WinlogDriver's 0.75°/count).  RS2.xdf's 0.6491 × raw − 8.2186
+    was used here until 2026-09-09; a raw cross-family match showed the 3B main
+    ignition map and ADU maps 5/7 hold the SAME bytes (mean delta −0.1 raw,
+    rms 3.0), so the same scale must apply.  Kept as ign_decode_rs2xdf().
     """
-    return raw * 0.6491 - 8.2186
+    return raw * 0.75 - 22.5
 
 def ign_encode(deg: float) -> int:
-    """°BTDC → raw byte for 551C/551AA/551A variants."""
-    return max(0, min(255, int(round((deg + 8.2186) / 0.6491))))
+    """°BTDC → raw byte, 551B/551C 0x2E17 family (standard 0.75°/count)."""
+    return max(0, min(255, int(round((deg + 22.5) / 0.75))))
+
+def ign_decode_rs2xdf(raw: int) -> float:
+    """The RS2.xdf (vwnut8392) formula, superseded 2026-09-09 — see ign_decode()."""
+    return raw * 0.6491 - 8.2186
 
 def ign_decode_3b(raw: int) -> float:
     """
@@ -229,8 +236,11 @@ _LOAD_AXIS_551 = [12,21,29,38,46,57,67,77,86,94,103,112,120,132,149,180]
 # lower half is firmware, the upper half is calibration, and these maps are
 # referenced by the firmware.  Downgrade reverted.
 
-_IGN_NAMES_2E17 = ["Ign Map 1 (PT primary)", "Ign Map 2", "Ign Map 3", "Ign Map 4",
-                   "Ign Map 5", "Ign Map 6", "Ign Map 7"]
+# Roles by raw similarity with the traced 3B chip (2026-09-09): map 1 matches the
+# 3B's fault-fallback map (rms 3.7–4.3 raw), maps 5/7 match the 3B's main map
+# (rms 3.0).  The 551 selector itself is not traced yet — "main" is provisional.
+_IGN_NAMES_2E17 = ["Ign Map 1 (fault fallback?)", "Ign Map 2", "Ign Map 3", "Ign Map 4",
+                   "Ign Map 5 (main?)", "Ign Map 6", "Ign Map 7 (main?)"]
 
 def _stock_2e17_family(fuel: int, ign: list[int], idle_a: int, idle_b: int,
                        chip_tag: str) -> list[MapDef]:
@@ -246,8 +256,8 @@ def _stock_2e17_family(fuel: int, ign: list[int], idle_a: int, idle_b: int,
     ]
     for name, addr in zip(_IGN_NAMES_2E17, ign):
         maps.append(MapDef(name,
-               "Ignition map, 16 RPM rows x 16 load cols. Decode per RS2.xdf: "
-               "raw x 0.6491 - 8.2186 = deg BTDC. Firmware descriptor X=RPM Y=LOAD.",
+               "Ignition map, 16 RPM rows x 16 load cols. Decode raw x 0.75 - 22.5 = deg BTDC "
+               "(standard Bosch; confirmed by raw match with the 3B). Firmware descriptor X=RPM Y=LOAD.",
                main_addr=addr, rows=16, cols=16,
                map_type="ign", unit="\u00b0BTDC",
                decode=ign_decode, encode=ign_encode,

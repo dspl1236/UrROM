@@ -165,6 +165,7 @@ The following items are known and tracked for future work:
 
 - **S2Forum m232.org subforum** — https://s2forum.com/forum/technical/m232-org (PRJmod, boost PID, logging threads)
 - **m232.org wiki** — https://m232.org/index.php/Main_Page (PRJmod features, boost control, hardware limits; M2.3.2 / 551-series only, no 3B/RR)
+- **S2Forum thread 65435 “Modifying Motronic 2.3.2 ECU hardware and software”** (vwnut8392 / prj) — AAN stock MAP = 250 kPa, RS2 = 300 kPa, R201 = 5.6 kΩ 1 % 1206
 - **S2Forum** — hardware threads, schematic discussions
 - **vwnut8392/M232-Firmware** — PRJmod base ROMs and XDFs
 - **034EFI** — `.034` Rip Chip tuning packages (GT2871/GT28RS/GT3071/K24)

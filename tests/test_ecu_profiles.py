@@ -262,10 +262,11 @@ class TestMapReadWrite:
         map_def = next(m for m in VARIANT_551C.main_maps
                        if m.map_type == "ign" and m.rows == 16)
         rom = bytearray(MAIN_CHIP_PHYSICAL)
-        # raw=49 → 49*0.6491 − 8.2186 = 23.59°BTDC (RS2.xdf formula, 0x2E17 family)
+        # raw=49 → 49*0.75 − 22.5 = 14.25°BTDC (standard Bosch formula; the RS2.xdf
+        # 0.6491 formula was dropped 2026-09-09 after the 3B raw cross-match)
         rom[map_def.main_addr] = 49
         data = read_map_decoded(bytes(rom), map_def)
-        assert abs(data[0][0] - 23.59) < 0.1
+        assert abs(data[0][0] - 14.25) < 0.1
 
 
 # ── Ignition encode/decode ────────────────────────────────────────────────────
@@ -1777,7 +1778,7 @@ class TestIdleIgnMaps:
                 for c in range(m.cols):
                     raw = data[r][c]
                     deg = m.decode(raw)
-                    assert -10 <= deg <= 40, \
+                    assert -15 <= deg <= 40, \
                         f"ABY {m.name} [{r},{c}] raw={raw} → {deg:.1f}° out of idle range"
 
     def test_adu_idle_ign_values_plausible(self):
@@ -1796,7 +1797,7 @@ class TestIdleIgnMaps:
                 for c in range(m.cols):
                     raw = data[r][c]
                     deg = m.decode(raw)
-                    assert -10 <= deg <= 40, \
+                    assert -15 <= deg <= 40, \
                         f"ADU {m.name} [{r},{c}] raw={raw} → {deg:.1f}° out of idle range"
 
     def test_aby_adu_idle_same_calibration(self):

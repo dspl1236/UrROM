@@ -279,6 +279,25 @@ def cmd_chip(args):
           f"({len(native):,} B) -> {out_path.name} {chip_name_for_size(len(out))} ({len(out):,} B)")
 
 
+def cmd_xcompare(args):
+    """Cross-family decoded comparison of the main fuel or ignition map."""
+    import argparse
+    p = argparse.ArgumentParser(prog='urrom xcompare')
+    p.add_argument('a', help='reference chip (its axes are used)')
+    p.add_argument('b', help='chip to compare (resampled onto A)')
+    p.add_argument('--role', choices=['fuel', 'ign'], default='fuel')
+    p.add_argument('--a-map', type=lambda s: int(s, 0), default=None, help='override A map data address')
+    p.add_argument('--b-map', type=lambda s: int(s, 0), default=None, help='override B map data address')
+    p.add_argument('--csv', metavar='FILE', default=None)
+    p.add_argument('--raw', action='store_true', help='compare raw bytes instead of decoded values')
+    ns = p.parse_args(args)
+    from urrom.xcompare import xcompare, format_report, write_csv
+    x = xcompare(Path(ns.a), Path(ns.b), ns.role, ns.a_map, ns.b_map, raw_values=ns.raw)
+    print(format_report(x, unit="raw" if ns.raw else ""))
+    if ns.csv:
+        write_csv(x, Path(ns.csv)); print(f"CSV written to {ns.csv}")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
         print("urrom <command> [options]")
@@ -286,6 +305,7 @@ def main():
         print("  info <rom>                        — print ROM identification")
         print("  maps <rom>  [--all] [--json]      — list maps the firmware references (551 64KB)")
         print("  chip <rom>  [--to 27c512|native]  — fill a 27C512 image / fold one back to native size")
+        print("  xcompare <A> <B> [--role fuel|ign] — decoded cross-family map comparison (B resampled onto A)")
         sys.exit(0)
     cmd = sys.argv[1]
     rest = sys.argv[2:]
@@ -297,6 +317,8 @@ def main():
         cmd_maps(rest)
     elif cmd == 'chip':
         cmd_chip(rest)
+    elif cmd == 'xcompare':
+        cmd_xcompare(rest)
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(3)

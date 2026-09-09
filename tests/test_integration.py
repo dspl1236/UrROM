@@ -891,3 +891,56 @@ class TestChipImages:
             assert rom[0x2166:0x216C] == bytes.fromhex("12361f0227b4"), name     # LCALL 361F ; LJMP 27B4
             assert rom[0x361F:0x3622] == bytes.fromhex("9063f5"), name           # MOV DPTR,#63F5
             assert rom[0x63F5:0x63FD] == bytes.fromhex("0602ff051e07053d"), name
+
+
+# -- cross-family compare (2026-09-09) -----------------------------------------
+
+class TestXCompare:
+    def test_self_compare_is_zero(self):
+        from urrom.xcompare import xcompare
+        p = ROMS_DIR / "3b_fuel-ign_404aa.bin"
+        if not p.exists():
+            import pytest; pytest.skip("3B ROM missing")
+        x = xcompare(p, p, "fuel")
+        assert all(abs(v) < 1e-9 for row in x.delta for row_v in [row] for v in row_v)
+
+    def test_same_family_resample_matches_direct_diff(self):
+        """3B vs RR share axes, so resampling must reproduce the plain cell difference."""
+        from urrom.xcompare import xcompare
+        from urrom.ecu_profiles import read_map, VARIANT_404
+        a, b = ROMS_DIR / "3b_fuel-ign_404aa.bin", ROMS_DIR / "rr_fuel-ign_404b.bin"
+        if not (a.exists() and b.exists()):
+            import pytest; pytest.skip("404 ROMs missing")
+        x = xcompare(a, b, "fuel", raw_values=True)
+        m = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x6A8E)
+        da, db = read_map(a.read_bytes(), m), read_map(b.read_bytes(), m)
+        for i in range(16):
+            for j in range(16):
+                assert abs(x.delta[i][j] - (db[i][j] - da[i][j])) < 1e-9
+
+    def test_cross_family_shapes(self):
+        from urrom.xcompare import xcompare
+        a, b = ROMS_DIR / "3b_fuel-ign_404aa.bin", ROMS_DIR / "aby_fuel-ign_551aa.bin"
+        if not (a.exists() and b.exists()):
+            import pytest; pytest.skip("ROMs missing")
+        x = xcompare(a, b, "ign")
+        assert len(x.delta) == 16 and all(len(r) == 16 for r in x.delta)
+        # both families use the 600.. rpm axis with identical deltas; only the top
+        # breakpoint varies per map (7000 or 7200)
+        assert x.a.rows[:15] == x.b.rows[:15] and x.a.rows[0] == 600
+
+    def test_3b_and_adu_share_ign_roles_and_scale(self):
+        """Raw cross-family match: 3B fallback map ~ ADU map 1, 3B main map ~ ADU map 5.
+        Same bytes ⇒ same decode scale, which is why ign_decode() is 0.75°/count for both."""
+        from urrom.xcompare import _load_side, resample
+        a3b, adu = ROMS_DIR / "3b_fuel-ign_404aa.bin", ROMS_DIR / "adu_fuel-ign_551c.bin"
+        if not (a3b.exists() and adu.exists()):
+            import pytest; pytest.skip("ROMs missing")
+        def rms(a_addr, b_addr):
+            a = _load_side(a3b, "ign", a_addr, raw_values=True)
+            b = _load_side(adu, "ign", b_addr, raw_values=True)
+            bb = resample(b, a.rows, a.cols)
+            return (sum((bb[i][j] - a.data[i][j]) ** 2 for i in range(16) for j in range(16)) / 256) ** 0.5
+        assert rms(0x7076, 0x30AC) < 5.0      # fallback ~ fallback
+        assert rms(0x71F8, 0x36BC) < 4.0      # main ~ map 5
+        assert rms(0x71F8, 0x30AC) > 12.0     # main is NOT map 1

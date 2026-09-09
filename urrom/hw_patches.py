@@ -37,7 +37,9 @@ m232.org wiki, and the "engine-not-start" / RS2 non-starter threads):
      Allows chip swapping without soldering. Professional service available.
 
   4. MAP sensor options
-     ├── Stock Bosch (200 kPa, 0 280 142 xxx) — MAF-based builds only
+     ├── Stock Bosch — AAN/ABY (551A/AA/B): 250 kPa; RS2 (551C): 300 kPa
+     │   (vwnut8392 + prj, S2Forum thread 65435 'Modifying Motronic 2.3.2 ECU');
+     │   3B/RR (404) boost board: 200 kPa assumed (Bosch 0 273 003 204) — unconfirmed
      ├── MPX4250AP (250 kPa) — QLCC-era chips, moderate boost (~1.5 bar gauge)
      ├── MPX4300 (300 kPa) — 034EFI Rip Chip standard, AAN→RS2 R201 swap
      ├── MPXH6400A (400 kPa) — prjmod SD standard, R660 + board wire required
@@ -390,7 +392,7 @@ def detect_patches(
         if bc_crc in _known_boost_crcs:
             sensor_conf = "HIGH"
         sensor_labels = {
-            "200kPa_STOCK":    "Bosch stock 200 kPa (0 280 142 xxx)",
+            "200kPa_STOCK":    "Bosch stock sensor (3B/RR ~200 kPa assumed; AAN/ABY 250 kPa per S2Forum)",
             "250kPa_MPX4250":  "Freescale MPX4250 — 250 kPa (QLCC-era)",
             "300kPa_MPX4300":  "Freescale MPX4300/MPX6300 — 300 kPa (034EFI Rip Chip std)",
             "400kPa_MPXH6400A": "Freescale MPXH6400A — 400 kPa (prjmod SD standard)",
