@@ -1314,3 +1314,33 @@ class TestLaunchControl3B:
         assert r.status == "PATCHED" and r.in_scope and r.applicable and len(r.scalars) == 5
         stock = {r.name: r for r in detect_patches(bytes(load_rom("3b_fuel-ign_404a.bin")), "404")}
         assert stock["3B Spark-Cut Launch Control"].status == "STOCK" and stock["3B Spark-Cut Launch Control"].applicable
+
+
+class TestPublishedImages:
+    def test_stage1_boost_is_rr_plus_six(self):
+        from urrom.ecu_profiles import VARIANT_404, KNOWN_CRCS
+        import zlib
+        rr = bytes(load_rom("rr_boost_404b.bin"))
+        st = bytes(load_rom("tunes/3b_stage1_boost_rrbase_plus5kpa.bin"))
+        assert zlib.crc32(st) & 0xFFFFFFFF in KNOWN_CRCS
+        targets = {m.main_addr: m for m in VARIANT_404.boost_maps if m.main_addr in (0x18B4, 0x1934, 0x19B4)}
+        covered = set()
+        for addr, m in targets.items():
+            for i in range(m.rows * m.cols):
+                assert st[addr + i] == min(250, rr[addr + i] + 6)
+                covered.add(addr + i)
+        assert all(st[i] == rr[i] for i in range(len(rr)) if i not in covered)
+
+    def test_27c512_images_fold_to_their_chips(self):
+        from urrom.ecu_profiles import fold_repeated_image, verify_checksum_404
+        pairs = {"3b_fuel-ign_404aa_27C512.bin": ("3b_fuel-ign_404aa.bin", 2),
+                 "3b_boost_404aa_27C512.bin": ("3b_boost_404aa.bin", 8),
+                 "rr_boost_404b_27C512.bin": ("rr_boost_404b.bin", 8),
+                 "s2_fuel-ign_404_27C512.bin": ("s2_fuel-ign_404.bin", 2),
+                 "3b_stage1_boost_rrbase_plus5kpa_27C512.bin": ("tunes/3b_stage1_boost_rrbase_plus5kpa.bin", 8)}
+        for img, (native, copies) in pairs.items():
+            b = bytes(load_rom("27c512/" + img)); o = bytes(load_rom(native))
+            folded, n, _ = fold_repeated_image(b)
+            assert n == copies and folded == o, img
+            if len(o) == 32768:
+                assert verify_checksum_404(o), img

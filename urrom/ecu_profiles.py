@@ -2082,6 +2082,10 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0xB9A49F8A: ("551AA",      "Stock — AAN fuel/ign, 4A0907551AA, D03+HS cam trigger (direct read WH)"),
     0x16707F66: ("551AA_boost","Stock — AAN boost, 4A0907551AA, 32KB, build 0x0202 (direct read)"),
     0xF50660DA: ("404_boost", "Stock — 3B boost chip, 447907404AA, build 0x0254 (direct read)"),
+    0x8F9059E2: ("404_boost", "UrROM STAGE 1 (2026-09-09) — RR boost chip (0xEA8D46DF) with Boost Target "
+                               "A/B/C +6 raw capped at 250: peak 196 kPa abs / +0.96 bar at the assumed 200 kPa "
+                               "sensor scale. Duty, gains, knock tables, ceilings = RR. Pair with 3B or S2 "
+                               "fuel/ign chip. roms/tunes/3b_stage1_boost_rrbase_plus5kpa.bin. Road test in progress."),
     0xEA8D46DF: ("404_boost", "Stock — RR boost chip, 857907404B, build 0x0255 (direct read). "
                                "Executable 8051 MCU code — NOT a data-only ROM. "
                                "Correct filename: rr_boost_404b.bin"),
