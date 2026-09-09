@@ -326,7 +326,10 @@ def detect_patches(
     Returns a list of PatchResult objects.
 
     Args:
-        wh:           32KB working half bytes.
+        wh:           32KB FIRMWARE half bytes (lower half of a 551 64KB image;
+                      the whole file for 32KB flat 404 chips).  Historically
+                      called "working half" — but firmware patches, LC/NLS
+                      signatures and the SD VE test all live in the firmware.
         variant_name: e.g. "551AA", "551C", "404", "404V8".
         boost_bytes:  Optional 32KB boost chip bytes.
     """
@@ -614,16 +617,21 @@ def detect_patches(
 
 # ── Apply / revert functions ──────────────────────────────────────────────────
 #
-# Each function operates on the full ROM bytearray (32KB or 64KB).
-# For 64KB doubled ROMs, patches are applied to both halves.
-# Returns (modified_rom, original_bytes) for revert support.
+# Each function operates on the FIRMWARE bytes: the 32KB lower half of a 551
+# 64KB image (or the full 64KB image, whose first 32KB is the firmware).
+# All offsets are firmware offsets.  Returns original bytes for revert support.
 
 
 def _write_wh(rom: bytearray, offset: int, data: bytes) -> None:
-    """Write bytes at working-half offset, mirroring to upper half if doubled."""
+    """
+    Write bytes at a FIRMWARE offset.
+
+    `rom` is either the 32KB firmware half or a full 64KB split-bank image; in
+    both cases the firmware is at offset 0.  The 64KB 551 image is NOT a
+    mirrored working half (lower = firmware, upper = calibration), so nothing
+    is copied to +0x8000 — doing so used to corrupt calibration bytes.
+    """
     rom[offset: offset + len(data)] = data
-    if len(rom) >= 0x10000:
-        rom[offset + 0x8000: offset + 0x8000 + len(data)] = data
 
 
 def apply_mfts_bypass(rom: bytearray) -> bytes:

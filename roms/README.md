@@ -58,14 +58,14 @@ including blank/erased chips not stored here.
 | `aan_boost_551aa.bin` | 4A0907551AA boost | AAN boost chip (32KB) | — | — | `0x16707F66` | ✓ REAL |
 
 **Notes — M2.3.2 (551 family):**
-- Fuel/ign chip is 27C512 (64KB), stored as doubled working-half image:
-  upper 32KB = working half (firmware + calibration), lower = mirror
+- Fuel/ign chip is 27C512 (64KB), split-bank: lower 32KB = firmware, upper 32KB =
+  calibration (working half). Not mirrored.
 - Boost chip is 27C256 (32KB) executable 8051 MCU — same architecture as 3B boost
 - **AAN chips are factory-blank** — Bosch shipped them unerased, calibration was
   burned during vehicle production. The blank 0x02 fill is correct and expected.
-- `aan_fuel-ign_551a.bin` is a 65536B file containing TWO different 32KB images:
-  upper = stock blank D02PMC direct read (CRC `0xF7432BB5`),
-  lower = PRJmod D02PMC base ROM (reset→0x117A, different firmware)
+- `aan_fuel-ign_551a.bin`: upper half = blank D02PMC calibration (CRC `0xF7432BB5`),
+  lower half = the 4A0907551A firmware (reset→0x117A). Earlier notes called the lower
+  half a "PRJmod base ROM"; it is simply the chip's firmware half.
 - `rs2_d02_fuel-ign_551b.bin` is partial — high-RPM calibration area blank
   (read error on original chip, not ECU damage)
 - ADU `8A0907551C` (RS2D01PMC) and the S6 `4A0907551C` (D01PMC) share the same
@@ -99,7 +99,7 @@ including blank/erased chips not stored here.
 - The 557 series uses a **split-bank 27C512** (65536B):
   - Lower 32KB (0x0000–0x7FFF) = firmware code only (10,321+ code bytes)
   - Upper 32KB (0x8000–0xFFFF) = calibration data (3A/3F header format)
-  - This is opposite to the 5-cyl 551x which mirrors firmware+cal in both halves
+  - The 5-cyl 551x 27C512 uses the same split-bank layout (firmware low, calibration high)
 - **Dual distributor architecture**: INT0 → bank 1 (cyl 1–4), INT1 → bank 2 (cyl 5–8)
   ABH 557A and S6 557C share an **identical INT0 handler** at 0x0431
 - The PT 404V8 is a single 32KB chip (27C256), same format as 3B/RR 404 family
@@ -134,10 +134,12 @@ reverse engineering the trigger/timing algorithm.
 **32KB files (3B/RR/PT/ABT):** Direct 27C256 EPROM read. Byte 0 = address 0x0000.
 Firmware and calibration share the same address space.
 
-**64KB files (ABY/ADU/RS2/AAN):** 27C512 EPROM read, stored as full 65536B image.
-Upper 32KB (bytes 32768–65535) is the working half — firmware + calibration.
-Lower 32KB is either a mirror of the upper or, in the case of `aan_fuel-ign_551a.bin`,
-a different image (PRJmod base ROM).
+**64KB files (ABY/ADU/RS2/AAN):** 27C512 EPROM read, stored as full 65536B image,
+**split-bank**: lower 32KB = 8051 firmware (starts with the reset LJMP), upper 32KB =
+calibration (UrROM's "working half", ~75 % 0x02 filler around the maps). The halves
+are never mirrors — see `docs/551_calibration_descriptors_RE.md`. Earlier notes calling
+the lower half a "mirror" or "PRJmod base ROM" were wrong; the lower half is the
+firmware the calibration runs on.
 
 **64KB V8 files (ABH/S6/V8Q):** Split-bank 27C512. Lower 32KB = firmware code.
 Upper 32KB = calibration. Do not mirror the halves — they contain different data.
@@ -162,8 +164,10 @@ Addresses are working-half (WH) offsets, i.e. offsets within the upper 32KB of t
 | Pre-cal scalars | 0x2D00 | various | 3A/3F headers |
 | End-of-cal RPM table | 0x3FE0 | 2×16 | raw × 40 = RPM |
 
-ABY (551B), ADU (551C), and RS2 D02 (551B_D02) all share this layout.
-AAN (551A/AA) uses the same layout (firmware analysis confirmed).
+ABY (551B) uses the same layout **minus 4 bytes from WH 0x3026** (ign 0x30A8 … 0x392D).
+RS2 D02 (8A0907551B) and AAN 551AA use the other family: fuel 0x0E13 / 0x0DEA, ign
+0x10A8… / 0x106D… — decoded from each chip's firmware descriptor tables
+(`python -m urrom.cli maps <rom>`; see docs/551_calibration_descriptors_RE.md).
 
 ## Map Addresses — 3B/RR 404 Family (confirmed)
 

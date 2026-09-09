@@ -7,9 +7,13 @@ logic for Bosch Motronic M2.3 / M2.3.2.
 Architecture overview
 ---------------------
 5-cylinder 2.2 20vT ECUs are dual-processor:
-  Main chip  — stored as 64KB (32KB working half mirrored twice).
-               Working half = UPPER half of 64KB file (offset 0x8000-0xBFFF).
-               Fuel maps, ignition maps, lambda, idle, temperature corrections.
+  Main chip  — 27C512, 64KB, SPLIT-BANK (confirmed 2026-09 on every 551 image):
+               LOWER 32KB (0x0000-0x7FFF) = 8051 firmware (reset LJMP at 0x0000).
+               UPPER 32KB (0x8000-0xFFFF) = calibration = the "working half" UrROM
+               edits.  The halves are NOT mirrors — never write the calibration
+               into both halves (that destroys the firmware).
+               Fuel maps, ignition maps, lambda, idle, temperature corrections
+               live in the upper half; firmware patches and LC/NLS scalars in the lower.
 
   Boost chip — 8KB working half (stored as 32KB or 64KB mirrored).
                Boost target table, knock threshold, N75 duty cycle.
@@ -22,11 +26,14 @@ Maps use Bosch embedded descriptor format: header [descriptor, count, axis...]
 precedes the map data. MapFinder and our tools store the HEADER address,
 data starts 36 bytes later (2 + 16 axis bytes + 2 + 16 axis bytes).
 
-551A/551AA/551C variants:
-Maps XDF addresses are into the 64KB doubled file directly.
-Working half offset = XDF address - 0x8000.
-The XDF Address points to the MAP DATA (not the header).
-Header (with axis data) sits immediately before the data address.
+551A/551AA/551B/551C variants:
+XDF addresses are flat 64KB addresses; working half offset = XDF address - 0x8000.
+The XDF address points to the MAP DATA.  The Bosch descriptor sits immediately
+before it:  [X input RAM addr][nX][nX delta bytes][Y input RAM addr][nY][nY deltas][data]
+Input RAM addrs (prj's IDA names): 3Ah = RPM, 3Fh = LOAD, 38h = ECT, 37h = IAT, 36h = UBAT.
+Breakpoint_k = 256 - sum(delta_k .. delta_n); RPM breakpoints x40.  The firmware
+finds descriptors through index/pointer tables in the calibration half (see
+decode_descriptor_tables) — that is how every map address below was confirmed.
 
 Checksum (all variants):
   checksum   = sum(working_half[0x0000:0x3FFA]) & 0xFFFF
@@ -91,6 +98,31 @@ def fuel_decode(raw: int) -> float:
 
 def fuel_encode(val: float) -> int:
     return max(0, min(255, int(round(val))))
+
+
+# ── PRJ XDF decode helpers (0x0E13-family stock chips and prjmod 0x0202) ────
+
+def _prj_ign_decode(b: int) -> float:
+    return round(b * 0.75 - 22.5, 1)
+
+def _prj_ign_encode(v: float) -> int:
+    return max(0, min(255, round((v + 22.5) / 0.75)))
+
+def _prj_fuel_decode(b: int) -> float:
+    return round(1 / (b / 128) * 14.7, 2) if b > 0 else 0.0
+
+def _prj_fuel_encode(v: float) -> int:
+    return max(1, min(255, round(14.7 / v * 128))) if v > 0 else 128
+
+def _prj_map_kpa_decode(b: int) -> float:
+    return round(b / 1.035, 1)
+
+def _prj_wgdc_decode(b: int) -> float:
+    return round(b / 192 * 100, 1)
+
+def _prj_rpm_decode(b: int) -> int:
+    return b * 40
+
 
 
 # ── Map definition ────────────────────────────────────────────────────────────
@@ -168,230 +200,171 @@ FLAT_32K            = 0x8000    # 32KB flat file size
 # Decode: raw × 0.6491 − 8.2186 = °BTDC (XDF ZEq formula)
 
 _RPM_AXIS_551 = [600,1000,1240,1520,1760,2000,2520,3000,3520,4000,4600,5200,5720,6000,6520,7200]
-_LOAD_AXIS_551 = [2,6,9,13,16,20,24,28,32,35,39,42,46,50,57,70]
+# Load axis decoded from the firmware descriptor (delta bytes 09 08 09 08 0B 0A 0A 09
+# 08 09 09 08 0C 11 1F 4C → breakpoint_k = 256 − suffix sum).  The earlier
+# [2,6,9,…,70] list came from the RS2 XDF and does not match the chip; the fuel
+# map's load axis tops out at 177, the ignition maps' at 180.  get_axes() reads
+# the exact per-map axis; this constant is only the fallback.
+_LOAD_AXIS_551 = [12,21,29,38,46,57,67,77,86,94,103,112,120,132,149,180]
 
-_MAPS_551C_MAIN = [
-    # Main fuel map — 16×16, centred at 128 (stoich)
-    MapDef("Part Throttle Fuel",
-           "Main fuelling map. 128 = stoich reference. Higher = richer.",
-           main_addr=0x2E17, rows=16, cols=16,
-           map_type="fuel", unit="relative",
-           decode=fuel_decode, encode=fuel_encode,
-           confidence="CONFIRMED",
-           notes="Verified: values 128-145 at light load, RS2 stock"),
-
-    # ── Ignition maps — UNVERIFIED (see _MAPS_551AA_MAIN comment block) ──────
-    # Same addresses, same problem: 0x30AC–0x3931 contain 8051 firmware code
-    # in all tested ROM files (AAN 551AA, ABY 551AA, ADU 551C).
-    MapDef("Ign Map 1 (PT primary)",
-           "UNVERIFIED — address 0x30AC may contain firmware code, not ign data.",
-           main_addr=0x30AC, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED",
-           notes="2026-03-30: Binary analysis shows 8051 opcodes. Original claim incorrect."),
-
-    MapDef("Ign Map 2",
-           "UNVERIFIED — address 0x3263 contains firmware code in tested ROMs.",
-           main_addr=0x3263, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
-
-    MapDef("Ign Map 3",
-           "UNVERIFIED — address 0x3387 contains firmware code in tested ROMs.",
-           main_addr=0x3387, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
-
-    MapDef("Ign Map 4",
-           "UNVERIFIED — address 0x3598 contains firmware code (load calc routine).",
-           main_addr=0x3598, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
-
-    MapDef("Ign Map 5",
-           "UNVERIFIED — address 0x36BC contains firmware code in tested ROMs.",
-           main_addr=0x36BC, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
-
-    MapDef("Ign Map 6",
-           "UNVERIFIED — address 0x380D contains firmware code in tested ROMs.",
-           main_addr=0x380D, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
-
-    MapDef("Ign Map 7",
-           "UNVERIFIED — address 0x3931 contains firmware code in tested ROMs.",
-           main_addr=0x3931, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
-
-    # Idle ign maps — CONFIRMED 2026-03-19
-    # Binary RE of ABY 551B and ADU 551C:
-    # 3×6 = 18 cells. 3 RPM bands × 6 coolant temp points.
-    # ABY 551B: WH 0x3D04. ADU 551C: WH 0x3D08 (firmware 4B larger → +4B cal offset).
-    # Values confirmed: cold=13.9°, warming=17.7–19.0°, warm=20.3–21.6°, hot=29.4°
-    # Rows 0–1 identical in both ABY and ADU stock (same timing at low/mid idle RPM).
-    # Row 2 ends with 29.4° (elevated advance at high idle temp / higher idle RPM).
-    # Second block at +0x160: AC-on idle condition (same cal values in stock chips).
-    MapDef("Idle Ignition (closed throttle)",
-           "Idle timing vs coolant temperature. 3 RPM bands × 6 coolant temp points. "
-           "Decode: raw × 0.6491 − 8.22 = °BTDC. "
-           "Cold: ~13.9°, warming: ~17.7–19.0°, warm: ~20.3–21.6°, hot: 29.4°. "
-           "ABY 551B: WH 0x3D04. ADU 551C: WH 0x3D08.",
-           main_addr=0x3D08, rows=3, cols=6,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="Per-variant offset: ABY=0x3D04, ADU=0x3D08. "
-                 "Both chips have identical cal in stock form."),
-
-    MapDef("Idle Ignition (AC on)",
-           "Idle timing — AC compressor active. 3 RPM bands × 6 coolant temp points. "
-           "Identical calibration to closed-throttle block in stock ABY/ADU. "
-           "Located at +0x160 from the closed-throttle block.",
-           main_addr=0x3E68, rows=3, cols=6,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="Per-variant offset: ABY=0x3E64, ADU=0x3E68 (+0x160 from idle A)."),
-
-
-    MapDef("End-of-Cal RPM table",
-           "32-byte RPM-encoded table at end of working half (WH 0x3FE0–0x3FFF). "
-           "ABY direct chip read: values span 1000–8000 RPM (raw × 40). "
-           "Pattern suggests tiered RPM thresholds — possibly ignition cut "
-           "or fuel cut hysteresis. NOT the stock rev limit address. "
-           "Stock rev limit is in 8051 code as an immediate compare; "
-           "requires Ghidra disassembly to locate. "
-           "For prjmod ROMs, LC/NLS rev limit is at WH 0x0617 / 0x066E.",
-           main_addr=0x3FE0, rows=2, cols=16,
-           map_type="raw", unit="RPM",
-           confidence="PROVISIONAL",
-           notes="DO NOT write — address not fully understood. Read-only reference only."),
-]
-
-# ── Confirmed map addresses — 551AA / ABY ─────────────────────────────────────
+# ── Stock 551 map lists — CONFIRMED from firmware descriptor tables (2026-09) ─
 #
-# Verified: aby_fuel-ign_551aa.bin has same addresses as 551C.
-# ABY and AAN share the same codebase layout.
+# Every address below was read out of the chip's own index/pointer tables (the
+# tables READ_MAP at 0x0FF9 walks via RAM 75h:76h / 77h:78h), so they are
+# firmware-referenced 16x16 RPM x LOAD maps, not guesses.  Two calibration
+# layouts exist:
+#
+#   "0x2E17 family" — firmware build 0x0274 (ABY 895907551B, ADU 8A0907551C):
+#       descriptor index tables at cal WH 0x2000, pointers at 0x2800, maps 0x2D00+.
+#       ADU and ABY differ by -4 bytes from WH 0x3026 onward (ABY is 4 bytes shorter).
+#   "0x0E13 family" — build 0x0202/0x0812 (RS2 D02 8A0907551B, AAN 4A0907551AA):
+#       index tables at cal WH 0x0000, pointers at 0x0800, maps 0x0B00+.
+#       This is the layout PRJmod inherited (prjmod = patched 8A0907551B firmware).
+#       AAN 551AA sits 0x29 bytes lower than RS2 D02 for the fuel map, then
+#       drifts (offsets are per-chip — read them from the chip with
+#       decode_descriptor_tables()).
+#
+# The earlier "0x30AC-0x3931 contain 8051 opcodes" downgrade was made on the
+# assumption that the 64KB file was a mirrored working half.  It is not: the
+# lower half is firmware, the upper half is calibration, and these maps are
+# referenced by the firmware.  Downgrade reverted.
 
-_MAPS_551AA_MAIN = [
-    MapDef("Part Throttle Fuel",
-           "Main fuelling map. 128 = stoich reference.",
-           main_addr=0x2E17, rows=16, cols=16,
-           map_type="fuel", unit="relative",
-           decode=fuel_decode, encode=fuel_encode,
-           confidence="CONFIRMED",
-           notes="Same address as 551C. Verified on ABY bin."),
+_IGN_NAMES_2E17 = ["Ign Map 1 (PT primary)", "Ign Map 2", "Ign Map 3", "Ign Map 4",
+                   "Ign Map 5", "Ign Map 6", "Ign Map 7"]
 
-    # ── Ignition maps — UNVERIFIED ──────────────────────────────────────────
-    # 2026-03-30: Binary analysis of AAN 551AA, ABY 551AA, and ADU 551C ROMs
-    # shows these addresses (0x30AC–0x3931) contain 8051 firmware code, NOT
-    # ignition calibration data. Opcode analysis: 15-30% 8051 opcodes per
-    # block, <50% sensible ignition values. The "Verified on ABY" claims were
-    # incorrect — likely sourced from an XDF with a base address offset error.
-    #
-    # For prjmod 0x0202 firmware, the REAL ign maps are at 0x125F, 0x1594,
-    # 0x10A8 (see _MAPS_0202_MAIN above, CONFIRMED from PRJ XDF).
-    #
-    # For stock Bosch firmware (551B/551C), the ign map addresses need
-    # verification via direct chip read + Ghidra disassembly of MOVC lookup.
-    #
-    # DANGER: Editing these "maps" would overwrite firmware code and could
-    # brick the ECU. Downgraded to UNVERIFIED until addresses are confirmed.
-    MapDef("Ign Map 1 (PT primary)",
-           "UNVERIFIED — address 0x30AC may contain firmware code, not ign data. "
-           "Do NOT edit until verified by direct chip read.",
-           main_addr=0x30AC, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED",
-           notes="2026-03-30: Binary analysis shows 8051 opcodes at this address "
-                 "in AAN/ABY/ADU ROMs. Original 'Verified on ABY' claim incorrect."),
+def _stock_2e17_family(fuel: int, ign: list[int], idle_a: int, idle_b: int,
+                       chip_tag: str) -> list[MapDef]:
+    maps = [
+        MapDef("Part Throttle Fuel",
+               "Main fuelling map, 16 RPM rows x 16 load cols. 128 = stoich reference. "
+               "Firmware descriptor: X=RPM(3Ah) Y=LOAD(3Fh).",
+               main_addr=fuel, rows=16, cols=16,
+               map_type="fuel", unit="relative",
+               decode=fuel_decode, encode=fuel_encode,
+               confidence="CONFIRMED",
+               notes=f"{chip_tag}: firmware-referenced descriptor at data-36."),
+    ]
+    for name, addr in zip(_IGN_NAMES_2E17, ign):
+        maps.append(MapDef(name,
+               "Ignition map, 16 RPM rows x 16 load cols. Decode per RS2.xdf: "
+               "raw x 0.6491 - 8.2186 = deg BTDC. Firmware descriptor X=RPM Y=LOAD.",
+               main_addr=addr, rows=16, cols=16,
+               map_type="ign", unit="\u00b0BTDC",
+               decode=ign_decode, encode=ign_encode,
+               confidence="CONFIRMED",
+               notes=f"{chip_tag}: firmware-referenced (descriptor tables). "
+                     "Which of the seven is active under which condition is still "
+                     "to be traced in IGNITION_CALC."))
+    maps += [
+        MapDef("Idle Ignition A (closed throttle)",
+               "Idle/low-load ignition, 4 RPM rows x 6 load cols (firmware says 4x6, "
+               "the earlier 3x6 view started one row in).",
+               main_addr=idle_a, rows=4, cols=6,
+               map_type="ign", unit="\u00b0BTDC",
+               decode=ign_decode, encode=ign_encode,
+               confidence="CONFIRMED",
+               notes=f"{chip_tag}: firmware-referenced. Third of three sibling 4x6 tables."),
+        MapDef("Idle Ignition B (AC on)",
+               "Idle ignition, AC compressor active. 4x6, +0x160 from block A.",
+               main_addr=idle_b, rows=4, cols=6,
+               map_type="ign", unit="\u00b0BTDC",
+               decode=ign_decode, encode=ign_encode,
+               confidence="CONFIRMED",
+               notes=f"{chip_tag}: firmware-referenced."),
+        MapDef("End-of-Cal RPM table",
+               "32-byte RPM-encoded table at end of working half (WH 0x3FE0-0x3FFF). "
+               "Firmware descriptors show a 5-pt RPM table at 0x3FE7 and 5x5 RPMxECT "
+               "at 0x3FEE here — NOT a rev limit. Read-only reference.",
+               main_addr=0x3FE0, rows=2, cols=16,
+               map_type="raw", unit="RPM",
+               confidence="PROVISIONAL",
+               notes="DO NOT write."),
+    ]
+    return maps
 
-    MapDef("Ign Map 2",
-           "UNVERIFIED — address 0x3263 contains firmware code in tested ROMs.",
-           main_addr=0x3263, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
+# ADU 8A0907551C (RS2 Avant) — direct chip read, firmware descriptors decoded
+_MAPS_551C_MAIN = _stock_2e17_family(
+    fuel=0x2E17,
+    ign=[0x30AC, 0x3263, 0x3387, 0x3598, 0x36BC, 0x380D, 0x3931],
+    idle_a=0x3D00, idle_b=0x3E60, chip_tag="ADU 551C")
 
-    MapDef("Ign Map 3",
-           "UNVERIFIED — address 0x3387 contains firmware code in tested ROMs.",
-           main_addr=0x3387, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
+# ABY 895907551B (S2 Coupe) — 4 bytes lower than ADU from WH 0x3026 onward
+_MAPS_551B_MAIN = _stock_2e17_family(
+    fuel=0x2E17,
+    ign=[0x30A8, 0x325F, 0x3383, 0x3594, 0x36B8, 0x3809, 0x392D],
+    idle_a=0x3CFC, idle_b=0x3E5C, chip_tag="ABY 551B")
 
-    MapDef("Ign Map 4",
-           "UNVERIFIED — address 0x3598 contains firmware code in tested ROMs. "
-           "Overlaps with load accumulation routine (0x3662–0x3689).",
-           main_addr=0x3598, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED",
-           notes="Load decap patch at 0x3679/0x367F falls within this range — "
-                 "those bytes are confirmed 8051 code, not calibration data."),
+# Backwards-compatible alias (older code/tests import this name)
+_MAPS_551AA_MAIN = _MAPS_551B_MAIN
 
-    MapDef("Ign Map 5",
-           "UNVERIFIED — address 0x36BC contains firmware code in tested ROMs.",
-           main_addr=0x36BC, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
 
-    MapDef("Ign Map 6",
-           "UNVERIFIED — address 0x380D contains firmware code in tested ROMs.",
-           main_addr=0x380D, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
+def _stock_0e13_family(fuel: int, ign: list[int], chip_tag: str,
+                       confidence: str = "CONFIRMED",
+                       idle_a: int | None = None, idle_b: int | None = None) -> list[MapDef]:
+    """
+    0x0E13-family stock layout (RS2 D02 8A0907551B, AAN 4A0907551AA).
+    ign = [overrun, no-knock, map3, knock-L1, map5, map6, map7] in address order.
+    Decode follows the PRJ XDF for this firmware family (raw x 0.75 - 22.5).
+    """
+    names = ["Ign P/T (overrun)", "Ign P/T (no knock)", "Ign Map 3",
+             "Ign P/T (knock level 1)", "Ign Map 5", "Ign Map 6", "Ign Map 7"]
+    maps = [MapDef("Fuel P/T (primary)",
+                   "Main fuelling map, 16 RPM rows x 16 load cols. Firmware descriptor "
+                   "X=RPM(3Ah) Y=LOAD(3Fh). Same address PRJmod uses.",
+                   main_addr=fuel, rows=16, cols=16,
+                   map_type="fuel", unit="AFR",
+                   decode=_prj_fuel_decode, encode=_prj_fuel_encode,
+                   confidence=confidence,
+                   notes=f"{chip_tag}: firmware-referenced descriptor.")]
+    for name, addr in zip(names, ign):
+        maps.append(MapDef(name,
+                   "Ignition map, 16 RPM rows x 16 load cols. Decode per PRJ XDF: "
+                   "raw x 0.75 - 22.5 = deg BTDC. Firmware descriptor X=RPM Y=LOAD.",
+                   main_addr=addr, rows=16, cols=16,
+                   map_type="ign", unit="\u00b0BTDC",
+                   decode=_prj_ign_decode, encode=_prj_ign_encode,
+                   confidence=confidence,
+                   notes=f"{chip_tag}: firmware-referenced. Role names follow the PRJ XDF."))
+    if idle_a is not None:
+        maps.append(MapDef("Idle Ignition A (closed throttle)",
+                   "Idle/low-load ignition, 4 RPM rows x 6 load cols (third of three "
+                   "sibling 4x6 tables; firmware descriptor X=RPM Y=LOAD).",
+                   main_addr=idle_a, rows=4, cols=6,
+                   map_type="ign", unit="°BTDC",
+                   decode=_prj_ign_decode, encode=_prj_ign_encode,
+                   confidence=confidence, notes=f"{chip_tag}: firmware-referenced."))
+    if idle_b is not None:
+        maps.append(MapDef("Idle Ignition B (AC on)",
+                   "Idle ignition, AC compressor active. 4x6, +0x160 from block A.",
+                   main_addr=idle_b, rows=4, cols=6,
+                   map_type="ign", unit="°BTDC",
+                   decode=_prj_ign_decode, encode=_prj_ign_encode,
+                   confidence=confidence, notes=f"{chip_tag}: firmware-referenced."))
+    return maps
 
-    MapDef("Ign Map 7",
-           "UNVERIFIED — address 0x3931 contains firmware code in tested ROMs.",
-           main_addr=0x3931, rows=16, cols=16,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="UNVERIFIED"),
+# RS2 D02 8A0907551B — the PRJmod base layout, decoded from the chip's own tables
+_MAPS_551B_D02_MAIN = _stock_0e13_family(
+    fuel=0x0E13,
+    ign=[0x10A8, 0x125F, 0x1383, 0x1594, 0x16B8, 0x1809, 0x192D],
+    chip_tag="RS2 D02 551B", idle_a=0x1CFC, idle_b=0x1E5C)
 
-    # Idle ign maps — CONFIRMED 2026-03-19 on ABY 551B direct chip read
-    MapDef("Idle Ignition (closed throttle)",
-           "Idle timing vs coolant temperature. 3 RPM bands × 6 coolant temp points. "
-           "Decode: raw × 0.6491 − 8.22 = °BTDC. "
-           "Cold: 13.9°, warming: 17.7–19.0°, warm: 20.3–21.6°, hot: 29.4°. "
-           "Confirmed on ABY 551B WH 0x3D04. ADU 551C uses 0x3D08 (+4B, see 551C maps).",
-           main_addr=0x3D04, rows=3, cols=6,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="ABY 551B address. ADU 551C offset +4B at 0x3D08."),
+# AAN 4A0907551AA (D03 cam trigger, build 0x0812) — own offsets, decoded from
+# the blank factory chip's firmware (calibration values are 0x02 on our sample,
+# but the descriptor tables and therefore the addresses are real).
+_MAPS_551AA_STOCK_MAIN = _stock_0e13_family(
+    fuel=0x0DEA,
+    ign=[0x106D, 0x1224, 0x1348, 0x155F, 0x1683, 0x17D4, 0x18F8],
+    chip_tag="AAN 551AA", idle_a=0x1CC7, idle_b=0x1E27)
 
-    MapDef("Idle Ignition (AC on)",
-           "Idle timing with AC compressor active. 3 RPM bands × 6 coolant temp points. "
-           "Same calibration as closed-throttle idle in stock ABY/ADU. "
-           "Located at WH 0x3E64 (+0x160 from closed-throttle block).",
-           main_addr=0x3E64, rows=3, cols=6,
-           map_type="ign", unit="°BTDC",
-           decode=ign_decode, encode=ign_encode,
-           confidence="CONFIRMED",
-           notes="ABY 551B address. ADU 551C offset +4B at 0x3E68."),
+# AAN 4A0907551A (D02 distributor, reset 0x117A) — different firmware again; its
+# cal is blank in our sample so the descriptor tables could not be decoded.
+# Assume the RS2 D02 layout (both are D02 distributor builds) until a real read.
+_MAPS_551A_MAIN = _stock_0e13_family(
+    fuel=0x0E13,
+    ign=[0x10A8, 0x125F, 0x1383, 0x1594, 0x16B8, 0x1809, 0x192D],
+    chip_tag="AAN 551A (assumed = RS2 D02 layout)", confidence="PROVISIONAL",
+    idle_a=0x1CFC, idle_b=0x1E5C)
 
-    MapDef("End-of-Cal RPM table",
-           "32-byte RPM table at WH 0x3FE0–0x3FFF. Values × 40 = RPM. "
-           "Likely RPM-threshold array (ign/fuel cut). NOT a simple rev limit. "
-           "See variant RE notes for details.",
-           main_addr=0x3FE0, rows=2, cols=16,
-           map_type="raw", unit="RPM",
-           confidence="PROVISIONAL"),
-]
 
 # ── 3B / RR map addresses ─────────────────────────────────────────────────────
 #
@@ -655,10 +628,11 @@ _BOOST_3B_LOAD_AXIS = [1, 2, 3, 4, 5, 6, 7, 8]
 # pointer triplets consumed by the 2D interpolating lookup at 0x12CA.
 #
 # Axis format: [count][first][delta]...  (absolute breakpoints = running sum)
-#   0x189A  X axis, 8 pts  — MAP-derived load (RAM 64h = linearised MAP − 64 + corr)
+#   0x189A  X axis, 8 pts  — throttle position (RAM 64h = linearised TPS − 64 + corr).
+#           prj's ADU boost IDB names the equivalent RAM_5E_MAPAXIS_TPS / RAM_5D_TPS_ADC.
 #   0x18A3  Y axis, 16 pts — engine PERIOD (Timer2 capture >> 4).  RPM ≈ 1.5e6 / value
 #           (12 MHz crystal, 2.5 tach pulses/rev).  Ascending period = DESCENDING rpm.
-#   0x1EF0  X axis, 5 pts  — ADC channel 1 raw (pressure input used by the control loop)
+#   0x1EF0  X axis, 5 pts  — ADC channel 1 raw = boost pressure (prj: READ_BOOST_AN1)
 #   0x1640  Y axis, 8 pts  — engine period, as above
 #
 # Tables are row-major [X][Y]: rows = load / ch1, columns = period (high rpm first).
@@ -683,7 +657,7 @@ _BOOST_404_TABLE_AXES: dict[int, tuple[int, int]] = {
 _MAPS_BOOST_404 = [
     # ── Boost pressure target (RAM 3Dh) — A/B/C selected by IAT band ─────────
     MapDef("Boost Target A (cold IAT band)",
-           "Boost pressure target vs MAP-load (rows) × RPM (cols, high rpm first). "
+           "Boost pressure target vs throttle position (rows) × RPM (cols, high rpm first). "
            "Result (RAM 3Dh) is compared with the measured pressure to form the "
            "control error. Selected when the ch4 (IAT) reading is BELOW the low "
            "threshold at 0x17EF. Decode assumes the stock 200 kPa sensor: raw/255×200 = kPa abs.",
@@ -711,7 +685,7 @@ _MAPS_BOOST_404 = [
 
     # ── N75 base duty cycle (RAM 4Bh) — D/E/F selected by the same IAT band ──
     MapDef("N75 Base Duty D (cold IAT band)",
-           "Wastegate solenoid feed-forward duty vs MAP-load (rows) × RPM (cols). "
+           "Wastegate solenoid feed-forward duty vs throttle position (rows) × RPM (cols). "
            "Result (RAM 4Bh) has the P and I error terms added, then is clamped by "
            "the per-RPM-band ceiling at 0x1C47. raw/255×100 = %.",
            main_addr=0x1A34, rows=8, cols=16,
@@ -733,16 +707,17 @@ _MAPS_BOOST_404 = [
            confidence="PROVISIONAL"),
 
     # ── PWM fraction tables (RAM 5Ch / 5Dh → on-times 58h/5Ah = value × period) ──
-    MapDef("PWM Fraction 1 (0x1649)",
-           "5×8 table: ADC ch1 raw (rows, axis 0x1EF0) × RPM (cols, axis 0x1640). "
-           "Result 5Ch is multiplied by the engine period (13B9) into 58h:59h. "
-           "Identical on 3B / RR / S2. Function not fully traced — view only.",
+    MapDef("Knock window 1 (0x1649)",
+           "5×8 table: boost pressure (rows, axis 0x1EF0) × RPM (cols, axis 0x1640). "
+           "Result 5Ch × engine period (DEG_TO_TIME, 13B9) → 58h:59h. The boost MCU "
+           "also runs knock detection (prj: KNOCK_ROUTINE); this is a crank-angle "
+           "window in degrees. Identical on 3B / RR / S2. View only.",
            main_addr=0x1649, rows=5, cols=8,
            map_type="raw", unit="raw", chip="boost",
            confidence="UNCONFIRMED"),
-    MapDef("PWM Fraction 2 (0x1671)",
-           "5×8 table, same axes. Result 5Dh × period → 5Ah:5Bh, which the PWM ISR "
-           "adds to compare register 3 (0x00D4). Identical on 3B / RR / S2.",
+    MapDef("Knock window 2 (0x1671)",
+           "5×8 table, same axes. Result 5Dh × period → 5Ah:5Bh, added to compare "
+           "register 3 in the ISR at 0x00D4 (knock gate timing). Identical on 3B / RR / S2.",
            main_addr=0x1671, rows=5, cols=8,
            map_type="raw", unit="raw", chip="boost",
            confidence="UNCONFIRMED"),
@@ -853,7 +828,7 @@ VARIANT_551AA = ROMVariant(
     bosch_pns           = ["0261200465"],
     dual_eprom          = True,
     working_half_offset = 0x8000,
-    main_maps           = _MAPS_551AA_MAIN,   # NOTE: uses ABY-confirmed addresses — AAN addresses unverified
+    main_maps           = _MAPS_551AA_STOCK_MAIN,   # decoded from the AAN chip's own descriptor tables (2026-09)
     boost_maps          = _MAPS_BOOST_551,
     notes               = (
         "Late AAN — cam pulley hall sensor trigger (HS D03 in ID string). "
@@ -876,7 +851,7 @@ VARIANT_551B = ROMVariant(
     bosch_pns           = ["0261203643"],
     dual_eprom          = True,
     working_half_offset = 0x8000,
-    main_maps           = _MAPS_551AA_MAIN,   # addresses confirmed on ABY bin direct read
+    main_maps           = _MAPS_551B_MAIN,    # ABY: 4 bytes below ADU from WH 0x3026 (firmware descriptors)
     boost_maps          = _MAPS_BOOST_551,
     notes               = (
         "ABY — Audi S2 Coupe (Type 85 body), cam pulley hall sensor trigger. "
@@ -901,12 +876,7 @@ VARIANT_551B_D02 = ROMVariant(
     bosch_pns           = ["0261203478"],
     dual_eprom          = True,
     working_half_offset = 0x8000,
-    # TODO(WRONG MAPS): _MAPS_551AA_MAIN is INCORRECT for this variant.
-    #   XDF-confirmed addresses from the notes below (vwnut8392 / Matt@S&M 2013)
-    #   show fuel at WH 0x0E13, ign at 0x125F/0x159F/0x16C3/0x1809/0x192D/0x108C.
-    #   These differ from the _MAPS_551AA_MAIN definitions.  A dedicated
-    #   _MAPS_551B_D02_MAIN list needs to be created from the XDF data.
-    main_maps           = _MAPS_551AA_MAIN,
+    main_maps           = _MAPS_551B_D02_MAIN,   # decoded from the chip's own descriptor tables (2026-09)
     boost_maps          = _MAPS_BOOST_551,
     notes               = (
         "Early RS2 — distributor hall sensor trigger (D02 in ID string). "
@@ -931,7 +901,7 @@ VARIANT_551A = ROMVariant(
     bosch_pns           = ["0261200465"],
     dual_eprom          = True,
     working_half_offset = 0x8000,
-    main_maps           = _MAPS_551AA_MAIN,   # same address layout, different cal values
+    main_maps           = _MAPS_551A_MAIN,    # PROVISIONAL: assumed RS2 D02 layout (blank sample)
     # TODO: _MAPS_BOOST_551 addresses (0x2218, 0x2480, 0x2520, etc.) exceed the
     #   8KB (0x2000) chip size of the 27C64 used by this variant.  No 8KB boost
     #   map list has been reverse-engineered yet.  Set to empty until correct
@@ -985,26 +955,8 @@ VARIANT_551A = ROMVariant(
 #   0x65 (101) = 440cc Siemens (2871 turbo build, higher flow needed)
 #   (Lower byte = larger effective injector flow at the sample MAF point)
 
-def _prj_ign_decode(b: int) -> float:
-    return round(b * 0.75 - 22.5, 1)
-
-def _prj_ign_encode(v: float) -> int:
-    return max(0, min(255, round((v + 22.5) / 0.75)))
-
-def _prj_fuel_decode(b: int) -> float:
-    return round(1 / (b / 128) * 14.7, 2) if b > 0 else 0.0
-
-def _prj_fuel_encode(v: float) -> int:
-    return max(1, min(255, round(14.7 / v * 128))) if v > 0 else 128
-
-def _prj_map_kpa_decode(b: int) -> float:
-    return round(b / 1.035, 1)
-
-def _prj_wgdc_decode(b: int) -> float:
-    return round(b / 192 * 100, 1)
-
-def _prj_rpm_decode(b: int) -> int:
-    return b * 40
+# (_prj_* decode helpers moved up to the decode section — used by both the
+#  stock 0x0E13-family lists and the prjmod list)
 
 _MAPS_0202_MAIN = [
     # ── Fuel maps ──────────────────────────────────────────────────────────
@@ -2009,7 +1961,13 @@ ALL_VARIANTS: list[ROMVariant] = [
 
 KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x0808B2E5: ("551B",       "Stock — ABY/early-AAN fuel/ign WH, build 0x0274 (lower 32KB only)"),
-    0xBF11DB48: ("551AA",      "BLANK AAN — factory-erased 4A0907551AA (D03PMC). Calibration all 0x02, ID string only. 65535B reader error. NOT a usable tuning baseline."),
+    0xBF11DB48: ("551AA",      "BLANK AAN — 4A0907551AA (D03PMC) FIRMWARE half (lower 32KB) of roms/aan_fuel-ign_551aa.bin. "
+                               "Reset LJMP 0x1297, build 0x0812. 65535B reader dump. Calibration half is blank (0x02) — NOT a tuning baseline."),
+    0x1EB020C5: ("551AA",      "BLANK AAN — 4A0907551AA calibration half (upper 32KB, padded to 64KB) of roms/aan_fuel-ign_551aa.bin. "
+                               "All 0x02 except ID string; descriptor tables decode (fuel 0x0DEA, ign 0x106D…). NOT a tuning baseline."),
+    0x5C9A77E2: ("551C",       "ADU 8A0907551C FIRMWARE half (lower 32KB) of roms/adu_fuel-ign_551c.bin. Build 0x0274, reset 0x1329. Same firmware as ABY 895907551B."),
+    0x90B73ACD: ("551B_D02",   "RS2 D02 8A0907551B FIRMWARE half (lower 32KB) of roms/rs2_d02_fuel-ign_551b.bin. Build 0x0202, reset 0x1329. "
+                               "Matches prj's Fuel_Ign_ADU_551b.idb image except 2 bytes; PRJmod's base with ~600 bytes patched."),
     0xF6E33043: ("551b_boost", "Stock — ABY boost chip, 32KB, 895907551B, build 0x0202 (direct read)"),
     0x4A3CB7DC: ("551b_boost", "ABY boost chip WH core 16KB, 895907551B, build 0x0202"),
     # RS2 D02 (early distributor RS2) — from RS2_551B_bins_XDF.zip
@@ -2346,6 +2304,13 @@ def normalize_rom(raw: bytes, variant: ROMVariant | None = None
     notes = []
     size = len(raw)
 
+    # Some programmer dumps drop the last byte (65535 B).  Pad so the split-bank
+    # logic below applies; the missing byte is the last byte of the cal tag.
+    if size == MAIN_CHIP_PHYSICAL - 1:
+        raw = bytes(raw) + b"\xff"
+        size = MAIN_CHIP_PHYSICAL
+        notes.append("65535-byte dump padded to 64KB (last byte missing from the read)")
+
     # Already a 32KB working half (flat 3B/PT or pre-extracted)
     if size == MAIN_CHIP_WORKING:
         return raw, notes
@@ -2362,7 +2327,7 @@ def normalize_rom(raw: bytes, variant: ROMVariant | None = None
 
         # 5-cyl 551x doubled: upper half is always the working half
         working = raw[WORKING_HALF_OFFSET:WORKING_HALF_OFFSET + MAIN_CHIP_WORKING]
-        notes.append("64KB doubled chip — upper half selected (working half @ 0x8000)")
+        notes.append("64KB split-bank chip — upper half = calibration (working half @ 0x8000), lower half = firmware")
         return working, notes
 
     notes.append(f"Unexpected size: {size:,} bytes. Returning as-is.")
@@ -2419,6 +2384,45 @@ def has_software_checksum(variant) -> bool:
     """True if UrROM should verify / re-apply the 0x3FFA checksum for this variant."""
     sw = getattr(variant, "software_id", variant) if variant is not None else ""
     return sw in CHECKSUM_VARIANTS
+
+
+def assemble_output(wh: bytes, variant, original_full: bytes | None,
+                    firmware: bytes | None = None) -> tuple[bytes, list[str]]:
+    """
+    Build the bytes to write to disk from an edited 32KB working half.
+
+    551x main chips are 27C512 split-bank images: LOWER 32KB = 8051 firmware,
+    UPPER 32KB = calibration (the working half UrROM edits).  The halves are
+    NOT mirrors (confirmed 2026-09 on every 551 image in roms/ and prj's base
+    files).  So when the original 64KB file is available we must put the
+    edited calibration back into the upper half and keep the firmware half
+    byte-for-byte.  Writing the calibration into both halves — the old
+    behaviour — destroys the firmware.
+
+    Returns (out_bytes, notes).
+    """
+    notes: list[str] = []
+    off = getattr(variant, "working_half_offset", 0) if variant is not None else 0
+    if off != MAIN_CHIP_WORKING:
+        return bytes(wh), notes                      # 32KB flat 404 / 404V8
+    if original_full is not None and len(original_full) >= MAIN_CHIP_PHYSICAL:
+        full = bytearray(original_full[:MAIN_CHIP_PHYSICAL])
+        if firmware is not None and len(firmware) >= MAIN_CHIP_WORKING:
+            full[0:MAIN_CHIP_WORKING] = firmware[:MAIN_CHIP_WORKING]
+            notes.append("firmware half written (patched)" if
+                         bytes(firmware[:MAIN_CHIP_WORKING]) != bytes(original_full[:MAIN_CHIP_WORKING])
+                         else "firmware half preserved")
+        else:
+            notes.append("firmware half preserved")
+        full[MAIN_CHIP_WORKING:MAIN_CHIP_PHYSICAL] = wh[:MAIN_CHIP_WORKING]
+        return bytes(full), notes
+    # No firmware available (input was a bare 32KB working half): the old
+    # doubled layout is the only thing we can emit — flag it loudly.
+    full = bytearray(MAIN_CHIP_PHYSICAL)
+    full[0:MAIN_CHIP_WORKING] = wh[:MAIN_CHIP_WORKING]
+    full[MAIN_CHIP_WORKING:MAIN_CHIP_PHYSICAL] = wh[:MAIN_CHIP_WORKING]
+    notes.append("WARNING: no firmware half available — output is calibration doubled, NOT burnable")
+    return bytes(full), notes
 
 
 def read_build_number(rom: bytes) -> int:
@@ -2592,6 +2596,131 @@ _RPM_SCALE_ADDRS_0202 = {
 # MAP kPa columns in 0x0202: raw / 1.035 ≈ kPa absolute
 _MAP_SCALE_ADDRS_0202 = {0x2064}
 
+# RAM addresses used as descriptor inputs (prj's IDA names for the 551B firmware)
+DESCRIPTOR_INPUTS: dict[int, str] = {
+    0x36: "UBAT", 0x37: "IAT", 0x38: "ECT", 0x39: "MFTS", 0x3A: "RPM", 0x3F: "LOAD",
+    0x40: "LOAD16H", 0x41: "LOAD16L", 0x42: "MAFHI", 0x43: "MAFLO", 0x46: "MAFLIN",
+    0x4A: "LOADGRAD", 0x53: "ZWCALC", 0x54: "ZWRAW", 0x58: "DWELL", 0x60: "ACCENR",
+    0x65: "LOADFILT", 0x6F: "TVUB", 0x7B: "MAFCORR_UB", 0x7D: "LOADSTART",
+}
+
+
+def _descriptor_breakpoints(deltas: list[int]) -> list[int]:
+    """Bosch M2.3 axis: breakpoint_k = 256 - sum(delta_k .. delta_n)."""
+    out = []
+    total = sum(deltas)
+    for d in deltas:
+        out.append(256 - total)
+        total -= d
+    return out
+
+
+def _scale_axis(input_ram: int, bps: list[int]) -> list:
+    return [b * 40 for b in bps] if input_ram == 0x3A else bps
+
+
+def read_descriptor_axes(rom: bytes, data_addr: int, rows: int, cols: int
+                         ) -> tuple[list, list] | None:
+    """
+    Exact axis read for a 2D map whose Bosch descriptor immediately precedes
+    the data:  [xin][nx][nx deltas][yin][ny][ny deltas][data].
+    Returns (row_axis, col_axis) or None if the bytes don't look like a
+    descriptor for this shape.  RPM axes are scaled x40.
+    """
+    desc = data_addr - (4 + rows + cols)
+    if desc < 0 or data_addr > len(rom):
+        return None
+    xin, nx = rom[desc], rom[desc + 1]
+    if nx != rows:
+        return None
+    yo = desc + 2 + nx
+    yin, ny = rom[yo], rom[yo + 1]
+    if ny != cols:
+        return None
+    xd = list(rom[desc + 2: desc + 2 + nx])
+    yd = list(rom[yo + 2: yo + 2 + ny])
+    return (_scale_axis(xin, _descriptor_breakpoints(xd)),
+            _scale_axis(yin, _descriptor_breakpoints(yd)))
+
+
+def find_descriptor_base_pairs(firmware: bytes) -> list[tuple[int, int]]:
+    """
+    Walk a 551 firmware half and collect the MOV 75h/76h/77h/78h,#imm loads
+    that set READ_MAP's base pointers.  Returns sorted (index_table,
+    pointer_table) 64KB-space address pairs.  Uses the real disassembler so
+    immediates inside other instructions are not mistaken for loads.
+    """
+    from urrom.dis8051 import disassemble
+    vals: dict[int, int] = {}
+    pairs: set[tuple[int, int]] = set()
+    for _pc, raw, _txt in disassemble(firmware, 0, len(firmware)):
+        if raw[0] == 0x75 and len(raw) == 3 and raw[1] in (0x75, 0x76, 0x77, 0x78):
+            vals[raw[1]] = raw[2]
+            if len(vals) == 4:
+                pairs.add(((vals[0x77] << 8) | vals[0x78], (vals[0x75] << 8) | vals[0x76]))
+    return sorted(p for p in pairs
+                  if 0x8000 <= p[0] < 0x10000 and 0x8000 <= p[1] < 0x10000)
+
+
+def decode_descriptor_tables(full_rom: bytes) -> list[dict]:
+    """
+    Enumerate every calibration map a 551 chip's firmware references.
+
+    full_rom must be the 64KB split-bank image (firmware low, calibration high).
+    Each result dict: data (WH offset of map data), desc (WH offset of descriptor),
+    rows, cols, x_input, y_input (RAM addr or None), x_axis, y_axis (decoded),
+    two_d (bool).  Sorted by data address; duplicates (several index entries
+    naming the same descriptor) are merged.
+    """
+    if len(full_rom) < MAIN_CHIP_PHYSICAL:
+        return []
+    fw = full_rom[:MAIN_CHIP_WORKING]
+    cal = full_rom[MAIN_CHIP_WORKING:MAIN_CHIP_PHYSICAL]
+    pairs = find_descriptor_base_pairs(fw)
+    idx_bases = sorted({ib for ib, _ in pairs})
+    seen: dict[tuple[int, int], dict] = {}
+    for ib, pb in pairs:
+        nxt = min([x for x in idx_bases if x > ib] + [ib + 0x100])
+        for k in range(nxt - ib):
+            off = cal[ib - 0x8000 + k]
+            if off == 0xFF:
+                continue
+            two_d = bool(off & 1)
+            pt = pb - 0x8000 + (off & 0xFE)
+            if pt + 1 >= len(cal):
+                continue
+            ptr = (cal[pt] << 8) | cal[pt + 1]
+            if not (0x8000 <= ptr < 0x10000):
+                continue
+            wh = ptr - 0x8000
+            if wh + 2 > len(cal):
+                continue
+            xin, nx = cal[wh], cal[wh + 1]
+            if nx == 0 or nx > 32 or wh + 2 + nx > len(cal):
+                continue
+            xd = list(cal[wh + 2: wh + 2 + nx])
+            o = wh + 2 + nx
+            if two_d:
+                if o + 2 > len(cal):
+                    continue
+                yin, ny = cal[o], cal[o + 1]
+                if ny == 0 or ny > 32 or o + 2 + ny > len(cal):
+                    continue
+                yd = list(cal[o + 2: o + 2 + ny])
+                o += 2 + ny
+            else:
+                yin, ny, yd = None, 1, []
+            key = (wh, two_d)
+            if key not in seen:
+                seen[key] = {
+                    "data": o, "desc": wh, "rows": nx, "cols": ny, "two_d": two_d,
+                    "x_input": xin, "y_input": yin,
+                    "x_axis": _scale_axis(xin, _descriptor_breakpoints(xd)),
+                    "y_axis": _scale_axis(yin, _descriptor_breakpoints(yd)) if two_d else [],
+                }
+    return sorted(seen.values(), key=lambda m: (m["data"], m["desc"]))
+
+
 def read_axes_from_header(rom: bytes, header_addr: int,
                           rows: int = 16, cols: int = 16
                           ) -> tuple[list, list]:
@@ -2685,10 +2814,12 @@ def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
         cols = _read_axis(col_addr, map_def.cols)
         return rows, cols
 
-    if sw in ("551C", "551AA", "551B", "551B_D02", "551A"):
-        # These variants all use Bosch descriptor headers immediately before map data.
-        # Dynamic axes: values are runtime-updated by the ECU (last seen operating point).
-        # Fall back to known static axis if header parsing fails or map has no descriptor.
+    if sw in ("551C", "551AA", "551B", "551B_D02", "551A", "551D"):
+        # Bosch descriptor immediately precedes the data: exact decode first.
+        exact = read_descriptor_axes(rom, map_def.main_addr, map_def.rows, map_def.cols)
+        if exact is not None:
+            return exact
+        # Fallback: legacy marker-byte scan (kept for maps without a descriptor)
         header_addr = map_def.main_addr - 36
         rpm, load = read_axes_from_header(rom, header_addr, map_def.rows, map_def.cols)
         # Validate: if rpm values are all identical or very low, fall back to static

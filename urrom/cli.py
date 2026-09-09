@@ -210,11 +210,47 @@ def cmd_info(args):
         print(f"Maps:       {n_conf} confirmed  ({len(v.main_maps)} total)")
 
 
+def cmd_maps(args):
+    """List every map the chip's firmware references (551 64KB images)."""
+    import argparse
+    p = argparse.ArgumentParser(prog='urrom maps')
+    p.add_argument('rom', help='64KB 551 chip image (.bin or .034)')
+    p.add_argument('--all', action='store_true', help='include 1D tables (default: 2D only)')
+    p.add_argument('--json', action='store_true')
+    ns = p.parse_args(args)
+    path = Path(ns.rom)
+    if not path.exists():
+        print(f"ERROR: {path} not found"); sys.exit(3)
+    raw = path.read_bytes()
+    if path.suffix.lower() == '.034':
+        from urrom.descramble import descramble_034
+        raw = bytes(descramble_034(raw))
+    from urrom.ecu_profiles import decode_descriptor_tables, DESCRIPTOR_INPUTS
+    maps = decode_descriptor_tables(raw)
+    if not maps:
+        print("No descriptor tables found — is this a 64KB split-bank 551 image?"); sys.exit(3)
+    if not ns.all:
+        maps = [m for m in maps if m['two_d']]
+    def nm(v): return '-' if v is None else DESCRIPTOR_INPUTS.get(v, f'{v:02X}h')
+    if ns.json:
+        import json
+        print(json.dumps([{**m, 'x_input': nm(m['x_input']), 'y_input': nm(m['y_input'])} for m in maps], indent=1))
+        return
+    print(f"{len(maps)} firmware-referenced maps in {path.name}")
+    print(f"{'data WH':8s} {'desc':6s} {'shape':7s} {'X':9s} {'Y':9s} axes")
+    for m in maps:
+        shape = f"{m['rows']}x{m['cols']}" if m['two_d'] else f"{m['rows']}"
+        xa = m['x_axis']; ya = m['y_axis']
+        ax = f"X={xa[0]}..{xa[-1]}" + (f"  Y={ya[0]}..{ya[-1]}" if ya else "")
+        print(f"0x{m['data']:04X}   0x{m['desc']:04X} {shape:7s} {nm(m['x_input']):9s} {nm(m['y_input']):9s} {ax}")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
         print("urrom <command> [options]")
         print("  scan <rom>  [--strict] [--json]  — check for tuning issues")
         print("  info <rom>                        — print ROM identification")
+        print("  maps <rom>  [--all] [--json]      — list maps the firmware references (551 64KB)")
         sys.exit(0)
     cmd = sys.argv[1]
     rest = sys.argv[2:]
@@ -222,6 +258,8 @@ def main():
         cmd_scan(rest)
     elif cmd == 'info':
         cmd_info(rest)
+    elif cmd == 'maps':
+        cmd_maps(rest)
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(3)

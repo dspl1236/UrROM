@@ -3379,6 +3379,8 @@ class MainWindow(QMainWindow):
         self._main_path:  Path | None = None
         self._boost_path: Path | None = None
         self._main_rom:   bytearray | None = None   # working half
+        self._main_full:  bytes | None = None       # full original image (64KB split-bank)
+        self._main_fw:    bytearray | None = None   # firmware half (lower 32KB) — patches/scalars edit this
         self._boost_rom:  bytearray | None = None
         # Session changelog
         from urrom.session_log import SessionLog
@@ -3958,11 +3960,24 @@ class MainWindow(QMainWindow):
                 return
             raw = descramble_034(raw)
 
+        if len(raw) == MAIN_CHIP_PHYSICAL - 1:
+            raw = bytes(raw) + b"\xff"      # short dump — keep the split-bank logic intact
         wh, notes = normalize_rom(raw)
         det = detect_rom(wh)
 
         self._main_path = path
         self._main_rom  = bytearray(wh)
+        # Keep the whole original image: 551x chips are split-bank (firmware in
+        # the lower 32KB) and Save must write that half back untouched.
+        self._main_full = bytes(raw) if len(raw) >= MAIN_CHIP_PHYSICAL else None
+        # Firmware half: lower 32KB of a split-bank 551 image; for 32KB flat
+        # chips (404) the whole file is both firmware and calibration.
+        if self._main_full is not None:
+            self._main_fw = bytearray(self._main_full[:MAIN_CHIP_WORKING])
+        elif det.variant is not None and det.variant.working_half_offset == 0:
+            self._main_fw = bytearray(wh)
+        else:
+            self._main_fw = None
         self._det       = det
         self._unsaved   = False
         self._clear_dirty()
@@ -3983,7 +3998,9 @@ class MainWindow(QMainWindow):
         ov = self._overview_tab
         ov._rom_bytes = bytes(wh)
         ov.update(det, self._boost_det if hasattr(self, "_boost_det") else None)
-        self._hardware_tab.update(bytes(wh), det.variant.name if det.variant else "")
+        self._hardware_tab.update(
+            bytes(self._main_fw) if self._main_fw is not None else bytes(wh),
+            det.variant.software_id if det.variant else "")
         # Wire LC/NLS scalar edits -> dirty flag + ROM write-back
         def _on_scalar_changed(wh_off, raw):
             if wh_off == '__dist_patch__':
@@ -3991,33 +4008,40 @@ class MainWindow(QMainWindow):
                 deg = raw   # raw is actually a float degree value here
                 self._apply_dist_timing_patch(deg)
                 return
-            if self._main_rom and isinstance(wh_off, int) and wh_off < len(self._main_rom):
-                self._main_rom[wh_off] = raw
+            target = self._main_fw if self._main_fw is not None else self._main_rom
+            if target is not None and isinstance(wh_off, int) and wh_off < len(target):
+                target[wh_off] = raw
                 self._set_dirty()
         self._hardware_tab.set_scalar_changed_callback(_on_scalar_changed)
 
         # Wire firmware patch apply/revert callback
         def _on_patch_toggle(patch_name, action, value):
-            if self._main_rom is None:
+            fw = self._main_fw
+            if fw is None:
+                QMessageBox.warning(
+                    self, "No firmware half",
+                    "Firmware patches live in the lower 32KB of the 64KB chip image.\n"
+                    "This ROM was opened as a bare calibration half, so there is no\n"
+                    "firmware to patch. Open the full 64KB chip read.")
                 return
             if action == "apply":
                 if patch_name == "MFTS Boost Cut Bypass":
-                    apply_mfts_bypass(self._main_rom)
+                    apply_mfts_bypass(fw)
                 elif patch_name == "Load Overflow Decap":
-                    apply_load_decap(self._main_rom)
+                    apply_load_decap(fw)
                 elif patch_name == "Lambda Cold-Start Delay":
-                    apply_lambda_delay(self._main_rom, value if value is not None else 0xFF)
+                    apply_lambda_delay(fw, value if value is not None else 0xFF)
             elif action == "revert":
                 if patch_name == "MFTS Boost Cut Bypass":
-                    revert_mfts_bypass(self._main_rom)
+                    revert_mfts_bypass(fw)
                 elif patch_name == "Load Overflow Decap":
-                    revert_load_decap(self._main_rom)
+                    revert_load_decap(fw)
                 elif patch_name == "Lambda Cold-Start Delay":
-                    revert_lambda_delay(self._main_rom)
+                    revert_lambda_delay(fw)
             self._set_dirty()
-            # Refresh hardware tab with updated ROM bytes
-            v_name = self._det.variant.name if self._det and self._det.variant else ""
-            self._hardware_tab.update(bytes(self._main_rom), v_name)
+            # Refresh hardware tab with the updated firmware bytes
+            sw = self._det.variant.software_id if self._det and self._det.variant else ""
+            self._hardware_tab.update(bytes(fw), sw)
         self._hardware_tab.set_patch_apply_callback(_on_patch_toggle)
 
         self._hardware_tab.set_dist_maps(
@@ -4144,13 +4168,21 @@ class MainWindow(QMainWindow):
         else:
             cs_changed = False
 
-        if self._det and self._det.variant and self._det.variant.working_half_offset == 0x8000:
-            full = bytearray(MAIN_CHIP_PHYSICAL)
-            full[0x0000:0x8000] = rom_out
-            full[0x8000:0x10000] = rom_out
-            out_bytes = bytes(full)
-        else:
-            out_bytes = bytes(rom_out)
+        from urrom.ecu_profiles import assemble_output
+        out_bytes, asm_notes = assemble_output(
+            bytes(rom_out), variant, getattr(self, "_main_full", None),
+            firmware=bytes(self._main_fw) if getattr(self, "_main_fw", None) is not None else None)
+        if any(n.startswith("WARNING") for n in asm_notes):
+            r = QMessageBox.warning(
+                self, "No firmware half",
+                "This ROM was opened as a bare 32KB calibration half, so UrROM has no "
+                "firmware to put in the lower 32KB of the 64KB output.\n\n"
+                "The file will be written with the calibration in BOTH halves. It is "
+                "fine for comparing and archiving but must NOT be burned to a chip.\n\n"
+                "Open the full 64KB chip read instead to get a burnable file.",
+                QMessageBox.Ok | QMessageBox.Cancel, QMessageBox.Cancel)
+            if r != QMessageBox.Ok:
+                return
 
         stem   = self._main_path.stem
         suffix = self._main_path.suffix.lower()
@@ -4172,6 +4204,7 @@ class MainWindow(QMainWindow):
             return
 
         notes = []
+        notes.extend(n for n in asm_notes if not n.startswith("WARNING"))
         if cs_changed:     notes.append("checksum updated")
         elif needs_checksum: notes.append("checksum ok")
         if path.lower().endswith(".034"): notes.append(".034 scrambled")
@@ -5254,7 +5287,9 @@ class MainWindow(QMainWindow):
             "style='color:#569cd6'>github.com/dspl1236/UrROM</a>")
 
     def closeEvent(self, event):
-        if self._unsaved or self._main_chip_tab.has_changes():
+        fw_dirty = (self._main_fw is not None and self._main_full is not None
+                    and bytes(self._main_fw) != self._main_full[:MAIN_CHIP_WORKING])
+        if self._unsaved or fw_dirty or self._main_chip_tab.has_changes():
             r = QMessageBox.question(
                 self, "Unsaved changes",
                 "You have unsaved map edits. Quit anyway?",

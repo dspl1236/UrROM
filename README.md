@@ -93,6 +93,7 @@ All files fingerprinted by CRC32, boost chip pairing validated automatically.
 python -m urrom.cli scan rom.034           # exit 2 on errors
 python -m urrom.cli scan rom.034 --json    # machine-readable
 python -m urrom.cli info rom.034           # identification
+python -m urrom.cli maps rom.bin           # every map the 551 firmware references
 ```
 
 ### Tools Menu
@@ -148,8 +149,9 @@ The following items are known and tracked for future work:
 
 | Area | Issue | Status |
 |------|-------|--------|
-| **Ign Maps 1-7** | Addresses 0x30AC–0x3931 contain 8051 firmware code, not ignition data (confirmed via binary analysis). Downgraded to UNVERIFIED. Real ign addresses: 0x125F/0x1594/0x10A8 for prjmod 0x0202; stock Bosch addresses TBD | UNVERIFIED |
-| **551B_D02 variant** | Currently using 551AA map addresses — needs its own verified address list | TODO |
+| **Ign Maps 1-7** | ~~0x30AC–0x3931 contain firmware code~~ — that analysis was done on the wrong half of the 64KB image. The stock firmware's own descriptor tables reference all seven maps (ADU 0x30AC…0x3931, ABY 0x30A8…0x392D). See `docs/551_calibration_descriptors_RE.md` | CONFIRMED |
+| **551 chip layout** | 64KB main chip is split-bank: lower 32KB firmware, upper 32KB calibration. Not mirrored. Save and firmware patches now handle the halves correctly | Fixed |
+| **551B_D02 variant** | Own map list decoded from the chip's firmware descriptor tables (0x0E13 family = PRJmod layout) | Fixed |
 | **Boost chip save** | ~~Not saved~~ — Fixed. Boost chip now saved alongside main EPROM when edits detected | Fixed |
 | **V8 split-bank save** | Save writes both halves but architecture is fragile if bank sizes change | Works, needs hardening |
 | **KWP overlay colours** | `_text_colour` called with string instead of QColor — crashes on some Qt versions | Bug |

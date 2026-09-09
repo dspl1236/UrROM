@@ -258,10 +258,11 @@ class TestMapReadWrite:
         assert data[0][0] == 255
 
     def test_read_map_decoded_ignition(self):
-        map_def = next(m for m in VARIANT_551AA.main_maps
+        from urrom.ecu_profiles import VARIANT_551C
+        map_def = next(m for m in VARIANT_551C.main_maps
                        if m.map_type == "ign" and m.rows == 16)
         rom = bytearray(MAIN_CHIP_PHYSICAL)
-        # raw=49 → 49*0.6491 − 8.2186 = 23.59°BTDC (verified against real RS2 ROM)
+        # raw=49 → 49*0.6491 − 8.2186 = 23.59°BTDC (RS2.xdf formula, 0x2E17 family)
         rom[map_def.main_addr] = 49
         data = read_map_decoded(bytes(rom), map_def)
         assert abs(data[0][0] - 23.59) < 0.1
@@ -1736,8 +1737,10 @@ class TestIdleIgnMaps:
                 if 'Idle' in m.name and m.confidence == 'CONFIRMED']
         assert len(idle) == 2
         addrs = {m.main_addr for m in idle}
-        assert 0x3D04 in addrs, "Closed-throttle idle map missing at 0x3D04"
-        assert 0x3E64 in addrs, "AC-on idle map missing at 0x3E64"
+        # Firmware descriptors: 4x6 blocks at 0x3CFC / 0x3E5C (the old 3x6 view
+        # at 0x3D04 / 0x3E64 started one row in)
+        assert 0x3CFC in addrs, "Closed-throttle idle map missing at 0x3CFC"
+        assert 0x3E5C in addrs, "AC-on idle map missing at 0x3E5C"
 
     def test_adu_idle_ign_addresses(self):
         """ADU 551C has 2 confirmed idle ign maps at the ADU-specific addresses."""
@@ -1746,17 +1749,17 @@ class TestIdleIgnMaps:
                 if 'Idle' in m.name and m.confidence == 'CONFIRMED']
         assert len(idle) == 2
         addrs = {m.main_addr for m in idle}
-        assert 0x3D08 in addrs, "ADU closed-throttle idle map missing at 0x3D08"
-        assert 0x3E68 in addrs, "ADU AC-on idle map missing at 0x3E68"
+        assert 0x3D00 in addrs, "ADU closed-throttle idle map missing at 0x3D00"
+        assert 0x3E60 in addrs, "ADU AC-on idle map missing at 0x3E60"
 
     def test_idle_ign_dimensions(self):
-        """Idle ign maps are 3×6 on all 551x variants."""
+        """Idle ign maps are 4×6 (firmware descriptor: 4 RPM x 6 load) on all 551x variants."""
         from urrom.ecu_profiles import VARIANT_551B, VARIANT_551C
         for v in [VARIANT_551B, VARIANT_551C]:
             for m in v.main_maps:
                 if 'Idle' in m.name and m.confidence == 'CONFIRMED':
-                    assert m.rows == 3 and m.cols == 6, \
-                        f"{v.software_id} {m.name}: expected 3×6, got {m.rows}×{m.cols}"
+                    assert m.rows == 4 and m.cols == 6, \
+                        f"{v.software_id} {m.name}: expected 4×6, got {m.rows}×{m.cols}"
 
     def test_aby_idle_ign_values_plausible(self):
         """ABY idle ign values decode to plausible idle advance angles."""
@@ -1823,7 +1826,9 @@ class TestIdleIgnMaps:
         from urrom.ecu_profiles import ALL_VARIANTS
         for v in ALL_VARIANTS:
             if v.software_id.startswith('551') and v.software_id != '551AA_0202':
+                # 551A's layout is assumed (blank sample) → PROVISIONAL is acceptable there
+                want = ('CONFIRMED', 'PROVISIONAL') if v.software_id == '551A' else ('CONFIRMED',)
                 idle = [m for m in v.main_maps
-                        if 'Idle' in m.name and m.confidence == 'CONFIRMED']
+                        if 'Idle' in m.name and m.confidence in want]
                 assert len(idle) >= 2, \
                     f"{v.software_id} has only {len(idle)} confirmed idle ign maps"

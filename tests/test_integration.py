@@ -222,8 +222,8 @@ class TestPatchApplyRevert:
         mfts = [r for r in results if r.name == "MFTS Boost Cut Bypass"][0]
         assert mfts.status == "STOCK"
 
-    def test_mfts_64kb_mirror(self):
-        """On 64KB doubled ROM, patch should be applied to both halves."""
+    def test_mfts_64kb_firmware_only(self):
+        """On a 64KB split-bank image the patch must touch ONLY the firmware half."""
         rom = load_rom("aan_fuel-ign_551aa.bin")
         if len(rom) < 0x10000:
             # Pad to 64KB doubled
@@ -231,7 +231,9 @@ class TestPatchApplyRevert:
         apply_mfts_bypass(rom)
         # Check both halves
         assert rom[MFTS_BYPASS_OFFSET: MFTS_BYPASS_OFFSET + 2] == MFTS_BYPASS_PATCH
-        assert rom[MFTS_BYPASS_OFFSET + 0x8000: MFTS_BYPASS_OFFSET + 0x8000 + 2] == MFTS_BYPASS_PATCH
+        assert rom[MFTS_BYPASS_OFFSET: MFTS_BYPASS_OFFSET + 2] == MFTS_BYPASS_PATCH
+        assert rom[MFTS_BYPASS_OFFSET + 0x8000: MFTS_BYPASS_OFFSET + 0x8000 + 2] != MFTS_BYPASS_PATCH, \
+            "calibration half must not be written by a firmware patch"
 
     def test_load_decap_detect_stock(self):
         rom = load_rom("aan_fuel-ign_551aa.bin")
@@ -322,11 +324,14 @@ class TestPatchApplyRevert:
         det = detect_rom(bytes(rom))
         confirmed = [m for m in det.variant.main_maps
                      if m.rows > 1 and m.confidence == "CONFIRMED"]
-        before = {m.name: read_map(bytes(rom), m) for m in confirmed}
+        # Maps live in the CALIBRATION half (upper 32KB); the patch hits the firmware half.
+        cal_before = bytes(rom[0x8000:0x10000])
+        before = {m.name: read_map(cal_before, m) for m in confirmed}
         apply_mfts_bypass(rom)
+        cal_after = bytes(rom[0x8000:0x10000])
+        assert cal_after == cal_before, "firmware patch must not touch the calibration half"
         for m in confirmed:
-            after = read_map(bytes(rom), m)
-            assert after == before[m.name], f"MFTS patch corrupted map {m.name}"
+            assert read_map(cal_after, m) == before[m.name], f"MFTS patch corrupted map {m.name}"
 
     def test_load_decap_overlap_with_ign_map(self):
         """KNOWN ISSUE: Load decap patch at 0x3679/0x367F may overlap Ign Map 4.
@@ -389,16 +394,38 @@ class TestSaveReload:
         rom3 = apply_checksum(bytearray(rom2))
         assert rom3[0x3FFA:0x3FFE] == rom2[0x3FFA:0x3FFE], "Checksum should be idempotent"
 
-    def test_doubled_rom_save(self):
-        """64KB doubled ROM: both halves should be identical after save."""
-        rom = load_rom("aan_fuel-ign_551aa.bin")
-        if len(rom) < 0x10000:
-            rom = bytearray(rom[:0x8000]) + bytearray(rom[:0x8000])
-        # Edit in working half
-        rom[0x100] = 0xAA
-        # Double the halves
-        rom[0x8000 + 0x100] = 0xAA
-        assert rom[0x100] == rom[0x8100]
+    def test_551_files_are_split_bank_not_mirrored(self):
+        """Every bundled 551 image: lower half = firmware (LJMP reset), upper = cal."""
+        for name in ("adu_fuel-ign_551c.bin", "aby_fuel-ign_551aa.bin", "rs2_d02_fuel-ign_551b.bin"):
+            rom = load_rom(name)
+            assert len(rom) >= 0x10000
+            lo, up = bytes(rom[:0x8000]), bytes(rom[0x8000:0x10000])
+            assert lo != up, f"{name}: halves must not be mirrors"
+            assert lo[0] == 0x02, f"{name}: lower half must start with LJMP (firmware)"
+
+    def test_assemble_output_preserves_firmware_half(self):
+        from urrom.ecu_profiles import assemble_output, VARIANT_551C
+        rom = bytes(load_rom("adu_fuel-ign_551c.bin"))
+        wh = bytearray(rom[0x8000:0x10000])
+        wh[0x2E17] = 0x99                                   # edit a fuel cell
+        out, notes = assemble_output(bytes(wh), VARIANT_551C, rom)
+        assert len(out) == 0x10000
+        assert out[:0x8000] == rom[:0x8000], "firmware half must be untouched"
+        assert out[0x8000 + 0x2E17] == 0x99
+        assert "firmware half preserved" in notes
+
+    def test_assemble_output_without_firmware_warns(self):
+        from urrom.ecu_profiles import assemble_output, VARIANT_551C
+        wh = bytes(load_rom("adu_fuel-ign_551c.bin"))[0x8000:0x10000]
+        out, notes = assemble_output(wh, VARIANT_551C, None)
+        assert len(out) == 0x10000 and out[:0x8000] == out[0x8000:]
+        assert any(n.startswith("WARNING") for n in notes)
+
+    def test_assemble_output_flat_404(self):
+        from urrom.ecu_profiles import assemble_output, VARIANT_404
+        wh = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        out, notes = assemble_output(wh, VARIANT_404, None)
+        assert out == wh and notes == []
 
     def test_patched_rom_saves_correctly(self):
         """ROM with patches applied should save and reload with patches intact."""
@@ -631,3 +658,83 @@ class TestS2ChipSet:
         assert len(rows) == 8 and len(cols) == 16
         assert cols[0] > cols[-1]          # high rpm first
         assert 2200 < cols[-1] < 2300 and 10400 < cols[0] < 10700
+
+
+# ── 551 firmware descriptor tables (2026-09) ─────────────────────────────────
+
+class Test551Descriptors:
+    """
+    The stock 551 firmware finds its maps via index/pointer tables in the
+    calibration half.  These tests pin the decoded addresses so the map lists
+    can never silently drift back to guesses.
+    """
+
+    def _full(self, name):
+        rom = load_rom(name)
+        if len(rom) < 0x10000:
+            import pytest; pytest.skip(f"{name} is not a 64KB image")
+        return bytes(rom)
+
+    def _rpm_load_16x16(self, name):
+        from urrom.ecu_profiles import decode_descriptor_tables
+        maps = decode_descriptor_tables(self._full(name))
+        return [m["data"] for m in maps
+                if m["two_d"] and m["rows"] == 16 and m["cols"] == 16
+                and m["x_input"] == 0x3A and m["y_input"] == 0x3F]
+
+    def test_adu_16x16_maps(self):
+        assert self._rpm_load_16x16("adu_fuel-ign_551c.bin") == \
+            [0x2E17, 0x30AC, 0x3263, 0x3387, 0x3598, 0x36BC, 0x380D, 0x3931]
+
+    def test_aby_16x16_maps_are_4_lower(self):
+        assert self._rpm_load_16x16("aby_fuel-ign_551aa.bin") == \
+            [0x2E17, 0x30A8, 0x325F, 0x3383, 0x3594, 0x36B8, 0x3809, 0x392D]
+
+    def test_rs2_d02_16x16_maps_are_prjmod_layout(self):
+        assert self._rpm_load_16x16("rs2_d02_fuel-ign_551b.bin") == \
+            [0x0E13, 0x10A8, 0x125F, 0x1383, 0x1594, 0x16B8, 0x1809, 0x192D]
+
+    def test_aan_551aa_16x16_maps(self):
+        assert self._rpm_load_16x16("aan_fuel-ign_551aa.bin") == \
+            [0x0DEA, 0x106D, 0x1224, 0x1348, 0x155F, 0x1683, 0x17D4, 0x18F8]
+
+    def test_variant_lists_match_firmware(self):
+        from urrom.ecu_profiles import VARIANT_551C, VARIANT_551B, VARIANT_551B_D02, VARIANT_551AA
+        for v, name in ((VARIANT_551C, "adu_fuel-ign_551c.bin"),
+                        (VARIANT_551B, "aby_fuel-ign_551aa.bin"),
+                        (VARIANT_551B_D02, "rs2_d02_fuel-ign_551b.bin"),
+                        (VARIANT_551AA, "aan_fuel-ign_551aa.bin")):
+            fw_addrs = set(self._rpm_load_16x16(name))
+            listed = {m.main_addr for m in v.main_maps if m.rows == 16 and m.cols == 16}
+            assert listed == fw_addrs, f"{v.software_id}: {sorted(map(hex, listed))} vs firmware {sorted(map(hex, fw_addrs))}"
+            assert all(m.confidence == "CONFIRMED" for m in v.main_maps if m.rows == 16 and m.cols == 16)
+
+    def test_exact_axis_decode_reproduces_known_rpm_axis(self):
+        from urrom.ecu_profiles import read_descriptor_axes, _RPM_AXIS_551, _LOAD_AXIS_551
+        wh = self._full("adu_fuel-ign_551c.bin")[0x8000:]
+        axes = read_descriptor_axes(wh, 0x30AC, 16, 16)      # ign map 1
+        assert axes is not None
+        rpm, load = axes
+        assert rpm == _RPM_AXIS_551                          # 600 … 7200
+        assert load == _LOAD_AXIS_551                        # 12 … 180
+        # fuel map shares the RPM deltas except the top breakpoint (7000 rpm)
+        rpm_f, load_f = read_descriptor_axes(wh, 0x2E17, 16, 16)
+        assert rpm_f[:15] == _RPM_AXIS_551[:15] and rpm_f[-1] == 7000
+        assert load_f[-1] == 177
+
+    def test_get_axes_uses_descriptor(self):
+        from urrom.ecu_profiles import VARIANT_551B, get_axes
+        wh = self._full("aby_fuel-ign_551aa.bin")[0x8000:]
+        m = next(m for m in VARIANT_551B.main_maps if m.main_addr == 0x30A8)
+        rpm, load = get_axes(wh, m, VARIANT_551B)
+        assert rpm[0] == 600 and rpm[-1] == 7200 and len(load) == 16
+
+    def test_assemble_output_with_patched_firmware(self):
+        from urrom.ecu_profiles import assemble_output, VARIANT_551AA
+        from urrom.hw_patches import apply_mfts_bypass, MFTS_BYPASS_OFFSET, MFTS_BYPASS_PATCH
+        full = self._full("aan_fuel-ign_551aa.bin")
+        fw = bytearray(full[:0x8000]); apply_mfts_bypass(fw)
+        out, notes = assemble_output(full[0x8000:], VARIANT_551AA, full, firmware=bytes(fw))
+        assert out[MFTS_BYPASS_OFFSET:MFTS_BYPASS_OFFSET + 2] == MFTS_BYPASS_PATCH
+        assert out[0x8000:] == full[0x8000:]
+        assert "firmware half written (patched)" in notes
