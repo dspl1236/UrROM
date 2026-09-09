@@ -604,8 +604,30 @@ class TestS2ChipSet:
         assert d.crc32 == 0x9245FA10 and d.variant is not None and d.variant.software_id == "404"
         assert KNOWN_CRCS[0x604AB965][0] == "404_boost"
 
-    def test_404_boost_tables_exposed_read_only(self):
+    def test_404_boost_tables_decoded(self):
         from urrom.ecu_profiles import VARIANT_404
-        tables = [m for m in VARIANT_404.boost_maps if m.name.startswith("Boost table ")]
-        assert [m.main_addr for m in tables] == [0x18B4, 0x1934, 0x19B4, 0x1A34, 0x1AB4, 0x1B34]
-        assert all(m.rows == 8 and m.cols == 16 and m.confidence == "UNCONFIRMED" for m in tables)
+        by_addr = {m.main_addr: m for m in VARIANT_404.boost_maps}
+        for a in (0x18B4, 0x1934, 0x19B4):
+            assert by_addr[a].rows == 8 and by_addr[a].cols == 16
+            assert by_addr[a].name.startswith("Boost Target")
+        for a in (0x1A34, 0x1AB4, 0x1B34):
+            assert by_addr[a].rows == 8 and by_addr[a].cols == 16
+            assert by_addr[a].name.startswith("N75 Base Duty")
+
+    def test_404_boost_axes_from_chip(self):
+        import pathlib
+        from urrom.ecu_profiles import (VARIANT_404, get_axes, read_delta_axis,
+                                        boost404_period_to_rpm)
+        p = pathlib.Path(__file__).parent.parent / "roms" / "3b_boost_404aa.bin"
+        if not p.exists():
+            import pytest; pytest.skip("bundled 3B boost chip not present")
+        rom = p.read_bytes()
+        assert read_delta_axis(rom, 0x189A) == [43, 61, 80, 99, 118, 136, 155, 219]
+        assert read_delta_axis(rom, 0x1BB8) == [167, 200, 250, 333, 500]
+        # period → rpm lands on round numbers for the 0x1BB8 axis
+        assert [boost404_period_to_rpm(v) for v in (500, 250, 200)] == [3000, 6000, 7500]
+        m = next(m for m in VARIANT_404.boost_maps if m.main_addr == 0x1934)
+        rows, cols = get_axes(rom, m, VARIANT_404)
+        assert len(rows) == 8 and len(cols) == 16
+        assert cols[0] > cols[-1]          # high rpm first
+        assert 2200 < cols[-1] < 2300 and 10400 < cols[0] < 10700

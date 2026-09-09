@@ -648,43 +648,150 @@ _MAPS_BOOST_551 = [
 _BOOST_3B_RPM_AXIS  = [500, 1000, 1500, 2000, 2500, 3000, 4000, 5000]
 _BOOST_3B_LOAD_AXIS = [1, 2, 3, 4, 5, 6, 7, 8]
 
+# ── 3B / RR / S2 boost chip (8KB 27C64, executable 8051 MCU) ─────────────────
+#
+# Decoded 2026-09 by disassembling the boost MCU (tools/dis8051.py) — see
+# docs/3B_boost_chip_RE.md.  The list at 0x1600 holds (X-axis, Y-axis, table)
+# pointer triplets consumed by the 2D interpolating lookup at 0x12CA.
+#
+# Axis format: [count][first][delta]...  (absolute breakpoints = running sum)
+#   0x189A  X axis, 8 pts  — MAP-derived load (RAM 64h = linearised MAP − 64 + corr)
+#   0x18A3  Y axis, 16 pts — engine PERIOD (Timer2 capture >> 4).  RPM ≈ 1.5e6 / value
+#           (12 MHz crystal, 2.5 tach pulses/rev).  Ascending period = DESCENDING rpm.
+#   0x1EF0  X axis, 5 pts  — ADC channel 1 raw (pressure input used by the control loop)
+#   0x1640  Y axis, 8 pts  — engine period, as above
+#
+# Tables are row-major [X][Y]: rows = load / ch1, columns = period (high rpm first).
+#
+# Three-way mode select (IAT band on ADC ch4 vs thresholds at 0x17ED, with
+# hysteresis) picks one of D/E/F and the matching A/B/C.  Default after reset
+# is E + B.  Boost MCU firmware is identical on 3B 404AA / RR 404B / S2; only
+# these tables (and the thresholds) differ between the three chips.
+
+def _boost404_duty_decode(b):   return round(b / 255 * 100, 1)   # % duty
+def _boost404_duty_encode(v):   return max(0, min(255, round(v / 100 * 255)))
+def _boost404_kpa_decode(b):    return round(b / 255 * 200, 1)   # kPa abs, 200 kPa sensor
+def _boost404_kpa_encode(v):    return max(0, min(255, round(v / 200 * 255)))
+
+_BOOST_404_TABLE_AXES: dict[int, tuple[int, int]] = {
+    # table data addr → (X axis addr, Y axis addr)
+    0x18B4: (0x189A, 0x18A3), 0x1934: (0x189A, 0x18A3), 0x19B4: (0x189A, 0x18A3),
+    0x1A34: (0x189A, 0x18A3), 0x1AB4: (0x189A, 0x18A3), 0x1B34: (0x189A, 0x18A3),
+    0x1649: (0x1EF0, 0x1640), 0x1671: (0x1EF0, 0x1640),
+}
+
 _MAPS_BOOST_404 = [
-    MapDef("Boost Target",
-           "3B/RR boost target tables at 0x1650+ (direct RE session 2026). "
-           "Executable MCU code chip — tables in upper data region. "
-           "NOTE 2026-09: this block is byte-identical on 3B 404AA, RR 404B and S2 "
-           "boost chips, so it is NOT where the per-application boost calibration lives.",
-           main_addr=0x1650, rows=8, cols=8,
-           map_type="boost", unit="raw", chip="boost",
+    # ── Boost pressure target (RAM 3Dh) — A/B/C selected by IAT band ─────────
+    MapDef("Boost Target A (cold IAT band)",
+           "Boost pressure target vs MAP-load (rows) × RPM (cols, high rpm first). "
+           "Result (RAM 3Dh) is compared with the measured pressure to form the "
+           "control error. Selected when the ch4 (IAT) reading is BELOW the low "
+           "threshold at 0x17EF. Decode assumes the stock 200 kPa sensor: raw/255×200 = kPa abs.",
+           main_addr=0x18B4, rows=8, cols=16,
+           map_type="boost", unit="kPa", chip="boost",
+           decode=_boost404_kpa_decode, encode=_boost404_kpa_encode,
+           confidence="PROVISIONAL",
+           notes="Firmware-confirmed function (0x0B02-0x0B17). Sensor scale assumed."),
+    MapDef("Boost Target B (normal IAT band, default)",
+           "Boost pressure target — active in the middle IAT band and after reset. "
+           "This is the map the engine runs on most of the time. "
+           "Peaks around 3300–3750 rpm and tapers toward redline (stock K24 behaviour).",
+           main_addr=0x1934, rows=8, cols=16,
+           map_type="boost", unit="kPa", chip="boost",
+           decode=_boost404_kpa_decode, encode=_boost404_kpa_encode,
+           confidence="PROVISIONAL",
+           notes="3B max raw 0xED (186 kPa), RR 0xF4 (191 kPa), S2 0xD5 (167 kPa)."),
+    MapDef("Boost Target C (hot IAT band)",
+           "Boost pressure target — active when the ch4 (IAT) reading is ABOVE the "
+           "high threshold at 0x17ED.",
+           main_addr=0x19B4, rows=8, cols=16,
+           map_type="boost", unit="kPa", chip="boost",
+           decode=_boost404_kpa_decode, encode=_boost404_kpa_encode,
+           confidence="PROVISIONAL"),
+
+    # ── N75 base duty cycle (RAM 4Bh) — D/E/F selected by the same IAT band ──
+    MapDef("N75 Base Duty D (cold IAT band)",
+           "Wastegate solenoid feed-forward duty vs MAP-load (rows) × RPM (cols). "
+           "Result (RAM 4Bh) has the P and I error terms added, then is clamped by "
+           "the per-RPM-band ceiling at 0x1C47. raw/255×100 = %.",
+           main_addr=0x1A34, rows=8, cols=16,
+           map_type="raw", unit="%DC", chip="boost",
+           decode=_boost404_duty_decode, encode=_boost404_duty_encode,
+           confidence="PROVISIONAL",
+           notes="Firmware-confirmed function (0x0AD1-0x0AFA)."),
+    MapDef("N75 Base Duty E (normal IAT band, default)",
+           "Wastegate solenoid feed-forward duty — middle IAT band / after reset.",
+           main_addr=0x1AB4, rows=8, cols=16,
+           map_type="raw", unit="%DC", chip="boost",
+           decode=_boost404_duty_decode, encode=_boost404_duty_encode,
+           confidence="PROVISIONAL"),
+    MapDef("N75 Base Duty F (hot IAT band)",
+           "Wastegate solenoid feed-forward duty — hot IAT band.",
+           main_addr=0x1B34, rows=8, cols=16,
+           map_type="raw", unit="%DC", chip="boost",
+           decode=_boost404_duty_decode, encode=_boost404_duty_encode,
+           confidence="PROVISIONAL"),
+
+    # ── PWM fraction tables (RAM 5Ch / 5Dh → on-times 58h/5Ah = value × period) ──
+    MapDef("PWM Fraction 1 (0x1649)",
+           "5×8 table: ADC ch1 raw (rows, axis 0x1EF0) × RPM (cols, axis 0x1640). "
+           "Result 5Ch is multiplied by the engine period (13B9) into 58h:59h. "
+           "Identical on 3B / RR / S2. Function not fully traced — view only.",
+           main_addr=0x1649, rows=5, cols=8,
+           map_type="raw", unit="raw", chip="boost",
+           confidence="UNCONFIRMED"),
+    MapDef("PWM Fraction 2 (0x1671)",
+           "5×8 table, same axes. Result 5Dh × period → 5Ah:5Bh, which the PWM ISR "
+           "adds to compare register 3 (0x00D4). Identical on 3B / RR / S2.",
+           main_addr=0x1671, rows=5, cols=8,
+           map_type="raw", unit="raw", chip="boost",
+           confidence="UNCONFIRMED"),
+
+    # ── Scalars / small tables that differ between chips ───────────────────
+    MapDef("IAT mode thresholds (0x17ED)",
+           "4 bytes: hi / hi-hyst / lo / lo-hyst thresholds on ADC ch4 that pick "
+           "which A-F table pair is active (0x0B5F-0x0B82). 3B: 67 63 38 2D. "
+           "S2/RR: 73 6F 38 2D. Fallback set at 0x17F1 is used if ch4 faults.",
+           main_addr=0x17ED, rows=1, cols=4,
+           map_type="raw", unit="raw", chip="boost",
+           confidence="PROVISIONAL"),
+    MapDef("Duty ceiling per RPM band (0x1C47)",
+           "8 bytes indexed by RPM band (RAM 5Eh, axis 0x16A2). Upper clamp on the "
+           "final N75 duty. Stock: 0xAE ×8 (68 %).",
+           main_addr=0x1C47, rows=1, cols=8,
+           map_type="raw", unit="%DC", chip="boost",
+           decode=_boost404_duty_decode, encode=_boost404_duty_encode,
+           confidence="PROVISIONAL"),
+    MapDef("Target ceiling per RPM band (0x1C4F)",
+           "8 bytes indexed by RPM band. Limits the control target 3Eh "
+           "(0x1020-0x102F). Stock: 4B 50 5A 64 73 7B 7B 7B.",
+           main_addr=0x1C4F, rows=1, cols=8,
+           map_type="raw", unit="raw", chip="boost",
            confidence="PROVISIONAL"),
 ]
 
-# Six 128-byte tables that DO differ between the 3B (447907404AA), RR (857907404B)
-# and S2 (895907404) boost chips — found 2026-09 by three-way diff.  The pointer
-# list at 0x1600 references each of them as (table, 0x189A, 0x18A3) triplets, so
-# 0x189A / 0x18A3 are most likely the shared X / Y axis arrays.
-# Tables A-C hold high values (0x74-0xF4, rising with row/col) — candidates for
-# N75 duty cycle or boost target.  Tables D-F hold low values (0x02-0xAC) —
-# candidates for a correction / limit map.  Function unconfirmed: read-only.
-_MAPS_BOOST_404 += [
-    MapDef(f"Boost table {tag} (0x{addr:04X}, unknown)",
-           f"8×16 calibration table at 0x{addr:04X} on the 3B/RR/S2 8KB boost MCU. "
-           f"Differs between 3B / RR / S2 chips. {desc} "
-           "Axes probably at 0x189A (X) / 0x18A3 (Y). Function NOT confirmed — "
-           "view and compare only, do not write.",
-           main_addr=addr, rows=8, cols=16,
-           map_type="raw", unit="raw", chip="boost",
-           confidence="UNCONFIRMED",
-           notes="RR chip carries the highest values in tables A-C, S2 the lowest at high load.")
-    for tag, addr, desc in [
-        ("A", 0x18B4, "High-valued (0x76-0xDE). Rises with row and column."),
-        ("B", 0x1934, "High-valued (0x74-0xE4). Rises with row and column."),
-        ("C", 0x19B4, "High-valued (0x74-0xF4). Rises with row and column."),
-        ("D", 0x1A34, "Low-valued (0x02-0xAC)."),
-        ("E", 0x1AB4, "Low-valued (0x02-0xAC)."),
-        ("F", 0x1B34, "Low-valued (0x02-0xAC)."),
-    ]
-]
+
+def read_delta_axis(rom: bytes, addr: int) -> list[int]:
+    """
+    Decode a Bosch M2.3 boost-MCU axis: [count][first][delta]... → absolute
+    breakpoints.  Returns [] if the address is out of range or count is silly.
+    """
+    if addr < 0 or addr >= len(rom):
+        return []
+    n = rom[addr]
+    if n == 0 or n > 32 or addr + 1 + n > len(rom):
+        return []
+    v = rom[addr + 1]
+    out = [v]
+    for k in range(n - 1):
+        v += rom[addr + 2 + k]
+        out.append(v)
+    return out
+
+
+def boost404_period_to_rpm(v: int) -> int:
+    """Timer2 period>>4 → rpm.  12 MHz crystal, 2.5 tach pulses per rev."""
+    return int(round(1_500_000 / v)) if v else 0
 
 
 # ── Variant registry ──────────────────────────────────────────────────────────
@@ -2542,6 +2649,14 @@ def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
     # Boost chip maps use hardcoded RPM × load axes
     if map_def.chip == "boost":
         if sw in ("404", "RR_B"):
+            axes = _BOOST_404_TABLE_AXES.get(map_def.main_addr)
+            if axes:
+                x = read_delta_axis(rom, axes[0])
+                y = read_delta_axis(rom, axes[1])
+                if len(x) == map_def.rows and len(y) == map_def.cols:
+                    return x, [boost404_period_to_rpm(v) for v in y]
+            if map_def.rows == 1:
+                return [0], list(range(map_def.cols))
             return (_BOOST_3B_RPM_AXIS[:map_def.rows],
                     _BOOST_3B_LOAD_AXIS[:map_def.cols])
         else:  # 551AA/B/C — 10x16 boost maps
