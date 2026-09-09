@@ -52,6 +52,7 @@ class MapPlotView(QWidget):
         self._row_label = "rpm"
         self._col_label = "load"
         self._cursor: tuple[int, int] | None = None
+        self._trace: dict | None = None      # (r, c) -> hit count
         self._azim, self._elev = -60.0, 28.0
 
         lay = QVBoxLayout(self)
@@ -99,9 +100,15 @@ class MapPlotView(QWidget):
             self._cursor = new
             self._draw()
 
+    def set_trace(self, hits: dict | None) -> None:
+        """Per-cell hit counts painted over the map (None clears)."""
+        self._trace = dict(hits) if hits else None
+        self._draw()
+
     def clear(self) -> None:
         self._vals = []
         self._cursor = None
+        self._trace = None
         self._draw()
 
     # ── drawing ───────────────────────────────────────────────────────────
@@ -159,6 +166,11 @@ class MapPlotView(QWidget):
                         if self._changed[r][c]:
                             ax.add_patch(matplotlib.patches.Rectangle(
                                 (c - 0.5, r - 0.5), 1, 1, fill=False, lw=1.4, ec=CHANGED))
+            if self._trace:
+                mx = max(self._trace.values()) or 1
+                xs = [c for (_, c) in self._trace]; ys = [r for (r, _) in self._trace]
+                sz = [30 + 260 * (n / mx) for n in self._trace.values()]
+                ax.scatter(xs, ys, s=sz, facecolors="none", edgecolors="#FFFFFF", linewidths=1.2, alpha=0.9, zorder=5)
             if self._cursor is not None:
                 r, c = self._cursor
                 ax.add_patch(matplotlib.patches.Rectangle(
@@ -182,6 +194,12 @@ class MapPlotView(QWidget):
                            cmap=self._cmap, levels=8, linewidths=0.8)
             except Exception:
                 pass
+            if self._trace:
+                mx = max(self._trace.values()) or 1
+                pts = [(c, r, Z[r, c], n) for (r, c), n in self._trace.items() if 0 <= r < nrows and 0 <= c < ncols]
+                if pts:
+                    ax.scatter([p[0] for p in pts], [p[1] for p in pts], [p[2] + (vmax - vmin) * 0.02 for p in pts],
+                               s=[12 + 120 * (p[3] / mx) for p in pts], c="#FFFFFF", alpha=0.85, depthshade=False, zorder=9)
             if self._cursor is not None:
                 r, c = self._cursor
                 if 0 <= r < nrows and 0 <= c < ncols:

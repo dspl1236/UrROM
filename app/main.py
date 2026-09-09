@@ -624,6 +624,7 @@ class MapTable(QTableWidget):
         self._undo_stack:   list[list[list[int]]] = []   # max 30 states
         self._redo_stack:   list[list[list[int]]] = []
         self._annotations:  dict[tuple[int,int], str] = {}  # (raw_r, col) → note
+        self._trace: dict[tuple[int,int], int] | None = None  # live/log hit counts
         self._log_fn = None   # fn(map_def, r, c, old_raw, new_raw) for session log
         self._rpm_axis:  list = []
         self._load_axis: list = []
@@ -1321,6 +1322,19 @@ class MapTable(QTableWidget):
         if changed:
             self._refresh_overlay()
 
+    def set_trace(self, hits: dict | None) -> None:
+        """Hit counts per logical (row, col); None clears.  Also written to tooltips."""
+        self._trace = dict(hits) if hits else None
+        if self._map_def is None:
+            return
+        for (r, c), n in (self._trace or {}).items():
+            self._annotations[(r, c)] = f"trace: {n} sample{'s' if n != 1 else ''}"
+        if not self._trace:
+            for k in [k for k, v in self._annotations.items() if str(v).startswith("trace:")]:
+                del self._annotations[k]
+        self._redraw()
+        self._refresh_overlay()
+
     def _refresh_overlay(self):
         """Repaint all cells, adding overlay highlights where needed."""
         if self._map_def is None:
@@ -1365,6 +1379,16 @@ class MapTable(QTableWidget):
                     base = _heat(cell_raw, min(all_v), max(all_v))
 
                 bg = QColor(base)
+
+                # Trace: lighten cells in proportion to how often the engine sat there
+                if self._trace:
+                    n = self._trace.get((r, c), 0)
+                    if n:
+                        mx = max(self._trace.values()) or 1
+                        a = 0.18 + 0.42 * (n / mx) ** 0.5
+                        bg = QColor(int(bg.red() * (1-a) + 255 * a),
+                                    int(bg.green() * (1-a) + 255 * a),
+                                    int(bg.blue() * (1-a) + 255 * a))
 
                 # Overlay: blend tint into the whole active row/col
                 if active and tint is not None:
@@ -1685,6 +1709,9 @@ class MainChipTab(QWidget):
                 f"color:{conf_colour};background:{BG3};border:1px solid {conf_colour};")
             self._revert_btn.setEnabled(False)
             self._refresh_plot()
+            cb = getattr(self, "_on_map_changed_cb", None)
+            if cb:
+                cb()
             self._update_sd_bar(m)
             if hasattr(self, "_title_fn"):
                 self._title_fn(m.name)
@@ -2071,6 +2098,17 @@ class MainChipTab(QWidget):
             from PyQt5.QtCore import QSettings
             QSettings("UrROM", "UrROM").setValue(_view_setting_key(self), mode)
 
+    def set_trace(self, hits: dict | None):
+        """Show per-cell hit counts on the table and the plot views."""
+        self._trace_hits = dict(hits) if hits else None
+        self._table.set_trace(self._trace_hits)
+        self._plot.set_trace(self._trace_hits)
+
+    def current_axes(self):
+        if self._table._map_def is None:
+            return None, None
+        return list(self._table._row_axis), list(self._table._col_axis)
+
     def _refresh_plot(self):
         if getattr(self, "_view_mode", "table") == "table":
             return
@@ -2085,6 +2123,7 @@ class MainChipTab(QWidget):
                            changed=snap["changed"])
         r, c = snap["cursor"]
         self._plot.set_cursor(r, c)
+        self._plot.set_trace(getattr(self, "_trace_hits", None))
 
 
 # ── Boost chip tab ────────────────────────────────────────────────────────────
@@ -3900,6 +3939,10 @@ class MainWindow(QMainWindow):
         self._update_status("Ready — open a ROM file to begin")
 
         # ── KWPBridge live overlay ────────────────────────────────────────────
+        from urrom.livelog import LiveRecorder, TraceAccumulator
+        self._recorder = LiveRecorder()
+        self._trace = TraceAccumulator()
+        self._trace_dirty = 0
         self._kwp_monitor = KWPMonitor(self)
         self._kwp_monitor.connected.connect(self._on_kwp_connected)
         self._kwp_monitor.disconnected.connect(self._on_kwp_disconnected)
@@ -4315,6 +4358,19 @@ class MainWindow(QMainWindow):
         fpr_act.triggered.connect(self._on_fpr_calculator)
         tools_menu.addAction(fpr_act)
 
+        tools_menu.addSeparator()
+        self._rec_act = QAction("Start recording live data…", self)
+        self._rec_act.triggered.connect(self._on_toggle_recording)
+        tools_menu.addAction(self._rec_act)
+        self._trace_act = QAction("Live trace on current map", self)
+        self._trace_act.setCheckable(True)
+        self._trace_act.toggled.connect(self._on_toggle_trace)
+        tools_menu.addAction(self._trace_act)
+        clr_act = QAction("Clear live trace", self)
+        clr_act.triggered.connect(self._on_clear_trace)
+        tools_menu.addAction(clr_act)
+        tools_menu.addSeparator()
+
         log_act = QAction("Overlay data log on map…", self)
         log_act.triggered.connect(self._on_overlay_datalog)
         tools_menu.addAction(log_act)
@@ -4583,6 +4639,8 @@ class MainWindow(QMainWindow):
         self._hardware_tab.set_dist_maps(
             self._det.variant.main_maps if self._det and self._det.variant else [])
         self._hardware_tab.set_injector_callback(self._on_injector_scaling)
+        self._main_chip_tab._on_map_changed_cb = (
+            lambda: self._refresh_trace() if self._trace_act.isChecked() else None)
         self._save_btn.setEnabled(True)
 
         if det.variant:
@@ -5555,6 +5613,7 @@ class MainWindow(QMainWindow):
             for (raw_r, c) in stats['unvisited']:
                 tbl._annotations[(raw_r, c)] = "✗ never logged"
             tbl._redraw()
+            tab.set_trace(hits)
             self._show_editor("main")
             self._update_status(
                 f"Log overlay applied: {pct:.0f}% coverage — "
@@ -5904,6 +5963,7 @@ class MainWindow(QMainWindow):
                 return
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("windowState", self.saveState())
+        self._recorder.stop()
         self._kwp_monitor.stop()
         event.accept()
 
@@ -5938,10 +5998,60 @@ class MainWindow(QMainWindow):
         if not self._kwp_matched:
             return
         self._main_chip_tab.update_overlay(lv)
+        self._trace.add(lv)
+        if self._recorder.active:
+            self._recorder.add(lv)
+        if self._trace_act.isChecked():
+            self._trace_dirty += 1
+            if self._trace_dirty >= 5:          # repaint every 5 samples (~0.5 s)
+                self._trace_dirty = 0
+                self._refresh_trace()
         summary = kwp_live_summary(lv)
         if summary:
-            self._update_status(f"🟢  {summary}")
+            rec = f"  ● REC {self._recorder.rows}" if self._recorder.active else ""
+            self._update_status(f"🟢  {summary}{rec}")
         self._refresh_kwp_badge(lv)
+
+    # ── Live recording / trace ────────────────────────────────────────────
+
+    def _on_toggle_recording(self):
+        if self._recorder.active:
+            p = self._recorder.stop()
+            self._rec_act.setText("Start recording live data…")
+            self._update_status(f"Recording stopped: {p.name} ({self._recorder.rows} rows). "
+                                "Tools → Overlay data log on map… replays it onto any map.")
+            return
+        from datetime import datetime
+        pn = (self._det.variant.software_id if self._det and self._det.variant else "ecu")
+        default = str(Path.home() / f"urrom_log_{pn}_{datetime.now():%Y%m%d_%H%M%S}.csv")
+        path, _ = QFileDialog.getSaveFileName(self, "Record live data to CSV", default, "CSV (*.csv)")
+        if not path:
+            return
+        self._recorder.start(path)
+        self._rec_act.setText("Stop recording live data")
+        self._update_status(f"Recording live data to {Path(path).name} — "
+                            f"{'connected' if self._kwp_matched else 'waiting for KWPBridge'}")
+
+    def _on_toggle_trace(self, on: bool):
+        if on:
+            self._refresh_trace()
+        else:
+            self._main_chip_tab.set_trace(None)
+
+    def _on_clear_trace(self):
+        self._trace.clear()
+        self._main_chip_tab.set_trace(None)
+        self._update_status("Live trace cleared")
+
+    def _refresh_trace(self):
+        rows, cols = self._main_chip_tab.current_axes()
+        if rows is None or not len(self._trace):
+            self._main_chip_tab.set_trace(None)
+            return
+        hits = self._trace.hits_for(rows, cols)
+        self._main_chip_tab.set_trace(hits)
+        self._update_status(f"Live trace: {len(self._trace)} samples over {len(hits)} cells "
+                            f"of {self._main_chip_tab._table._map_def.name}")
 
     def _refresh_kwp_badge(self, lv=None):
         """Update the KWP status badge in the file bar and Tools menu label."""

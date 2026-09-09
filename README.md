@@ -101,6 +101,9 @@ python -m urrom.cli coding rom.bin --volts 2.5   # coding-plug bands → ignitio
 # Boost editor: Sensor selector (200 / MPX4250 / 300 / MPXH6400A / custom) + kPa abs or bar gauge — see docs/3B_boost_chip_RE.md
 ```
 
+### Live recording and trace
+With KWPBridge connected, **Tools → Start recording live data…** writes every sample to a CSV that `Tools → Overlay data log on map…` replays onto any map. **Tools → Live trace on current map** paints where the engine actually runs: cells lighten with their hit count on the table (hover for the count), and the Heat / 3D views draw the same trace as sized markers. The trace follows map switches and survives until cleared.
+
 ### Map views
 Every map in the editor and boost tabs has **Table / Heat / 3D** buttons: the table stays the place to edit; Heat is a 2D heat map of the decoded values with changed cells outlined; 3D is a rotatable surface (drag to orbit) with the contour projected on the floor. Both follow edits, the Decoded/Raw toggle, the boost-sensor scale and the live KWPBridge cursor. Rendered with matplotlib, no OpenGL needed. The choice persists per tab.
 

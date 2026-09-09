@@ -1403,3 +1403,65 @@ class TestMapPlotView:
         bt = mod.BoostTab(); bt.load(bytearray(load_rom("3b_boost_404aa.bin")), VARIANT_404)
         bt._set_view("heat", persist=False)
         assert bt._plot.isVisibleTo(bt) and bt._plot.mode() == "heat"
+
+
+# -- Live recording and map trace (roadmap item 1, 2026-09-09) ------------------
+
+class _LV:
+    def __init__(self, rpm, load, lambda_=None, ect=90.0, timing=12.0):
+        self.rpm, self.load, self.lambda_, self.ect, self.timing = rpm, load, lambda_, ect, timing
+        self.iat = 30.0; self.tps = 50.0; self.map_kpa = None; self.battery = 13.9; self.ecu_pn = "447907404AA"
+
+
+class TestLiveLog:
+    def test_recorder_round_trips_through_datalog(self, tmp_path):
+        from urrom.livelog import LiveRecorder
+        from urrom.datalog import load_log
+        rec = LiveRecorder(); p = rec.start(tmp_path / "s.csv")
+        for i, (rpm, load) in enumerate([(800, 24), (3000, 90), (5800, 185)]):
+            rec.add(_LV(rpm, load, 0.9), t=100.0 + i)
+        assert rec.rows == 3 and rec.active
+        rec.stop(); assert not rec.active
+        log = load_log(p)
+        assert len(log.rows) == 3
+        assert [r.rpm for r in log.rows] == [800, 3000, 5800] and log.rows[2].load == 185
+        assert abs(log.rows[0].afr - 0.9 * 14.7) < 0.01 and abs(log.rows[2].time_s - 2.0) < 1e-6
+
+    def test_trace_hits_land_on_map_cells(self):
+        from urrom.livelog import TraceAccumulator
+        from urrom.ecu_profiles import VARIANT_404, get_axes
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x71F8)
+        rows, cols = get_axes(rom, m, VARIANT_404)
+        tr = TraceAccumulator()
+        for _ in range(7): tr.add(_LV(5720, 190, 0.85))
+        for _ in range(3): tr.add(_LV(820, 24, 1.0))
+        tr.add(_LV(None, 50))                 # no rpm -> ignored
+        hits = tr.hits_for(rows, cols)
+        assert hits[(rows.index(5720), cols.index(190))] == 7
+        assert hits[(rows.index(1000) if 820 > 800 else 0, cols.index(24))] == 3 or hits[(0, cols.index(24))] == 3
+        lam = tr.lambda_for(rows, cols)
+        assert abs(lam[(rows.index(5720), cols.index(190))] - 0.85) < 1e-9
+        assert len(tr) == 10 and len(tr.to_datalog().rows) == 10
+        tr.clear(); assert len(tr) == 0
+
+    def test_table_and_plot_take_a_trace(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        pytest.importorskip("matplotlib")
+        from PyQt5.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main3", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        from urrom.ecu_profiles import VARIANT_404
+        tab = mod.MainChipTab(); tab.load(bytearray(load_rom("3b_fuel-ign_404aa.bin")), VARIANT_404)
+        rows, cols = tab.current_axes()
+        assert rows and cols
+        tab._set_view("heat", persist=False)
+        tab.set_trace({(0, 0): 3, (5, 7): 12})
+        assert tab._table._trace == {(0, 0): 3, (5, 7): 12}
+        assert "trace: 12 samples" in tab._table._annotations[(5, 7)]
+        tab._plot._canvas.draw()
+        tab._set_view("3d", persist=False); tab._plot._canvas.draw()
+        tab.set_trace(None)
+        assert tab._table._trace is None and (5, 7) not in tab._table._annotations
