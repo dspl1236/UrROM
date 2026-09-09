@@ -239,6 +239,46 @@ and maps 3/5/7 only in that diagnostic mode.
 Cross-check with the 3B (`docs/AAN_3B_port_notes.md`): the 3B main map
 matches ADU maps 4–7 to within rms 3.0–3.4 raw and map 1 matches map 1.
 
+## 3f. The coding plug on both families (traced 2026-09-09)
+
+Every firmware in `roms/` carries the same nine-byte comparison ladder
+`FF DC CD A9 85 66 3D 32 1F` (3B `0x3669`, ADU/ABY `0x4FB0`, RS2 D02
+`0x4F8E`, AAN 551AA `0x4E88`, 551A `0x4E34`, V8 557 `0x5794/0x5B14`). The
+routine reads **ADC channel 4** (`MOV DPTR,#BE04h` → channel-select helper,
+3B `0x135D`, ADU `0x17ED`), then walks R3 = 8…1 and stops at the first k
+where `adc + ladder[k]` carries, i.e. `adc ≥ 256 − ladder[k]`. Band 0 is
+"below all thresholds". With a 5 V ADC reference (19.6 mV/count):
+
+| band | ADC | volts | 3B: A0h code / no. → map | 551: A4h code / no. → set |
+|---|---|---|---|---|
+| 0 | 0–35 | 0.00–0.70 | 4C / 9 → **Map 5** | 14 / 2 → **B** (Map 4) |
+| 1 | 36–50 | 0.70–1.00 | 04 / 3 → Map 2 | 14 / 2 → B |
+| 2 | 51–86 | 1.00–1.70 | 14 / 7 → Map 2 | 14 / 2 → B |
+| 3 | 87–122 | 1.70–2.40 | 08 / 6 → Map 2 | 00 / 1 → **A** (Map 2) |
+| 4 | 123–153 | 2.40–3.01 | 00 / 1 → Map 2 | 00 / 1 → A |
+| 5 | 154–194 | 3.01–3.81 | 44 / 8 → **Map 5** | 28 / 3 → **C** (Map 6) |
+| 6 | 195–205 | 3.81–4.02 | 40 / 4 → **Map 5** | 28 / 3 → C |
+| 7 | 206–224 | 4.02–4.39 | 10 / 2 → Map 2 | 28 / 3 → C |
+| 8 | 225–255 | 4.39–5.00 | 20 / 5 → Map 2 | 28 / 3 → C |
+
+- **3B / RR / S2** (`0x3637`): `A0h = code[band]` (table `0x3672`), and
+  `9Eh = idx[band]` (table `0x367B`, +9 with `21h.0`, +18 with `20h.2`)
+  through an identity table at `0x3683` — `9Eh` is the ECU's **coding
+  number 1…27** as a tester would show it. Only `A0h.6` reaches the
+  ignition selector (§3c): bands 0, 5, 6 pick Map 5 (Map 7 with the
+  boost-board bit), everything else Map 2 (Map 6). Coding no. 1 (band 4,
+  2.4–3.0 V) is the plain case. 3B, RR and S2 chips share these tables.
+- **551 / 557** (`0x4F81`): `idx[band]` (`0x4FB9`, +3 with `21h.0`) selects
+  `A2h = coding number` (`0x4FC2`: 2 1 3 / 5 4 6) and `A4h = code`
+  (`0x4FC8`: 14 00 28 / 94 80 A8). Set A = coding no. 1, B = 2, C = 3 (§3e).
+  The 551A (D02 AAN) and the V8 557 firmware use a different band→index
+  table (`00 01 00 02 01 00 02 01 02`), so their classes fall differently;
+  the decoder reads whatever the loaded firmware says.
+- The plug **resistance** is not in the ROM: it depends on the ECU's pull-up
+  on the coding pin. Measure the pin voltage with the plug fitted (or read
+  the coding number with a tester) and look it up in the table above.
+  `python -m urrom.cli coding <rom> --volts V` and the Hardware tab do that.
+
 ## 4. Open items
 
 - Which of the seven ignition maps is active under which condition

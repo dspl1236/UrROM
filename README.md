@@ -97,6 +97,7 @@ python -m urrom.cli scan rom.034 --json    # machine-readable
 python -m urrom.cli info rom.034           # identification
 python -m urrom.cli maps rom.bin           # every map the 551 firmware references
 python -m urrom.cli chip boost.bin         # 8KB/32KB image → 64KB 27C512 image (--to native folds back)
+python -m urrom.cli coding rom.bin --volts 2.5   # coding-plug bands → ignition set (3B/RR/S2 and 551)
 ```
 
 ### Tools Menu

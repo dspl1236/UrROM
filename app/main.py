@@ -2160,6 +2160,20 @@ class HardwareTab(QWidget):
         title.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {FG};")
         outer.addWidget(title)
 
+        # What the loaded chip supports (filled by _refresh)
+        self._chip_lbl = QLabel("No ROM loaded.")
+        self._chip_lbl.setStyleSheet(
+            f"color:{FG};font-size:11px;padding:6px 8px;background:{BG2};"
+            f"border-left:2px solid {ACCENT};border-radius:2px;")
+        self._chip_lbl.setWordWrap(True)
+        outer.addWidget(self._chip_lbl)
+
+        from PyQt5.QtWidgets import QCheckBox
+        self._show_all_chk = QCheckBox("Show features that do not apply to this chip")
+        self._show_all_chk.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+        self._show_all_chk.toggled.connect(lambda _: self._refresh())
+        outer.addWidget(self._show_all_chk)
+
         self._boost_lbl = QLabel("Boost chip: not loaded")
         self._boost_lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
         self._boost_lbl.setWordWrap(True)
@@ -2188,15 +2202,20 @@ class HardwareTab(QWidget):
         # ── Subtitle ─────────────────────────────────────────────────────
         sub = QLabel(
             "Detected modifications and firmware patches in the loaded ROM. "
-            "Load the boost chip (32 KB) to enable MAP sensor identification."
+            "Load the matching boost chip to pair it with this fuel/ignition chip."
         )
         sub.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
         sub.setWordWrap(True)
         outer.addWidget(sub)
+        self._sub_lbl = sub
 
         # ── MAP sensor info card ──────────────────────────────────────────
         self._sensor_card = self._make_sensor_card()
         outer.addWidget(self._sensor_card)
+
+        # ── Coding plug card ──────────────────────────────────────────────
+        self._coding_card = self._make_coding_card()
+        outer.addWidget(self._coding_card)
 
         # ── Section label ─────────────────────────────────────────────────
         sec_lbl = QLabel("DETECTED PATCHES & MODIFICATIONS")
@@ -2238,6 +2257,7 @@ class HardwareTab(QWidget):
             f"background: {BG2}; border-left: 2px solid {BORDER}; border-radius: 2px;")
         note.setWordWrap(True)
         outer.addWidget(note)
+        self._qlcc_note = note
 
         # ── LC/NLS scalars panel ─────────────────────────────────────────
         lc_hdr = QLabel("LC / NLS SCALARS  (prjmod 0x0202 firmware)")
@@ -2311,6 +2331,7 @@ class HardwareTab(QWidget):
         lc_grid.addWidget(self._lc_inactive)
         outer.addWidget(lc_card)
         self._lc_card = lc_card
+        self._lc_hdr = lc_hdr
 
         # ── Conversion patches ────────────────────────────────────────────────
         conv_lbl = QLabel("CONVERSION PATCHES")
@@ -2321,6 +2342,7 @@ class HardwareTab(QWidget):
 
         self._dist_patch_card = self._make_dist_patch_card()
         outer.addWidget(self._dist_patch_card)
+        self._conv_lbl = conv_lbl
 
         # State
         self._boost_bytes: bytes | None = None
@@ -2396,6 +2418,73 @@ class HardwareTab(QWidget):
 
         self._dist_patch_offset = 0.0   # track applied offset
         return card
+
+    # ── Coding plug card ──────────────────────────────────────────────────
+
+    def _make_coding_card(self) -> QFrame:
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame{{background:{BG3};border:1px solid {BORDER};"
+            f"border-radius:4px;padding:4px;}}")
+        lay = QVBoxLayout(card)
+        lay.setSpacing(4)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lbl = QLabel("Coding plug → ignition set")
+        lbl.setStyleSheet(f"color:{FG};font-size:12px;font-weight:bold;")
+        lay.addWidget(lbl)
+        self._coding_lbl = QLabel("Load a ROM to decode the coding-plug bands.")
+        self._coding_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+        self._coding_lbl.setWordWrap(True)
+        self._coding_lbl.setTextFormat(Qt.RichText)
+        lay.addWidget(self._coding_lbl)
+        return card
+
+    def _coding_html(self) -> str:
+        from urrom.coding_plug import decode_coding_plug
+        dec = decode_coding_plug(self._wh, self._variant_name) if self._wh else None
+        if dec is None:
+            return "Coding ladder not found in this firmware."
+        hdr = (f"ADC channel 4 binned by the ladder at 0x{dec.ladder_addr:04X} "
+               f"({dec.structure} structure). The plug resistance depends on the ECU's "
+               f"pull-up, which is not in the ROM: measure the voltage at the coding "
+               f"pin with the plug fitted, or read the coding number with a tester.")
+        rows = [f"<tr><th align=left>band</th><th align=left>ADC</th><th align=left>volts</th>"
+                f"<th align=left>code</th><th align=left>no.</th><th align=left>set</th>"
+                f"<th align=left>main map</th></tr>"]
+        for b in dec.bands:
+            code = f"{b.code:02X}" if b.code is not None else "–"
+            no = "–" if b.coding_no is None else str(b.coding_no)
+            rows.append(
+                f"<tr><td>{b.band}</td><td>{b.adc_lo}–{b.adc_hi}</td>"
+                f"<td>{b.v_lo:.2f}–{b.v_hi:.2f}</td><td>{code}</td><td>{no}</td>"
+                f"<td>{b.ign_set}</td><td>{b.main_map}</td></tr>")
+        table = ("<table cellspacing=0 cellpadding=2 style='font-family:Consolas,monospace;"
+                 f"font-size:10px;color:{FG};'>" + "".join(rows) + "</table>")
+        notes = "<br>".join(f"• {n}" for n in dec.notes)
+        return f"<div style='color:{FG_DIM}'>{hdr}</div>{table}<div style='color:{FG_DIM}'>{notes}</div>"
+
+    def _chip_summary(self) -> str:
+        from urrom.hw_patches import is_551_family, is_404_family, feature_applies
+        sw = self._variant_name or "?"
+        if is_404_family(sw):
+            fam = ("M2.3 (404 family): 32 KB flat fuel/ignition chip + 8 KB boost-board chip. "
+                   "4 fuel + 7 ignition maps with firmware descriptors; no software checksum; "
+                   "boost targets and knock windows live on the boost chip.")
+        elif is_551_family(sw):
+            fam = ("M2.3.2 (551/557 family): 64 KB split-bank chip (firmware low, calibration "
+                   "high) + 32 KB boost chip. Firmware patches, LC/NLS scalars and SD mode "
+                   "apply here where the variant is listed.")
+        else:
+            fam = "Unknown family."
+        avail = [k for k in ("coding_plug", "boost_chip", "map_sensor_detect", "sd_r660",
+                             "r201_swap", "lc_nls_scalars", "dist_conversion")
+                 if feature_applies(k, sw)]
+        names = {"coding_plug": "coding-plug decode", "boost_chip": "boost-chip pairing",
+                 "map_sensor_detect": "MAP-sensor detect", "sd_r660": "SD / R660",
+                 "r201_swap": "R201 swap", "lc_nls_scalars": "LC/NLS scalars",
+                 "dist_conversion": "distributor conversion"}
+        return (f"<b>{sw}</b> — {fam}<br><span style='color:{FG_DIM}'>Available here: "
+                + ", ".join(names[k] for k in avail) + ". 27C512 images: File → Write 27C512 images.</span>")
 
     # ── Sensor card ───────────────────────────────────────────────────────
 
@@ -2742,13 +2831,37 @@ class HardwareTab(QWidget):
             self._patch_layout.insertWidget(0, placeholder)
             self._sensor_type_lbl.setText("—")
             self._sensor_detail_lbl.setText("No ROM loaded.")
+            self._chip_lbl.setText("No ROM loaded.")
+            self._coding_lbl.setText("Load a ROM to decode the coding-plug bands.")
             return
+
+        from urrom.hw_patches import feature_applies, is_404_family
+        show_all = self._show_all_chk.isChecked()
+        sw = self._variant_name
+        self._chip_lbl.setText(self._chip_summary())
+        self._chip_lbl.setTextFormat(Qt.RichText)
+        self._coding_lbl.setText(self._coding_html())
+        self._coding_card.setVisible(show_all or feature_applies("coding_plug", sw))
+        lc_on = feature_applies("lc_nls_scalars", sw)
+        self._lc_card.setVisible(show_all or lc_on)
+        self._lc_hdr.setVisible(show_all or lc_on)
+        dist_on = feature_applies("dist_conversion", sw)
+        self._dist_patch_card.setVisible(show_all or dist_on)
+        self._conv_lbl.setVisible(show_all or dist_on)
+        self._qlcc_note.setVisible(show_all or feature_applies("qlcc_note", sw))
 
         results = detect_patches(self._wh, self._variant_name, self._boost_bytes)
 
         # Update sensor card
         sensor_result = next((r for r in results if r.name == "MAP Sensor Type"), None)
-        if sensor_result:
+        if is_404_family(sw):
+            self._sensor_type_lbl.setText("3B/RR boost board — scale assumed 200 kPa")
+            self._sensor_type_lbl.setStyleSheet(f"color:{AMBER};font-size:12px;font-weight:bold;")
+            self._sensor_detail_lbl.setText(
+                "The 404 boost chip's target tables are in kPa at an assumed 200 kPa "
+                "full scale (docs/3B_boost_chip_RE.md). A logged boost reading on the car "
+                "settles the scale; the 551 CJNE heuristic does not apply to this 8 KB chip.")
+        elif sensor_result:
             self._sensor_type_lbl.setText(sensor_result.status)
             col = (GREEN if "400kPa" in sensor_result.status
                    else AMBER if "UNKNOWN" not in sensor_result.status
@@ -2759,11 +2872,25 @@ class HardwareTab(QWidget):
 
         # Insert patch cards (skip the sensor result — shown in card above)
         insert_pos = 0
+        hidden = 0
         for r in results:
             if r.name == "MAP Sensor Type":
                 continue
+            if not getattr(r, "in_scope", True) and not show_all:
+                hidden += 1
+                continue
             card = self._make_patch_card(r)
+            if not getattr(r, "in_scope", True):
+                card.setStyleSheet(card.styleSheet() + f"QFrame{{color:{FG_DIM};}}")
+                card.setToolTip("Not meaningful on this chip family")
             self._patch_layout.insertWidget(insert_pos, card)
+            insert_pos += 1
+        if hidden:
+            h = QLabel(f"{hidden} check(s) hidden — not applicable to {sw or 'this chip'}. "
+                       "Tick the box above to show them.")
+            h.setStyleSheet(f"color:{FG_DIM};font-size:10px;font-style:italic;")
+            h.setWordWrap(True)
+            self._patch_layout.insertWidget(insert_pos, h)
             insert_pos += 1
         # The panel lives inside the inspector's own scroll area, so size this
         # nested list to its content instead of letting it collapse.

@@ -1022,3 +1022,72 @@ class TestLayoutEquivalence:
         assert rows == read_descriptor_axes(rom, 0x125F, 16, 16)[0]
         assert rows[0] == 600 and rows[-1] == 7400
         assert cols[0] == 10 and cols[-1] == 240
+
+
+# -- Coding plug decode + Hardware-tab feature scoping (2026-09-09) ------------
+
+class TestCodingPlug:
+    def test_3b_bands_and_bank_bit(self):
+        from urrom.coding_plug import decode_coding_plug
+        fw = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        d = decode_coding_plug(fw, "404")
+        assert d is not None and d.structure == "404" and d.ladder_addr == 0x3669
+        assert [b.adc_lo for b in d.bands] == [0, 36, 51, 87, 123, 154, 195, 206, 225]
+        assert [b.code for b in d.bands] == [0x4C, 0x04, 0x14, 0x08, 0x00, 0x44, 0x40, 0x10, 0x20]
+        assert [b.coding_no for b in d.bands] == [9, 3, 7, 6, 1, 8, 4, 2, 5]
+        bank1 = [b.band for b in d.bands if b.main_map == "Ign Map 5"]
+        assert bank1 == [0, 5, 6]
+        assert d.band_for_volts(2.5).coding_no == 1
+        assert d.band_for_adc(160).main_map == "Ign Map 5"
+
+    def test_551_sets_by_threshold(self):
+        from urrom.coding_plug import decode_coding_plug
+        for name, addr in (("adu_fuel-ign_551c.bin", 0x4FB0), ("rs2_d02_fuel-ign_551b.bin", 0x4F8E),
+                           ("aby_fuel-ign_551aa.bin", 0x4FB0)):
+            fw = bytes(load_rom(name))[:0x8000]
+            d = decode_coding_plug(fw, "551C")
+            assert d is not None and d.structure == "551" and d.ladder_addr == addr, name
+            assert d.band_for_adc(86).ign_set == "B" and d.band_for_adc(86).main_map == "Ign Map 4"
+            assert d.band_for_adc(87).ign_set == "A" and d.band_for_adc(153).ign_set == "A"
+            assert d.band_for_adc(154).ign_set == "C" and d.band_for_adc(255).main_map == "Ign Map 6"
+            assert [b.coding_no for b in d.bands] == [2, 2, 2, 1, 1, 3, 3, 3, 3]
+
+    def test_3b_rr_s2_share_the_tables(self):
+        from urrom.coding_plug import decode_coding_plug
+        ref = decode_coding_plug(bytes(load_rom("3b_fuel-ign_404aa.bin")), "404")
+        for name in ("rr_fuel-ign_404b.bin", "s2_fuel-ign_404.bin"):
+            d = decode_coding_plug(bytes(load_rom(name)), "404")
+            assert [(b.code, b.coding_no) for b in d.bands] == [(b.code, b.coding_no) for b in ref.bands]
+
+    def test_no_ladder_on_boost_chip(self):
+        from urrom.coding_plug import decode_coding_plug
+        assert decode_coding_plug(bytes(load_rom("3b_boost_404aa.bin")), "404") is None
+
+
+class TestHardwareScope:
+    def test_feature_scope(self):
+        from urrom.hw_patches import feature_applies
+        assert feature_applies("lc_nls_scalars", "551AA_0202")
+        assert not feature_applies("lc_nls_scalars", "551C")
+        assert not feature_applies("dist_conversion", "404")
+        assert feature_applies("dist_conversion", "551AA")
+        assert feature_applies("coding_plug", "404") and feature_applies("coding_plug", "551C")
+        assert not feature_applies("map_sensor_detect", "404")
+
+    def test_404_results_flagged_out_of_scope(self):
+        from urrom.hw_patches import detect_patches
+        fw = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        res = {r.name: r for r in detect_patches(fw, "404")}
+        for n in ("LC / NLS Motorsport Code", "Speed Density (SD) Mode",
+                  "R660 Removal + MAP Wire", "AAN → RS2 R201 Resistor Swap"):
+            assert not res[n].in_scope, n
+            assert res[n].status.startswith("N/A"), n
+        assert not res["MFTS Boost Cut Bypass"].in_scope   # 551 firmware offsets mean nothing here
+        assert all(not r.in_scope for r in res.values()), "every 551 check must be out of scope on a 3B"
+
+    def test_551_results_in_scope(self):
+        from urrom.hw_patches import detect_patches
+        fw = bytes(load_rom("adu_fuel-ign_551c.bin"))[:0x8000]
+        res = {r.name: r for r in detect_patches(fw, "551C")}
+        assert res["Speed Density (SD) Mode"].in_scope
+        assert res["LC / NLS Motorsport Code"].in_scope

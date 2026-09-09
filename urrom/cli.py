@@ -298,6 +298,33 @@ def cmd_xcompare(args):
         write_csv(x, Path(ns.csv)); print(f"CSV written to {ns.csv}")
 
 
+def cmd_coding(args):
+    """Decode the coding-plug band table (ADC ch4 -> ignition set) from a firmware image."""
+    import argparse
+    p = argparse.ArgumentParser(prog='urrom coding')
+    p.add_argument('rom')
+    p.add_argument('--adc', type=lambda s: int(s, 0), default=None, help='look up one ADC count')
+    p.add_argument('--volts', type=float, default=None, help='look up one pin voltage')
+    ns = p.parse_args(args)
+    from urrom.coding_plug import decode_coding_plug, format_table
+    path = Path(ns.rom)
+    if not path.exists():
+        print(f"ERROR: {path} not found"); sys.exit(3)
+    _, det = _load_rom(path)
+    sw = det.variant.software_id if det and det.variant else ""
+    # 404: the whole 32 KB chip is firmware+cal; 551: firmware is the lower 32 KB
+    fw = bytes(path.read_bytes()[:0x8000])
+    dec = decode_coding_plug(fw, sw)
+    if dec is None:
+        print("coding ladder not found"); sys.exit(2)
+    print(f"{Path(ns.rom).name} [{sw or '?'}]")
+    print(format_table(dec))
+    if ns.adc is not None or ns.volts is not None:
+        b = dec.band_for_adc(ns.adc) if ns.adc is not None else dec.band_for_volts(ns.volts)
+        print()
+        print(f"-> band {b.band}: {b.ign_set} {b.main_map}  (coding no. {b.coding_no})")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
         print("urrom <command> [options]")
@@ -306,6 +333,7 @@ def main():
         print("  maps <rom>  [--all] [--json]      — list maps the firmware references (551 64KB)")
         print("  chip <rom>  [--to 27c512|native]  — fill a 27C512 image / fold one back to native size")
         print("  xcompare <A> <B> [--role fuel|ign] — decoded cross-family map comparison (B resampled onto A)")
+        print("  coding <rom> [--adc N | --volts V] — coding-plug bands -> ignition set (3B/RR/S2 and 551)")
         sys.exit(0)
     cmd = sys.argv[1]
     rest = sys.argv[2:]
@@ -319,6 +347,8 @@ def main():
         cmd_chip(rest)
     elif cmd == 'xcompare':
         cmd_xcompare(rest)
+    elif cmd == 'coding':
+        cmd_coding(rest)
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(3)

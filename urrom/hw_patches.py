@@ -124,6 +124,58 @@ class PatchResult:
     wh_offset: Optional[int] = None   # where the patch was found
     applicable: bool = False           # can this patch be applied via UI?
     recommended: bool = False          # is this patch recommended?
+    in_scope: bool = True              # does this check mean anything on the loaded chip?
+
+
+# ── Feature scope per chip family ────────────────────────────────────────────
+#
+# The Hardware tab hides (or dims) anything that cannot apply to the loaded
+# chip.  Keys are used by the UI and by detect_patches() to flag results.
+
+def is_551_family(software_id: str) -> bool:
+    """AAN / ABY / ADU / RS2 / V8 (M2.3.2, 64 KB split-bank chips)."""
+    return software_id.startswith(("551", "557"))
+
+
+def is_404_family(software_id: str) -> bool:
+    """3B / RR / S2 / early V8 (M2.3, 32 KB flat chips + 8 KB boost chip)."""
+    return software_id in ("404", "RR", "RR_B", "404V8", "404H")
+
+
+FEATURE_SCOPE: dict[str, "callable"] = {
+    "lc_nls_scalars":    lambda sw: sw == "551AA_0202",
+    "dist_conversion":   is_551_family,      # AAN block + 3B/7A head
+    "qlcc_note":         is_551_family,
+    "map_sensor_detect": is_551_family,      # CJNE heuristic is for 32 KB 551 boost chips
+    "sd_r660":           is_551_family,
+    "r201_swap":         is_551_family,
+    "lc_nls_detect":     is_551_family,
+    "fw_patches_551":    is_551_family,      # MFTS / load decap / lambda delay offsets are 551 firmware
+    "coding_plug":       lambda sw: True,
+    "boost_chip":        lambda sw: True,
+}
+
+# PatchResult.name -> feature key
+_RESULT_SCOPE = {
+    "LC / NLS Motorsport Code":      "lc_nls_detect",
+    "Speed Density (SD) Mode":       "sd_r660",
+    "R660 Removal + MAP Wire":       "sd_r660",
+    "AAN → RS2 R201 Resistor Swap":  "r201_swap",
+    "MAP Sensor Type":               "map_sensor_detect",
+    "MFTS Boost Cut Bypass":         "fw_patches_551",
+    "Load Overflow Decap":           "fw_patches_551",
+    "Lambda Cold-Start Delay":       "fw_patches_551",
+}
+
+
+def feature_applies(key: str, software_id: str) -> bool:
+    fn = FEATURE_SCOPE.get(key)
+    return True if fn is None else bool(fn(software_id or ""))
+
+
+def result_in_scope(result_name: str, software_id: str) -> bool:
+    key = _RESULT_SCOPE.get(result_name)
+    return True if key is None else feature_applies(key, software_id)
 
 
 # ── Boost chip MAP sensor constants ──────────────────────────────────────────
@@ -614,6 +666,12 @@ def detect_patches(
                 confidence="MEDIUM",
             ))
 
+    for r in results:
+        if not result_in_scope(r.name, variant_name):
+            r.in_scope = False
+            r.applicable = False
+            if not r.status.startswith("N/A"):
+                r.status = f"N/A on this chip ({r.status})"
     return results
 
 
