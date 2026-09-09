@@ -2447,7 +2447,10 @@ class HardwareTab(QWidget):
         hdr = (f"ADC channel 4 binned by the ladder at 0x{dec.ladder_addr:04X} "
                f"({dec.structure} structure). The plug resistance depends on the ECU's "
                f"pull-up, which is not in the ROM: measure the voltage at the coding "
-               f"pin with the plug fitted, or read the coding number with a tester.")
+               f"pin with the plug fitted, or read the coding number with a tester. "
+               f"3B (200 20V): plug on ECU pins 38 / 39 / 54, 5 V from pin 12, ground pin 2. "
+               f"AAN (S4/S6): pins 38 / 39, 5 V pin 12, ground pin 30. Back-probe against "
+               f"ground with the key on; the analogue pin is the ladder input.")
         rows = [f"<tr><th align=left>band</th><th align=left>ADC</th><th align=left>volts</th>"
                 f"<th align=left>code</th><th align=left>no.</th><th align=left>set</th>"
                 f"<th align=left>main map</th></tr>"]

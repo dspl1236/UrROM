@@ -278,6 +278,17 @@ where `adc + ladder[k]` carries, i.e. `adc ≥ 256 − ladder[k]`. Band 0 is
   on the coding pin. Measure the pin voltage with the plug fitted (or read
   the coding number with a tester) and look it up in the table above.
   `python -m urrom.cli coding <rom> --volts V` and the Hardware tab do that.
+- **Where to measure** (factory pin-outs, sjmautotechnik): on the 1991 200
+  20V (3B) the coding plug is on ECU pins **38** (grey/violet), **39**
+  (grey/yellow) and **54** (white/violet), supplied from the 5 V reference on
+  pin 12 and returned to ground on pin 2 (welded to pin 30). On the 1992-95
+  S4/S6 (AAN) it is pins **38** and **39** (plug pins 1 and 2), 5 V on pin
+  12, ground on pin 30. Because the plug hangs off the same 5 V that is the
+  ADC reference, the voltage at the sense pin is exactly the ratio the
+  firmware bins: back-probe 38, 39 and 54 against pin 2 with the key on and
+  the plug fitted; the analogue one is the ladder input, the others behave
+  as digital lines (the 3B has three plug pins where the AAN has two, which
+  fits the 3B's extra `21h.0` / `20h.2` offsets in the coding number).
 
 ## 4. Open items
 
