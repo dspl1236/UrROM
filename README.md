@@ -104,6 +104,9 @@ python -m urrom.cli coding rom.bin --volts 2.5   # coding-plug bands → ignitio
 ### Live recording and trace
 With KWPBridge connected, **Tools → Start recording live data…** writes every sample to a CSV that `Tools → Overlay data log on map…` replays onto any map. **Tools → Live trace on current map** paints where the engine actually runs: cells lighten with their hit count on the table (hover for the count), and the Heat / 3D views draw the same trace as sized markers. The trace follows map switches and survives until cleared.
 
+### Compare
+The Compare tab takes any second chip, even from the other family: a 551 map is paired with the 3B map by role (fuel / ignition main map) and bilinear-resampled onto the A chip's axes, so the delta is in real units on A's grid. Views: the three tables (A, B−A, B), a Heat map or a 3D surface of the **Difference**, or a **Blend** with a slider that morphs A into B. A raw-bytes toggle compares undecoded values. The summary line gives cells differing, mean, rms, min and max.
+
 ### Map views
 Every map in the editor and boost tabs has **Table / Heat / 3D** buttons: the table stays the place to edit; Heat is a 2D heat map of the decoded values with changed cells outlined; 3D is a rotatable surface (drag to orbit) with the contour projected on the floor. Both follow edits, the Decoded/Raw toggle, the boost-sensor scale and the live KWPBridge cursor. Rendered with matplotlib, no OpenGL needed. The choice persists per tab.
 

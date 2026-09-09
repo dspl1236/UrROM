@@ -6,7 +6,7 @@ Ordered. Each item is scoped so it can land on its own.
    overlay that paints where the engine actually ran (per-cell hit counts,
    mean lambda per cell once a wideband is present) on the table, the heat
    map and the 3D surface, live and from a replayed log.
-2. **Compare as a first-class view.** Two chips side by side, difference map
+2. **Compare as a first-class view.** *(landed 2026-09-09: cross-family pairing by role, resampling, Difference / Blend, Heat / 3D, raw toggle)* Two chips side by side, difference map
    in real units, cross-family resampling (today's `xcompare` CLI) in the app,
    with an A/B slider.
 3. **Provenance on every byte.** Per-cell tooltip: where the address came from

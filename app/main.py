@@ -3531,7 +3531,7 @@ class CompareTab(QWidget):
         tb = QHBoxLayout()
         tb.setSpacing(8)
         self._map_combo = QComboBox()
-        self._map_combo.currentIndexChanged.connect(self._refresh)
+        self._map_combo.currentIndexChanged.connect(self._on_a_map_changed)
         tb.addWidget(QLabel("Map:"))
         tb.addWidget(self._map_combo)
         tb.addStretch()
@@ -3541,9 +3541,58 @@ class CompareTab(QWidget):
         tb.addWidget(self._load_b_btn)
         layout.addLayout(tb)
 
+        # Second row: B-side map, view, mode, blend slider, raw toggle
+        from PyQt5.QtWidgets import QSlider, QCheckBox
+        row2 = QHBoxLayout(); row2.setSpacing(8)
+        self._bmap_lbl = QLabel("B map:")
+        self._bmap_lbl.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+        self._bmap_combo = QComboBox()
+        self._bmap_combo.setMinimumWidth(240)
+        self._bmap_combo.currentIndexChanged.connect(lambda _i: self._refresh())
+        row2.addWidget(self._bmap_lbl); row2.addWidget(self._bmap_combo)
+        row2.addSpacing(10)
+        self._view_btns = _make_view_switch(self, row2)
+        row2.addSpacing(10)
+        self._mode_btns = {}
+        for mode, label, tip in (("diff", "Difference", "B minus A, in A's units"),
+                                 ("blend", "Blend", "Slide from A to B")):
+            b = QPushButton(label); b.setCheckable(True); b.setFixedWidth(78); b.setToolTip(tip)
+            b.setStyleSheet(
+                f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+                f"border-radius:3px;padding:0 6px;font-size:10px;}}"
+                f"QPushButton:checked{{background:{AMBER}30;border-color:{AMBER};}}"
+                f"QPushButton:hover{{border-color:{AMBER};}}")
+            b.clicked.connect(lambda _c, m=mode: self._set_mode(m))
+            row2.addWidget(b); self._mode_btns[mode] = b
+        self._mode_btns["diff"].setChecked(True)
+        self._plot_mode = "diff"
+        self._blend_lbl_a = QLabel("A"); self._blend_lbl_a.setStyleSheet(f"color:{ACCENT};font-size:10px;font-weight:bold;")
+        self._blend = QSlider(Qt.Horizontal); self._blend.setRange(0, 100); self._blend.setValue(100)
+        self._blend.setFixedWidth(160); self._blend.setToolTip("Blend A → B (Blend mode)")
+        self._blend.valueChanged.connect(lambda _v: self._refresh_plot())
+        self._blend_lbl_b = QLabel("B"); self._blend_lbl_b.setStyleSheet(f"color:{AMBER};font-size:10px;font-weight:bold;")
+        row2.addWidget(self._blend_lbl_a); row2.addWidget(self._blend); row2.addWidget(self._blend_lbl_b)
+        self._raw_chk = QCheckBox("Raw bytes")
+        self._raw_chk.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+        self._raw_chk.setToolTip("Compare undecoded bytes instead of real units")
+        self._raw_chk.toggled.connect(lambda _c: self._refresh())
+        row2.addWidget(self._raw_chk)
+        row2.addStretch()
+        layout.addLayout(row2)
+
         self._status = QLabel("Load a ROM A first, then load ROM B to compare.")
         self._status.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
         layout.addWidget(self._status)
+
+        from urrom.ui.map_view import MapPlotView
+        self._plot = MapPlotView()
+        self._plot.setVisible(False)
+        self._plot.setMinimumHeight(380)
+        layout.addWidget(self._plot, 1)
+        self._view_mode = "table"
+        self._variant_b = None
+        self._maps_b: list = []
+        self._xc = None
 
         splitter = QSplitter(Qt.Horizontal)
 
@@ -3568,6 +3617,7 @@ class CompareTab(QWidget):
         splitter.addWidget(right_w)
         splitter.setSizes([380, 140, 380])
         layout.addWidget(splitter, 1)
+        self._splitter = splitter
 
         self._summary = QLabel("")
         self._summary.setStyleSheet(f"color: {FG_DIM}; font-size: 10px;")
@@ -3617,6 +3667,7 @@ class CompareTab(QWidget):
         self._map_combo.blockSignals(False)
         self._load_b_btn.setEnabled(True)
         if self._rom_b:
+            self._populate_b_maps()
             self._refresh()
         else:
             self._status.setText("ROM A loaded. Load ROM B to compare.")
@@ -3636,12 +3687,88 @@ class CompareTab(QWidget):
         label = variant.name if variant else "ROM B"
         self.set_rom_b_direct(wh, label)
 
-    def set_rom_b_direct(self, wh: bytes, label: str = "stock"):
+    def set_rom_b_direct(self, wh: bytes, label: str = "stock", variant=None):
         """Load ROM B programmatically without a file dialog."""
-        self._rom_b = wh
+        self._rom_b = bytes(wh)
+        self._variant_b = variant or self._detect_b(self._rom_b)
         self._status.setText(f"ROM B: {label}  ({len(wh):,} bytes)  [auto-loaded]")
         self._export_btn.setEnabled(True)
+        self._populate_b_maps()
         self._refresh()
+
+    def _detect_b(self, wh: bytes):
+        from urrom.ecu_profiles import detect_rom
+        try:
+            det = detect_rom(bytes(wh))
+            return det.variant or self._variant
+        except Exception:
+            return self._variant
+
+    def _same_family(self) -> bool:
+        return (self._variant is not None and self._variant_b is not None
+                and self._variant.software_id == self._variant_b.software_id)
+
+    def _populate_b_maps(self):
+        """Fill the B-map combo; pre-select the counterpart of the current A map."""
+        from urrom.xcompare import counterpart_map
+        vb = self._variant_b or self._variant
+        self._maps_b = [m for m in (vb.main_maps if vb else []) if m.rows > 1] if vb else []
+        self._bmap_combo.blockSignals(True)
+        self._bmap_combo.clear()
+        for m in self._maps_b:
+            self._bmap_combo.addItem(f"{m.name}  [{m.rows}\u00d7{m.cols} {m.unit}]  @0x{m.main_addr:04X}")
+        idx = self._map_combo.currentIndex()
+        if self._maps and 0 <= idx < len(self._maps) and vb is not None:
+            cp = counterpart_map(vb, self._maps[idx], self._variant)
+            if cp is not None and cp in self._maps_b:
+                self._bmap_combo.setCurrentIndex(self._maps_b.index(cp))
+        self._bmap_combo.blockSignals(False)
+        cross = not self._same_family()
+        self._bmap_lbl.setVisible(True)
+        self._bmap_combo.setVisible(True)
+        self._bmap_lbl.setText("B map (cross-family, resampled onto A):" if cross else "B map:")
+
+    def _b_map(self):
+        i = self._bmap_combo.currentIndex()
+        if 0 <= i < len(self._maps_b):
+            return self._maps_b[i]
+        return None
+
+    # ── Table / Heat / 3D + Difference / Blend ───────────────────────────
+
+    def _set_view(self, mode: str, persist: bool = True):
+        self._view_mode = mode
+        for m, b in self._view_btns.items():
+            b.setChecked(m == mode)
+        self._splitter.setVisible(mode == "table")
+        self._plot.setVisible(mode != "table")
+        if mode != "table":
+            self._plot.set_mode(mode)
+            self._refresh_plot()
+
+    def _set_mode(self, mode: str):
+        self._plot_mode = mode
+        for m, b in self._mode_btns.items():
+            b.setChecked(m == mode)
+        self._blend.setEnabled(mode == "blend")
+        self._refresh_plot()
+
+    def _refresh_plot(self):
+        if self._view_mode == "table" or self._xc is None:
+            return
+        xc = self._xc
+        unit = "raw" if self._raw_chk.isChecked() else (xc.a.map_def.unit or "raw")
+        if self._plot_mode == "diff":
+            vals = xc.delta
+            title = f"B − A: {xc.b.map_def.name} − {xc.a.map_def.name}"
+        else:
+            t = self._blend.value() / 100.0
+            vals = [[xc.a.data[i][j] + t * (xc.b_on_a[i][j] - xc.a.data[i][j])
+                     for j in range(len(xc.a.cols))] for i in range(len(xc.a.rows))]
+            title = f"Blend {int(t*100)} % B: {xc.a.map_def.name}"
+        is_map = xc.a.map_def.map_type in ("fuel", "ign")
+        self._plot.set_map(xc.a.rows, xc.a.cols, vals, unit=unit, title=title,
+                           row_label="rpm" if is_map else "row", col_label="load" if is_map else "col")
 
     def _on_load_b(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -3659,8 +3786,16 @@ class CompareTab(QWidget):
             if is_valid_034(raw):
                 raw = descramble_034(raw)
         wh, _ = normalize_rom(raw)
-        self._rom_b = wh
-        self._status.setText(f"ROM B: {Path(path).name}  ({len(wh):,} bytes)")
+        self._rom_b = bytes(wh)
+        self._variant_b = self._detect_b(self._rom_b)
+        vb = self._variant_b.software_id if self._variant_b else "?"
+        self._status.setText(f"ROM B: {Path(path).name}  ({len(wh):,} bytes)  [{vb}]")
+        self._populate_b_maps()
+        self._refresh()
+
+    def _on_a_map_changed(self, _i=None):
+        if self._rom_b:
+            self._populate_b_maps()
         self._refresh()
 
     def _refresh(self):
@@ -3669,18 +3804,20 @@ class CompareTab(QWidget):
             return
         m = self._maps[idx]
         v = self._variant
-
-        raw_a = read_map(self._rom_a, m)
-        raw_b = read_map(self._rom_b, m) if self._rom_b else None
-        decode = m.decode
-
-        rpm_ax, load_ax = get_axes(self._rom_a, m, v)
-        rpm_labels  = [str(r) for r in reversed(rpm_ax)]
-        load_labels = [str(l) for l in load_ax]
+        from urrom.xcompare import side_from_bytes, compare_sides
+        raw_mode = self._raw_chk.isChecked()
+        a = side_from_bytes(self._rom_a, v, m, raw_values=raw_mode)
+        mb = self._b_map() if self._rom_b else None
+        b = None
+        if self._rom_b and mb is not None:
+            b = side_from_bytes(self._rom_b, self._variant_b or v, mb, raw_values=raw_mode)
+        exact = (b is not None and self._same_family() and mb.main_addr == m.main_addr
+                 and b.rows == a.rows and b.cols == a.cols)
+        self._xc = compare_sides(a, b) if b is not None else None
 
         nrows, ncols = m.rows, m.cols
-        changed_count = 0
-
+        rpm_labels  = [str(r) for r in reversed(a.rows)]
+        load_labels = [str(l) for l in a.cols]
         for tbl in (self._table_a, self._table_d, self._table_b):
             tbl.setRowCount(nrows)
             tbl.setColumnCount(ncols)
@@ -3689,93 +3826,73 @@ class CompareTab(QWidget):
             tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
             tbl.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
 
-        all_raws_a = [raw_a[r][c] for r in range(nrows) for c in range(ncols)]
-        vmin, vmax = min(all_raws_a), max(all_raws_a)
+        raw_a = read_map(self._rom_a, m)
+        all_a = [a.data[r][c] for r in range(nrows) for c in range(ncols)]
+        vmin, vmax = min(all_a), max(all_a)
+        b_vals = self._xc.b_on_a if self._xc else None
+        deltas = self._xc.delta if self._xc else None
+        decode = None if raw_mode else m.decode
+        changed_count = 0
+        eps = 1e-9 if exact else 0.05
 
+        def _mk(text, bg, fg=None, bold=False):
+            it = QTableWidgetItem(text)
+            it.setBackground(QBrush(bg))
+            it.setForeground(QBrush(fg or _text_colour(bg)))
+            it.setTextAlignment(Qt.AlignCenter)
+            if bold:
+                f = it.font(); f.setBold(True); it.setFont(f)
+            it.setFlags(Qt.ItemIsEnabled)
+            return it
+
+        def _colour(val, raw_byte):
+            if m.map_type == "ign" and decode:
+                return _ign_colour(val)
+            if m.map_type == "fuel" and raw_byte is not None:
+                return _fuel_colour(raw_byte)
+            return _heat(val, vmin, vmax)
+
+        fmt = (lambda x: f"{x:.0f}") if raw_mode or not decode else (lambda x: f"{x:.1f}")
         for r in range(nrows):
             disp_r = nrows - 1 - r
             for c in range(ncols):
-                a_raw = raw_a[r][c]
-                b_raw = raw_b[r][c] if raw_b else a_raw
-                delta = b_raw - a_raw
-                changed = delta != 0
+                av = a.data[r][c]
+                bv = b_vals[r][c] if b_vals else av
+                d = deltas[r][c] if deltas else 0.0
+                changed = abs(d) > eps
                 if changed:
                     changed_count += 1
-
-                a_disp = f"{decode(a_raw):.1f}" if decode else str(a_raw)
-                b_disp = f"{decode(b_raw):.1f}" if decode else str(b_raw)
-
-                if m.map_type == "ign" and decode:
-                    bg_a = _ign_colour(decode(a_raw))
-                    bg_b = _ign_colour(decode(b_raw)) if raw_b else bg_a
-                elif m.map_type == "fuel":
-                    bg_a = _fuel_colour(a_raw)
-                    bg_b = _fuel_colour(b_raw) if raw_b else bg_a
+                bg_a = _colour(av, raw_a[r][c])
+                bg_b = _colour(bv, None if not exact else read_map(self._rom_b, mb)[r][c]) if b_vals else bg_a
+                if changed:
+                    d_text = f"{d:+.2f}" if not raw_mode else f"{d:+.0f}"
+                    bg_d, fg_d = (QColor("#1a3a1a"), QColor(GREEN)) if d > 0 else (QColor("#3a1a1a"), QColor(RED))
                 else:
-                    bg_a = _heat(a_raw, vmin, vmax)
-                    bg_b = _heat(b_raw, vmin, vmax) if raw_b else bg_a
-
-                if delta != 0 and decode:
-                    # Show delta in decoded units (°BTDC, AFR, etc.)
-                    d_decoded = decode(b_raw) - decode(a_raw)
-                    d_text = f"+{d_decoded:.2f}" if d_decoded > 0 else f"{d_decoded:.2f}"
-                elif delta != 0:
-                    d_text = f"+{delta}" if delta > 0 else str(delta)
-                else:
-                    d_text = "\u2014"
-
-                if delta > 0:
-                    bg_d, fg_d = QColor("#1a3a1a"), QColor(GREEN)
-                elif delta < 0:
-                    bg_d, fg_d = QColor("#3a1a1a"), QColor(RED)
-                else:
-                    bg_d, fg_d = QColor(BG2),       QColor(FG_DIM)
-
-                def _mk(text, bg, fg=None, bold=False):
-                    it = QTableWidgetItem(text)
-                    it.setBackground(QBrush(bg))
-                    it.setForeground(QBrush(fg or _text_colour(bg)))
-                    it.setTextAlignment(Qt.AlignCenter)
-                    if bold:
-                        f = it.font(); f.setBold(True); it.setFont(f)
-                    it.setFlags(Qt.ItemIsEnabled)
-                    return it
-
-                self._table_a.setItem(disp_r, c, _mk(a_disp, bg_a))
+                    d_text, bg_d, fg_d = "\u2014", QColor(BG2), QColor(FG_DIM)
+                self._table_a.setItem(disp_r, c, _mk(fmt(av), bg_a))
                 self._table_d.setItem(disp_r, c, _mk(d_text, bg_d, fg_d, bold=changed))
-                self._table_b.setItem(disp_r, c, _mk(b_disp, bg_b))
+                self._table_b.setItem(disp_r, c, _mk(fmt(bv), bg_b))
 
         total = nrows * ncols
-        self._export_btn.setEnabled(bool(self._rom_b))
-        self._jump_btn.setEnabled(bool(self._rom_b))
-        self._update_delta_strip()
-        if raw_b:
-            pct = 100 * changed_count / total
-            # Compute max/min decoded delta for headline stat
-            if decode:
-                deltas_decoded = [
-                    decode(raw_b[r][c]) - decode(raw_a[r][c])
-                    for r in range(nrows) for c in range(ncols)
-                    if raw_b[r][c] != raw_a[r][c]
-                ]
-                if deltas_decoded:
-                    d_max = max(deltas_decoded)
-                    d_min = min(deltas_decoded)
-                    range_str = (f"  |  max Δ {d_max:+.2f}  min Δ {d_min:+.2f}  {m.unit}")
-                else:
-                    range_str = ""
-            else:
-                raw_deltas = [raw_b[r][c] - raw_a[r][c]
-                              for r in range(nrows) for c in range(ncols)
-                              if raw_b[r][c] != raw_a[r][c]]
-                if raw_deltas:
-                    range_str = f"  |  max Δ {max(raw_deltas):+d}  min Δ {min(raw_deltas):+d}  raw"
-                else:
-                    range_str = ""
+        same = self._same_family()
+        self._export_btn.setEnabled(bool(self._rom_b) and same)
+        self._jump_btn.setEnabled(bool(self._rom_b) and same)
+        if same:
+            self._update_delta_strip()
+        else:
+            self._delta_strip.setVisible(False)
+        if self._xc:
+            st = self._xc.summary()
+            flat = [x for row in deltas for x in row]
+            rms = (sum(x * x for x in flat) / len(flat)) ** 0.5
+            unit = "raw" if raw_mode else (m.unit or "raw")
+            how = "cell-exact" if exact else f"B ({self._variant_b.software_id if self._variant_b else '?'}: {mb.name}) resampled onto A's axes"
             self._summary.setText(
-                f"{m.name}  \u2014  {changed_count}/{total} cells changed  ({pct:.0f}%){range_str}")
+                f"{m.name}  \u2014  {changed_count}/{total} cells differ ({100*changed_count/total:.0f}%)  |  "
+                f"mean \u0394 {st['mean']:+.2f}  rms {rms:.2f}  min {st['min']:+.2f}  max {st['max']:+.2f} {unit}  |  {how}")
         else:
             self._summary.setText(f"Load ROM B to see delta  \u2014  {m.name}")
+        self._refresh_plot()
 
     def _on_jump_most_changed(self):
         """Switch map selector to the map with the largest number of changed cells."""

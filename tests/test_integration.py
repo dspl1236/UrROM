@@ -1465,3 +1465,70 @@ class TestLiveLog:
         tab._set_view("3d", persist=False); tab._plot._canvas.draw()
         tab.set_trace(None)
         assert tab._table._trace is None and (5, 7) not in tab._table._annotations
+
+
+# -- Roadmap item 2: compare view (2026-09-09) ----------------------------------
+
+class TestCompareSides:
+    def test_same_family_is_cell_exact(self):
+        from urrom.xcompare import side_from_bytes, compare_sides, counterpart_map
+        from urrom.ecu_profiles import VARIANT_404
+        a_rom = bytes(load_rom("3b_fuel-ign_404aa.bin")); b_rom = bytes(load_rom("rr_fuel-ign_404b.bin"))
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x71F8)
+        assert counterpart_map(VARIANT_404, m, VARIANT_404) is m
+        xc = compare_sides(side_from_bytes(a_rom, VARIANT_404, m), side_from_bytes(b_rom, VARIANT_404, m))
+        diff = sum(1 for row in xc.delta for d in row if abs(d) > 1e-9)
+        assert diff == 66                                    # RR vs 3B ignition main map
+        assert all(abs(d) <= 3.0 + 1e-9 for row in xc.delta for d in row)
+
+    def test_cross_family_pairs_by_role_and_resamples(self):
+        from urrom.xcompare import side_from_bytes, compare_sides, counterpart_map
+        from urrom.ecu_profiles import VARIANT_404, ALL_VARIANTS
+        v551 = next(x for x in ALL_VARIANTS if x.software_id == "551C")
+        a_rom = bytes(load_rom("3b_fuel-ign_404aa.bin")); b_rom = bytes(load_rom("adu_fuel-ign_551c.bin"))[0x8000:]
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x71F8)
+        cp = counterpart_map(v551, m, VARIANT_404)
+        assert cp is not None and cp.main_addr == 0x3598                # ROLE_MAPS 551C ign
+        xc = compare_sides(side_from_bytes(a_rom, VARIANT_404, m), side_from_bytes(b_rom, v551, cp))
+        assert len(xc.b_on_a) == m.rows and len(xc.b_on_a[0]) == m.cols
+        flat = [d for row in xc.delta for d in row]
+        rms = (sum(d * d for d in flat) / len(flat)) ** 0.5
+        assert rms < 4.0                                                # same-engine family, degrees
+
+
+class TestCompareTab:
+    @pytest.fixture(autouse=True)
+    def _qt(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        pytest.importorskip("matplotlib")
+        from PyQt5.QtWidgets import QApplication
+        self.app = QApplication.instance() or QApplication([])
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main4", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        self.mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.mod)
+
+    def test_same_family_compare_and_views(self):
+        from urrom.ecu_profiles import VARIANT_404
+        tab = self.mod.CompareTab()
+        tab.set_rom_a(bytes(load_rom("3b_fuel-ign_404aa.bin")), VARIANT_404)
+        i = next(k for k, m in enumerate(tab._maps) if m.main_addr == 0x71F8); tab._map_combo.setCurrentIndex(i)
+        tab.set_rom_b_direct(bytes(load_rom("rr_fuel-ign_404b.bin")), "RR")
+        assert tab._same_family() and tab._xc is not None
+        assert "66/256 cells differ" in tab._summary.text() and "cell-exact" in tab._summary.text()
+        tab._set_view("3d"); tab._plot._canvas.draw()
+        tab._set_mode("blend"); tab._blend.setValue(50); tab._plot._canvas.draw()
+        assert tab._plot.mode() == "3d" and tab._plot._title.startswith("Blend 50")
+        tab._set_view("table")
+        assert tab._splitter.isVisibleTo(tab) and not tab._plot.isVisibleTo(tab)
+
+    def test_cross_family_compare(self):
+        from urrom.ecu_profiles import VARIANT_404
+        tab = self.mod.CompareTab()
+        tab.set_rom_a(bytes(load_rom("3b_fuel-ign_404aa.bin")), VARIANT_404)
+        i = next(k for k, m in enumerate(tab._maps) if m.main_addr == 0x71F8); tab._map_combo.setCurrentIndex(i)
+        tab.set_rom_b_direct(bytes(load_rom("adu_fuel-ign_551c.bin"))[0x8000:], "ADU")
+        assert not tab._same_family() and tab._variant_b.software_id == "551C"
+        assert tab._b_map().main_addr == 0x3598 and "resampled" in tab._summary.text()
+        tab._raw_chk.setChecked(True)
+        assert "raw" in tab._summary.text()
+        tab._set_view("heat"); tab._plot._canvas.draw()

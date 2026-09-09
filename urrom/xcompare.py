@@ -57,6 +57,46 @@ class Side:
         return f"{self.path.name} [{self.variant.software_id}] {self.map_def.name} @0x{self.map_def.main_addr:04X}"
 
 
+def side_from_bytes(wh: bytes, variant: ROMVariant, map_def: MapDef,
+                    raw_values: bool = False, path: Path | None = None) -> Side:
+    """A decoded (or raw) Side for one map of an in-memory working half."""
+    wh = bytes(wh)
+    rows, cols = get_axes(wh, map_def, variant)
+    raw_grid = read_map(wh, map_def)
+    dec = (lambda x: float(x)) if raw_values else (map_def.decode or (lambda x: float(x)))
+    data = [[float(dec(c)) for c in r] for r in raw_grid]
+    return Side(path or Path(variant.software_id), variant, wh, map_def, list(rows), list(cols), data)
+
+
+def role_of(map_def: MapDef) -> str:
+    """'fuel' | 'ign' | 'other' — used to pair maps across chip families."""
+    return map_def.map_type if map_def.map_type in ("fuel", "ign") else "other"
+
+
+def counterpart_map(variant: ROMVariant, map_def: MapDef, other_variant: ROMVariant | None) -> MapDef | None:
+    """
+    The map on `variant` that plays map_def's role on other_variant: the same
+    address when both chips are the same variant, else the ROLE_MAPS entry for
+    fuel/ign, else the first map with the same name, else None.
+    """
+    if other_variant is None or variant.software_id == other_variant.software_id:
+        return next((m for m in variant.main_maps if m.main_addr == map_def.main_addr), None)
+    role = role_of(map_def)
+    addr = ROLE_MAPS.get(variant.software_id, {}).get(role)
+    if addr is not None:
+        m = next((m for m in variant.main_maps if m.main_addr == addr), None)
+        if m is not None:
+            return m
+    return next((m for m in variant.main_maps if m.name == map_def.name), None)
+
+
+def compare_sides(a: Side, b: Side) -> "XCompare":
+    """B bilinear-resampled onto A's axes; delta = B - A in A's units."""
+    b_on_a = resample(b, a.rows, a.cols)
+    delta = [[b_on_a[i][j] - a.data[i][j] for j in range(len(a.cols))] for i in range(len(a.rows))]
+    return XCompare(a, b, b_on_a, delta)
+
+
 def _load_side(path: Path, role: str, addr_override: int | None, raw_values: bool = False) -> Side:
     raw = path.read_bytes()
     if path.suffix.lower() == ".034":
@@ -74,11 +114,7 @@ def _load_side(path: Path, role: str, addr_override: int | None, raw_values: boo
     m = next((m for m in v.main_maps if m.main_addr == addr), None)
     if m is None:
         raise SystemExit(f"{path.name}: no MapDef at 0x{addr:04X} in {v.software_id}")
-    rows, cols = get_axes(wh, m, v)
-    raw_grid = read_map(wh, m)
-    dec = (lambda x: float(x)) if raw_values else (m.decode or (lambda x: float(x)))
-    data = [[float(dec(c)) for c in r] for r in raw_grid]
-    return Side(path, v, wh, m, list(rows), list(cols), data)
+    return side_from_bytes(wh, v, m, raw_values, path)
 
 
 def _interp1(axis: list, values: list[float], x: float) -> float:
@@ -132,9 +168,7 @@ def xcompare(a_path: Path, b_path: Path, role: str = "fuel",
     decode formulas are not both trusted (e.g. the 551 ignition formula dispute)."""
     a = _load_side(a_path, role, a_map, raw_values)
     b = _load_side(b_path, role, b_map, raw_values)
-    b_on_a = resample(b, a.rows, a.cols)
-    delta = [[b_on_a[i][j] - a.data[i][j] for j in range(len(a.cols))] for i in range(len(a.rows))]
-    return XCompare(a, b, b_on_a, delta)
+    return compare_sides(a, b)
 
 
 def format_report(x: XCompare, unit: str = "") -> str:
