@@ -844,3 +844,23 @@ class TestChipImages:
         from urrom.ecu_profiles import expand_to_chip
         rom = bytes(load_rom("aby_fuel-ign_551aa.bin"))
         assert expand_to_chip(rom) == rom
+
+    def test_404_main_ign_maps_near_identical(self):
+        """The four main ignition maps (2/5/6/7) are one calibration within 3 deg (4 raw) on
+        every 404 chip, differing in <=62 cells; exact equalities differ per chip
+        (3B: 5==6; RR: 2==5==7; S2: 2==7, 5==6)."""
+        A = {2: 0x71F8, 5: 0x7667, 6: 0x77CF, 7: 0x7937}
+        equal = {"3b_fuel-ign_404aa.bin": [(5, 6)],
+                 "rr_fuel-ign_404b.bin": [(2, 5), (2, 7)],
+                 "s2_fuel-ign_404.bin": [(2, 7), (5, 6)]}
+        for name, pairs in equal.items():
+            rom = bytes(load_rom(name))
+            for a, b in pairs:
+                assert rom[A[a]:A[a] + 256] == rom[A[b]:A[b] + 256], f"{name} map{a}!=map{b}"
+            # and no two of them differ by more than 4 raw (3 deg) in any cell, or in >64 cells
+            for a in A:
+                for b in A:
+                    if a < b:
+                        x, y = rom[A[a]:A[a] + 256], rom[A[b]:A[b] + 256]
+                        d = [abs(x[i] - y[i]) for i in range(256)]
+                        assert max(d) <= 4 and sum(1 for v in d if v) <= 64, f"{name} {a}v{b}"

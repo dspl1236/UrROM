@@ -423,7 +423,8 @@ _MAPS_3B_MAIN = [
             "(IGN_CALC 0x1611-0x162F). Byte-identical on 3B / RR / S2. Decode raw×0.75−22.5."),
     _b3_ign("Ignition Map 2 (main, coding A)", 0x71F8,
             "MAIN high-load ignition map (slot 12) when the boost-board status bit 20h.2 is clear "
-            "and coding-plug bit A0h.6 is clear. Selector at 0x34B7. Differs S2 vs 3B in 90 cells."),
+            "and coding-plug bit A0h.6 is clear. Selector at 0x34B7. Maps 2/5/6/7 are one calibration "
+            "with part-load trims of up to 3 deg in up to 62 cells. Differs S2 vs 3B in 90 cells."),
     _b3_ign("Ignition Map 3 (correction / alt set)", 0x731C,
             "Slot 0F/18 in every table set. Added as a correction in routine 0x1B2A (slot 0F) and "
             "used instead of the main map when XRAM CAh.0 is set (slot 18; that flag is not written "
@@ -435,12 +436,12 @@ _MAPS_3B_MAIN = [
             "MAIN high-load ignition map when boost-board bit 20h.2 is clear and coding-plug bit "
             "A0h.6 is set (coding plug = ADC ch4, 9 bands, table 0x3672). Was listed as map 2."),
     _b3_ign("Ignition Map 6 (main, boost-board flag, coding A)", 0x77CF,
-            "MAIN high-load ignition map when boost-board status bit 20h.2 is SET (IPC byte 0xA040 "
-            "XOR 0x0E; the boost MCU hosts knock detection, so a knock/retard flag is the prime "
-            "candidate — unconfirmed) and coding bit A0h.6 is clear. Was listed as map 3."),
+            "MAIN high-load ignition map when boost-board status bit 20h.2 is SET and coding bit A0h.6 "
+            "is clear (identical to map 5 on the 3B chip). The bit is band 4 of a one-hot level code "
+            "of the boost MCU's adaptation state 67h:66h — NOT knock; see docs/3B_boost_chip_RE.md."),
     _b3_ign("Ignition Map 7 (main, boost-board flag, coding B)", 0x7937,
-            "MAIN high-load ignition map when boost-board bit 20h.2 is set and coding bit A0h.6 is set. "
-            "Was listed as map 4."),
+            "MAIN high-load ignition map when boost-board bit 20h.2 is set and coding bit A0h.6 is set "
+            "(identical to map 2 on the RR and S2 chips; 3 cells differ on the 3B). Was listed as map 4."),
 
     # Smaller RPM x LOAD tables the firmware references (function TBD)
     _b3_raw("Idle/Low-load Ign A (0x7C06)", 0x7C06, 4, 6,

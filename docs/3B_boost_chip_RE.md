@@ -87,6 +87,40 @@ Tables are row-major `[X][Y]`: rows = load, columns = period.
 8. PWM: compare channel 3 (`CCL3/CCH3`) on-time = `5Dh × period`
    (`0x00D4`, `0x13B9`), period from `CRCL/CRCH`.
 
+## Status nibble to the main ECU (traced 2026-09-09)
+
+The main ECU's flag byte `20h` is the boost board's port P4 low nibble (latched
+at `0xA040`, main side XORs 0x0E). On the boost side:
+
+```
+0x0349   5Fh = result of 0x08A8            ; every main-loop pass
+0x00FA   P4 = (P4 & 0xF0) | 5Fh            ; in the CC3 ISR
+0x08A8   R0 = swap((C6h & 0xF0) + BFh)     ; = (67h:66h sample) >> 4
+0x088F   band = 5 thresholds @0x183C  28 14 0A 05 03  (40 20 10 5 3)
+         5Fh  = code[band] @0x1847         00 01 02 04 08 0F   (one-hot)
+```
+
+So the nibble is a **five-band level code of the 16-bit value `67h:66h`**
+(bands: ≥640 → 0, 320–639 → 1, 160–319 → 2, 80–159 → 4, 48–79 → 8, <48 → F
+in raw units; `BEh–C2h` / `C5h–C9h` are 4-deep histories of 66h / 67h that
+also feed a 5-sample moving average at `0x0C57`).
+
+`67h:66h` is **not a knock counter**. It is an adaptation state: initialised
+to 0x000F (`0x08C2`), then updated in place at `0x0756–0x07EA` by a scaled
+multiply/divide of itself with gains from the table at `0x1817`, moving up
+or down according to how the ratio `37h` compares with targets. `37h` is
+computed at `0x0721–0x074A` as `(34h + 69h) × B / (67h:66h)` (34h = control
+loop state, 69h = ADC ch0). The same comparison drives port line **P5.5**
+straight out. The tables involved (`0x1805–0x182F`, `0x183B–0x1850`) are
+byte-identical on the 3B, RR and S2 boost chips.
+
+On the main-ECU side the nibble's bit 2 (band 80–159) toggles which coding
+gets the +1° part-load ignition map (see `551_calibration_descriptors_RE.md`
+§3c); bit 1 gates a small slot-06 table. Given the maps involved differ in at most 62
+cells by at most 3°, all in the mid-rpm part-load zone, this is a fine adaptive trim,
+not a knock strategy. What physical quantity `67h:66h` converges on (the
+`34h`/`69h` inputs still need naming) is the remaining open item.
+
 ## Chip differences
 
 | Item | 3B 404AA | RR 404B | S2 (0261200484) |

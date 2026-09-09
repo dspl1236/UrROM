@@ -127,10 +127,15 @@ The ignition table set (which map sits in slot 12) is chosen by the chain at
 | 1 | 1 | **Ign Map 7** (0x7937) | 0x616B / 0x618F, 0x61FB / 0x621F |
 
 - `20h` = byte read from the boost board over the inter-board bus at
-  `0xA040`, XOR 0x0E (`0x1376–0x1384`, `0x4A31`). The boost MCU also hosts
-  knock detection, so bit 2 being a knock / retard-active flag is the prime
-  candidate. **Unconfirmed** — the boost-side composition (`0x08A8` → `5Fh` →
-  P4 nibble) still needs tracing.
+  `0xA040`, XOR 0x0E (`0x1376–0x1384`, `0x4A31`). Traced on the boost side
+  (`3B_boost_chip_RE.md`, "Status nibble"): it is a one-hot five-band level
+  code (`00 01 02 04 08 0F`) of an adaptation state `67h:66h`, **not a knock
+  flag**. Bit 2 = band 80–159.
+- The four "main" maps are one calibration with small trims: at most 62
+  cells differ between any two of them, by at most 3°, all in the mid-rpm
+  part-load zone. Exact equalities vary per chip (3B: 5 == 6; RR: 2 == 5 == 7;
+  S2: 2 == 7 and 5 == 6). So the boost-board bit and the coding bank only
+  move the part-load timing by a degree or two — a fine trim, not a retard strategy.
 - `A0h` = coding-plug class: ADC channel 4 (`0x3637`) binned against
   thresholds `0x3669` (`FF DC CD A9 85 66 3D 32 1F`, 9 bands), then
   `A0h = table 0x3672[band]` = `4C 04 14 08 00 44 40 10 20`. Bit 6 set for
