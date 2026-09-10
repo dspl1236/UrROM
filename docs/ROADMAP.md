@@ -17,7 +17,7 @@ Ordered. Each item is scoped so it can land on its own.
    changes" line in real units next to the raw byte.
 5. **Undo you can read.** *(landed 2026-09-09: sentences with axis position and units, collapse per cell, commit message, Undo last edit, Ctrl+L dialog; boost edits logged too)* Session log as sentences, exportable as the tune's
    commit message.
-6. **Bench mode.** Drive the loaded maps with a simulated engine (KWPBridge's
+6. **Bench mode.** *(landed 2026-09-10: in-process KWPBridge mock matched to the loaded chip family; BENCH badge; also fixed a connect/state race that could leave a real bridge unmatched)* Drive the loaded maps with a simulated engine (KWPBridge's
    mock) so the cursor walks the surfaces before a real ECU is involved.
 
 Deliberately out: auto-tuning from a wideband; anything that needs an account

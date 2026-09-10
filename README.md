@@ -104,6 +104,9 @@ python -m urrom.cli coding rom.bin --volts 2.5   # coding-plug bands → ignitio
 ### Live recording and trace
 With KWPBridge connected, **Tools → Start recording live data…** writes every sample to a CSV that `Tools → Overlay data log on map…` replays onto any map. **Tools → Live trace on current map** paints where the engine actually runs: cells lighten with their hit count on the table (hover for the count), and the Heat / 3D views draw the same trace as sized markers. The trace follows map switches and survives until cleared.
 
+### Bench mode
+**Tools → Bench mode (simulated engine)** starts KWPBridge's mock ECU for the loaded chip inside UrROM (3B/RR/S2 → the M2.3 mock with group 000 and the RAM window; 551 → the M2.3.2 mock) and connects the live layer to it exactly as to a car: the cursor walks the maps through cold start, warm idle, cruise, a boost run and decel, the trace fills in, and the badge reads BENCH. Use it to learn the maps, test overlays and views, or rehearse a session before the KKL cable goes on. It refuses to start if a real KWPBridge is already on the port.
+
 ### Session log
 **Tools → Session log… (Ctrl+L)** lists every edit of the session as a sentence with its axis position and real units, e.g. `Ignition Map 2 (main, coding A) at 4600 rpm / load 174: 9.8 → 15.8 °BTDC (+6)`, collapsed to one line per cell (edits back to the starting value drop out). **Copy as commit message** gives a git-style title, a per-map summary and the sentences; **Undo last edit** reverts the most recent logged change in whichever tab holds that map; **Save…** writes text or HTML. Boost-chip edits are logged in the sensor's units.
 

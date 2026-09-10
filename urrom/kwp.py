@@ -341,7 +341,11 @@ if _QT_AVAILABLE and _KWP_AVAILABLE:
             new_match = ecu_pn in self._rom_pns
             if not new_match and ecu_pn:
                 self.mismatch.emit(ecu_pn, self._rom_pns[0] if self._rom_pns else "")
+            became_matched = new_match and not self._matched
             self._matched = new_match
+            if became_matched:
+                # the first state may arrive after the connect callback; announce the match now
+                self.connected.emit(ecu_pn)
 
 else:
     class _NoOpSignal:

@@ -4193,6 +4193,8 @@ class MainWindow(QMainWindow):
         self._recorder = LiveRecorder()
         self._trace = TraceAccumulator()
         self._trace_dirty = 0
+        self._bench = None                 # kwpbridge.mock.server.MockServer while bench mode is on
+        self._bench_pn = ""
         self._kwp_monitor = KWPMonitor(self)
         self._kwp_monitor.connected.connect(self._on_kwp_connected)
         self._kwp_monitor.disconnected.connect(self._on_kwp_disconnected)
@@ -4615,6 +4617,13 @@ class MainWindow(QMainWindow):
         sess_act.setShortcut("Ctrl+L")
         sess_act.triggered.connect(self._on_session_log_dialog)
         tools_menu.addAction(sess_act)
+        tools_menu.addSeparator()
+        self._bench_act = QAction("Bench mode (simulated engine)", self)
+        self._bench_act.setCheckable(True)
+        self._bench_act.setToolTip("Run KWPBridge's mock ECU for the loaded chip in-process so the live "
+                                   "cursor and trace walk the maps without a car")
+        self._bench_act.toggled.connect(self._on_toggle_bench)
+        tools_menu.addAction(self._bench_act)
         tools_menu.addSeparator()
         self._rec_act = QAction("Start recording live data…", self)
         self._rec_act.triggered.connect(self._on_toggle_recording)
@@ -6293,10 +6302,77 @@ class MainWindow(QMainWindow):
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("windowState", self.saveState())
         self._recorder.stop()
+        if getattr(self, "_bench", None) is not None:
+            try: self._bench.stop()
+            except Exception: pass
         self._kwp_monitor.stop()
         event.accept()
 
     # ── KWPBridge live overlay ────────────────────────────────────────────────
+
+    # ── Bench mode (roadmap item 6) ───────────────────────────────────────
+
+    def _bench_profile(self) -> tuple[str, str]:
+        """(mock ecu name, its part number) for the loaded chip family."""
+        sw = self._det.variant.software_id if self._det and self._det.variant else ""
+        from urrom.hw_patches import is_404_family
+        if is_404_family(sw):
+            return "3b", "447907404AA"
+        return "aan", "4A0907551AA"
+
+    def _start_bench(self, port: int | None = None, hz: float = 5.0) -> str:
+        """Start the mock ECU for the loaded chip. Returns a status message."""
+        if self._det is None or self._det.variant is None:
+            return "Load a chip first."
+        if not kwpbridge_available():
+            return "KWPBridge is not installed (pip install -e <KWPBridge checkout>)."
+        try:
+            from kwpbridge.mock.server import MockServer
+            from kwpbridge.constants import DEFAULT_PORT
+        except ImportError as e:
+            return f"KWPBridge mock not available: {e}"
+        port = port or DEFAULT_PORT
+        if self._bench is None and kwpbridge_running():
+            return "KWPBridge is already running on this port — bench mode is not needed."
+        ecu, pn = self._bench_profile()
+        try:
+            srv = MockServer(ecu=ecu, port=port, poll_hz=hz)
+            srv.start()
+        except Exception as e:
+            return f"Bench mode could not start: {e}"
+        self._bench, self._bench_pn = srv, pn
+        rom_pns = list(self._det.variant.ecu_pns) + [pn]
+        self._kwp_monitor.set_rom_part_numbers(rom_pns)
+        self._kwp_monitor.start()
+        if hasattr(self, "_trace_act"):
+            self._trace_act.setChecked(True)
+        return (f"Bench mode: simulated {ecu.upper()} ({pn}) at {hz:.0f} Hz — cold start, warm idle, "
+                f"cruise, boost run, decel. Live cursor and trace are driven by the mock.")
+
+    def _stop_bench(self) -> str:
+        if self._bench is None:
+            return "Bench mode is off."
+        try:
+            self._bench.stop()
+        except Exception:
+            pass
+        self._bench = None
+        self._bench_pn = ""
+        self._kwp_monitor.stop()
+        self._kwp_matched = False
+        self._main_chip_tab.detach_kwp()
+        if self._det and self._det.variant:
+            self._kwp_monitor.set_rom_part_numbers(list(self._det.variant.ecu_pns))
+        self._kwp_monitor.start()
+        self._refresh_kwp_badge()
+        return "Bench mode off."
+
+    def _on_toggle_bench(self, on: bool):
+        msg = self._start_bench() if on else self._stop_bench()
+        if on and self._bench is None:            # failed to start: uncheck quietly
+            self._bench_act.blockSignals(True); self._bench_act.setChecked(False); self._bench_act.blockSignals(False)
+            QMessageBox.information(self, "Bench mode", msg)
+        self._update_status(msg)
 
     def _on_kwp_connected(self, ecu_pn: str):
         self._kwp_matched = self._kwp_monitor.is_matched()
@@ -6325,7 +6401,11 @@ class MainWindow(QMainWindow):
 
     def _on_kwp_live_data(self, lv: "LiveValues"):
         if not self._kwp_matched:
-            return
+            # a match can appear with the first state message, after connect
+            if self._kwp_monitor.is_matched():
+                self._on_kwp_connected(self._kwp_monitor.current_pn())
+            else:
+                return
         self._main_chip_tab.update_overlay(lv)
         self._trace.add(lv)
         if self._recorder.active:
@@ -6392,6 +6472,9 @@ class MainWindow(QMainWindow):
             summary = kwp_live_summary(lv)
             if summary:
                 text = f"🟢  {summary}"
+        if getattr(self, "_bench", None) is not None:
+            text = "🧪 BENCH  " + text.replace("ECU matches ROM", "simulated ECU")
+            colour = AMBER
         self._kwp_badge.setText(text)
         self._kwp_badge.setStyleSheet(
             f"color: {colour}; font-size: 10px; padding: 0 8px;")

@@ -1732,3 +1732,42 @@ class TestSessionSentences:
         assert msg.startswith("Undone:") and tab._table._current_raw[0][0] == before
         assert win._session_log.count == 0
         assert win._undo_logged_edit() == "Nothing to undo."
+
+
+# -- Roadmap item 6: bench mode (2026-09-10) --------------------------------------
+
+class TestBenchMode:
+    def test_bench_drives_the_live_layer(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        pytest.importorskip("kwpbridge")
+        import socket, time
+        from kwpbridge.constants import DEFAULT_PORT
+        s = socket.socket(); s.settimeout(0.2)
+        busy = s.connect_ex(("127.0.0.1", DEFAULT_PORT)) == 0; s.close()
+        if busy:
+            pytest.skip("a KWPBridge is already running on the default port")
+        from PyQt5.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication([])
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main9", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        win = mod.MainWindow()
+        assert win._start_bench().startswith("Load a chip first")
+        for name in ("_load_rom", "_open_rom", "_load_main"):
+            if hasattr(win, name):
+                try: getattr(win, name)(Path(__file__).resolve().parent.parent / "roms" / "3b_fuel-ign_404aa.bin"); break
+                except TypeError: pass
+        try:
+            msg = win._start_bench(hz=10.0)
+            assert msg.startswith("Bench mode: simulated 3B"), msg
+            assert win._bench is not None and win._trace_act.isChecked()
+            # the monitor polls once a second; give it a few seconds to connect and stream
+            t0 = time.time()
+            while time.time() - t0 < 6.0 and len(win._trace) < 5:
+                app.processEvents(); time.sleep(0.05)
+            assert win._kwp_matched, "monitor did not match the simulated 3B"
+            assert len(win._trace) >= 5
+            assert "BENCH" in win._kwp_badge.text()
+        finally:
+            assert win._stop_bench() == "Bench mode off."
+            assert win._bench is None
