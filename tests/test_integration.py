@@ -1532,3 +1532,54 @@ class TestCompareTab:
         tab._raw_chk.setChecked(True)
         assert "raw" in tab._summary.text()
         tab._set_view("heat"); tab._plot._canvas.draw()
+
+
+# -- Roadmap item 3: provenance on every cell (2026-09-09) ----------------------
+
+class TestProvenance:
+    def test_every_known_map_has_a_chain(self):
+        from urrom.provenance import provenance_for
+        from urrom.ecu_profiles import ALL_VARIANTS
+        for v in ALL_VARIANTS:
+            for m in list(v.main_maps) + list(v.boost_maps):
+                pr = provenance_for(m, v)
+                assert pr.address_source and pr.decode, (v.software_id, m.name)
+                assert pr.address_source != "unknown", (v.software_id, m.name)
+                assert pr.lines()[0].startswith("Address:")
+
+    def test_3b_ignition_chain_names_its_evidence(self):
+        from urrom.provenance import provenance_for
+        from urrom.ecu_profiles import VARIANT_404
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x71F8)
+        pr = provenance_for(m, VARIANT_404)
+        assert "descriptor" in pr.address_source and "0x0D92" in pr.address_source
+        assert "RR 857907404B" in pr.confirmed_on and "S2 895907404" in pr.confirmed_on
+        assert pr.decode.startswith("raw × 0.75 − 22.5") and "formula 4" in pr.decode_source
+        assert "20h.2" in pr.caveat and pr.doc.startswith("docs/")
+
+    def test_boost_and_prj_chains_carry_their_caveats(self):
+        from urrom.provenance import provenance_for
+        from urrom.ecu_profiles import VARIANT_404, VARIANT_551AA_0202
+        b = next(x for x in VARIANT_404.boost_maps if x.main_addr == 0x1934)
+        pr = provenance_for(b, VARIANT_404)
+        assert "0x1600" in pr.address_source and "200 kPa" in pr.caveat and "sensor" in pr.decode
+        m = next(x for x in VARIANT_551AA_0202.main_maps if x.main_addr == 0x125F)
+        pr2 = provenance_for(m, VARIANT_551AA_0202)
+        assert "XDF" in pr2.address_source and "PRJMOD" in pr2.caveat
+
+    def test_cell_tooltips_and_editor_line(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt5.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main5", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        from urrom.ecu_profiles import VARIANT_404
+        tab = mod.MainChipTab(); tab.load(bytearray(load_rom("3b_fuel-ign_404aa.bin")), VARIANT_404)
+        i = next(k for k, x in enumerate(tab._maps) if x.main_addr == 0x71F8); tab._on_map_selected_by_real_idx(i)
+        tip = tab._table.item(0, 0).toolTip()
+        assert "Address: firmware descriptor" in tip and "Decode: raw × 0.75 − 22.5" in tip and "docs/" in tip
+        assert tab._prov_lbl.isVisibleTo(tab) and "Confirmed on" in tab._prov_lbl.text()
+        bt = mod.BoostTab(); bt.load(bytearray(load_rom("3b_boost_404aa.bin")), VARIANT_404)
+        bt._map_combo.setCurrentIndex(1)
+        assert "boost MCU table list at 0x1600" in bt._table.item(0, 0).toolTip()

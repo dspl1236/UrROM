@@ -638,11 +638,27 @@ class MapTable(QTableWidget):
         self.itemChanged.connect(self._on_cell_changed)
         self._loading = False
 
+    def set_variant(self, variant) -> None:
+        """Variant of the loaded chip — enables provenance in cell tooltips."""
+        self._variant = variant
+        self._prov_lines = None
+
+    def _provenance_tip(self) -> str:
+        if getattr(self, "_prov_lines", None) is None:
+            v = getattr(self, "_variant", None)
+            if v is None or self._map_def is None:
+                self._prov_lines = ""
+            else:
+                from urrom.provenance import provenance_for
+                self._prov_lines = "\n".join("· " + ln for ln in provenance_for(self._map_def, v).lines())
+        return self._prov_lines
+
     def load(self, rom: bytearray, map_def: MapDef,
              rpm_axis: list | None = None, load_axis: list | None = None):
         self._loading = True
         self._rom = rom
         self._map_def = map_def
+        self._prov_lines = None
         self._is_ign  = map_def.map_type == "ign"
         self._is_fuel = map_def.map_type == "fuel"
         # get_axes returns (row_axis, col_axis) — row axis labels vertical header,
@@ -734,6 +750,11 @@ class MapTable(QTableWidget):
                     tip_parts.append(f"📝 {ann}")
                     # Add asterisk to annotated cells
                     item.setText(item.text() + " *")
+                prov = self._provenance_tip()
+                if prov:
+                    tip_parts.append("")
+                    tip_parts.append(f"{self._map_def.name}  @0x{self._map_def.main_addr:04X}  cell r{r} c{c}")
+                    tip_parts.append(prov)
                 item.setToolTip("\n".join(tip_parts))
                 self.setItem(disp_r, c, item)
 
@@ -1509,6 +1530,16 @@ class MainChipTab(QWidget):
         self._desc_lbl.setWordWrap(True)
         layout.addWidget(self._desc_lbl)
 
+        # Provenance: where the address, axes and decode come from (roadmap item 3)
+        self._prov_lbl = QLabel("")
+        self._prov_lbl.setStyleSheet(
+            f"color:{FG_DIM};font-size:10px;padding:3px 8px;background:{BG2};"
+            f"border-left:2px solid {BORDER};border-radius:2px;")
+        self._prov_lbl.setWordWrap(True)
+        self._prov_lbl.setTextFormat(Qt.RichText)
+        self._prov_lbl.setVisible(False)
+        layout.addWidget(self._prov_lbl)
+
         # ── Grid overview panel (all maps side by side) ──────────────────────
         self._grid_panel = QScrollArea()
         self._grid_panel.setWidgetResizable(True)
@@ -1565,6 +1596,7 @@ class MainChipTab(QWidget):
 
     def load(self, rom: bytearray, variant: ROMVariant):
         self._variant = variant
+        self._table.set_variant(variant)
         self._rom = rom
         # Show all multi-cell maps that are tunable (fuel, ign, raw with decode,
         # or raw without decode for informational viewing). Exclude 1-row axis
@@ -1699,6 +1731,7 @@ class MainChipTab(QWidget):
                 self._table.set_status_callback(self._status_fn)
             self._map_title.setText(f"{m.name}   <span style='color:{FG_DIM};font-weight:normal;font-size:11px;'>{m.rows}\xd7{m.cols}  {m.unit}</span>")
             self._desc_lbl.setText(m.description)
+            self._show_provenance(m)
             self._addr_lbl.setText(f"Address: 0x{m.main_addr:04X}  (working half offset)")
             self._size_lbl.setText(f"{m.rows}\xd7{m.cols} = {m.size} bytes")
             conf = m.confidence
@@ -2098,6 +2131,28 @@ class MainChipTab(QWidget):
             from PyQt5.QtCore import QSettings
             QSettings("UrROM", "UrROM").setValue(_view_setting_key(self), mode)
 
+    def _show_provenance(self, m):
+        try:
+            from urrom.provenance import provenance_for
+            pr = provenance_for(m, self._variant)
+        except Exception:
+            self._prov_lbl.setVisible(False); return
+        colour = {"CONFIRMED": GREEN, "PROVISIONAL": AMBER}.get(pr.confidence, RED)
+        html = (f"<b style='color:{colour}'>{pr.confidence or 'UNRATED'}</b> &nbsp;"
+                f"<b>Address</b> {pr.address_source}")
+        if pr.confirmed_on:
+            html += f" &nbsp;<b>Confirmed on</b> {', '.join(pr.confirmed_on)}"
+        html += f" &nbsp;<b>Decode</b> {pr.decode}"
+        if pr.decode_source:
+            html += f" <span style='color:{FG_DIM}'>({pr.decode_source})</span>"
+        if pr.caveat:
+            html += f" &nbsp;<span style='color:{AMBER}'>Caveat: {pr.caveat}</span>"
+        if pr.doc:
+            html += f" &nbsp;<span style='color:{FG_DIM}'>{pr.doc}</span>"
+        self._prov_lbl.setText(html)
+        self._prov_lbl.setVisible(True)
+        self._table.set_variant(self._variant)
+
     def set_trace(self, hits: dict | None):
         """Show per-cell hit counts on the table and the plot views."""
         self._trace_hits = dict(hits) if hits else None
@@ -2386,6 +2441,7 @@ class BoostTab(QWidget):
         # sequential indices; displayed as column/row numbers.
         from urrom.ecu_profiles import get_axes
         rpm_axis, load_axis = get_axes(bytes(self._boost_rom), m, self._variant)
+        self._table.set_variant(self._variant)
         self._table.load(self._boost_rom, m, rpm_axis, load_axis)
         self._table.setVisible(self._view_mode == "table")
         self._plot.setVisible(self._view_mode != "table")

@@ -104,6 +104,9 @@ python -m urrom.cli coding rom.bin --volts 2.5   # coding-plug bands → ignitio
 ### Live recording and trace
 With KWPBridge connected, **Tools → Start recording live data…** writes every sample to a CSV that `Tools → Overlay data log on map…` replays onto any map. **Tools → Live trace on current map** paints where the engine actually runs: cells lighten with their hit count on the table (hover for the count), and the Heat / 3D views draw the same trace as sized markers. The trace follows map switches and survives until cleared.
 
+### Provenance
+Every map shows where it came from: a line under the description and the tail of every cell's tooltip give the address source (firmware descriptor tables, XDF, or diff), the real chips it was confirmed on, the decode formula and where that formula was established, the axis source, any open caveat, and the docs section to read. `urrom/provenance.py` holds the chains per chip family; they cite the 2026-09 reverse-engineering notes in `docs/`.
+
 ### Compare
 The Compare tab takes any second chip, even from the other family: a 551 map is paired with the 3B map by role (fuel / ignition main map) and bilinear-resampled onto the A chip's axes, so the delta is in real units on A's grid. Views: the three tables (A, B−A, B), a Heat map or a 3D surface of the **Difference**, or a **Blend** with a slider that morphs A into B. A raw-bytes toggle compares undecoded values. The summary line gives cells differing, mean, rms, min and max.
 

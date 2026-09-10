@@ -9,7 +9,7 @@ Ordered. Each item is scoped so it can land on its own.
 2. **Compare as a first-class view.** *(landed 2026-09-09: cross-family pairing by role, resampling, Difference / Blend, Heat / 3D, raw toggle)* Two chips side by side, difference map
    in real units, cross-family resampling (today's `xcompare` CLI) in the app,
    with an A/B slider.
-3. **Provenance on every byte.** Per-cell tooltip: where the address came from
+3. **Provenance on every byte.** *(landed 2026-09-09: urrom/provenance.py chains per family; editor line + cell tooltips on main and boost tabs)* Per-cell tooltip: where the address came from
    (descriptor / XDF / diff), which chips confirmed it, the decode formula and
    its source.
 4. **Guard rails in the editor.** Sensor headroom, checksum, load-axis clamp,
