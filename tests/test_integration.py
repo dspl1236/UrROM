@@ -1771,3 +1771,16 @@ class TestBenchMode:
         finally:
             assert win._stop_bench() == "Bench mode off."
             assert win._bench is None
+
+
+class TestPsiDisplay:
+    def test_psi_round_trip(self):
+        from urrom import boost_sensor as bs
+        bs.set_sensor("404", "bosch200"); bs.set_display("404", "psi")
+        try:
+            assert bs.unit("404") == "psi gauge"
+            assert bs.decode(250, "404") == 13.9          # 196 kPa abs
+            assert bs.encode(13.9, "404") == 250
+            assert bs.kpa_to_psi_gauge(180) == 11.6       # 1.8 bar abs on the cluster
+        finally:
+            bs.set_display("404", "kpa")

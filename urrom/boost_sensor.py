@@ -100,30 +100,46 @@ def get_display(family: str) -> str:
     return _state[family][1]
 
 
+KPA_PER_PSI = 6.894757
+
+
 def set_display(family: str, mode: str) -> None:
-    if mode not in ("kpa", "bar"):
+    if mode not in ("kpa", "bar", "psi"):
         raise ValueError(mode)
     _state[family][1] = mode
 
 
 def unit(family: str) -> str:
-    return "bar gauge" if get_display(family) == "bar" else "kPa abs"
+    return {"bar": "bar gauge", "psi": "psi gauge"}.get(get_display(family), "kPa abs")
 
 
 def decode(raw: int, family: str) -> float:
     kpa = get_sensor(family).kpa(raw)
-    if get_display(family) == "bar":
+    mode = get_display(family)
+    if mode == "bar":
         return round((kpa - ATM_KPA) / 100.0, 2)
+    if mode == "psi":
+        return round((kpa - ATM_KPA) / KPA_PER_PSI, 1)
     return round(kpa, 1)
 
 
 def encode(value: float, family: str) -> int:
-    kpa = value * 100.0 + ATM_KPA if get_display(family) == "bar" else value
+    mode = get_display(family)
+    if mode == "bar":
+        kpa = value * 100.0 + ATM_KPA
+    elif mode == "psi":
+        kpa = value * KPA_PER_PSI + ATM_KPA
+    else:
+        kpa = value
     return get_sensor(family).raw(kpa)
 
 
 def kpa_to_bar_gauge(kpa: float) -> float:
     return round((kpa - ATM_KPA) / 100.0, 2)
+
+
+def kpa_to_psi_gauge(kpa: float) -> float:
+    return round((kpa - ATM_KPA) / KPA_PER_PSI, 1)
 
 
 def identify(volts: float, kpa: float = ATM_KPA) -> list[tuple[BoostSensor, float, float]]:

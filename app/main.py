@@ -2259,6 +2259,7 @@ class BoostTab(QWidget):
         self._unit_combo.setStyleSheet(sel_style)
         self._unit_combo.addItem("kPa abs", "kpa")
         self._unit_combo.addItem("bar gauge", "bar")
+        self._unit_combo.addItem("psi gauge", "psi")
         self._unit_combo.currentIndexChanged.connect(self._on_unit_changed)
         tb.addWidget(self._unit_combo)
         tb.addSpacing(8)
@@ -2345,7 +2346,7 @@ class BoostTab(QWidget):
             except KeyError:
                 pass
         mode = st.value(f"boost_sensor/{self._family}/display", "kpa", type=str)
-        boost_sensor.set_display(self._family, mode if mode in ("kpa", "bar") else "kpa")
+        boost_sensor.set_display(self._family, mode if mode in ("kpa", "bar", "psi") else "kpa")
         self._sync_sensor_ui()
 
     def _save_sensor_setting(self):
@@ -2445,7 +2446,7 @@ class BoostTab(QWidget):
         hi, lo = max(flat), min(flat)
         self._peak_lbl.setText(
             f"{sens.name}  ·  peak raw {hi} = {sens.kpa(hi):.0f} kPa abs = "
-            f"{boost_sensor.kpa_to_bar_gauge(sens.kpa(hi)):+.2f} bar gauge  ·  "
+            f"{boost_sensor.kpa_to_bar_gauge(sens.kpa(hi)):+.2f} bar / {boost_sensor.kpa_to_psi_gauge(sens.kpa(hi)):+.1f} psi gauge  ·  "
             f"min raw {lo} = {sens.kpa(lo):.0f} kPa abs  ·  1 raw = {sens.span_kpa/255:.2f} kPa")
         self._peak_lbl.setVisible(True)
 
