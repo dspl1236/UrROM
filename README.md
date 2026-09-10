@@ -20,6 +20,8 @@ used in Audi's 5-cylinder 2.2 20v turbo and V8 engines.
 
 ---
 
+**How-to guide:** [docs/UrROM_How_To.pdf](docs/UrROM_How_To.pdf) walks through every tab with real chips (rebuild it with `python tools/build_guide.py`, needs `pip install reportlab pillow`).
+
 ## Supported ECUs
 
 ### I5 20v Turbo — Dual EPROM (fuel/ign + boost chip)

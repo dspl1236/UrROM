@@ -397,9 +397,13 @@ class OverviewTab(QWidget):
         self._main_chip_lbl.setText(
             f"Main chip: {det.variant.ecu_pns[0] if v and v.ecu_pns else '—'}  "
             f"•  {eprom_type}  •  WH 0x8000–0xFFFF")
-        if boost_det and boost_det.variant:
+        if boost_det is not None:
+            from urrom.ecu_profiles import KNOWN_CRCS as _KC
+            bl = _KC.get(getattr(boost_det, "crc32", 0), (None, ""))[1]
+            what = (boost_det.variant.software_id if getattr(boost_det, "variant", None)
+                    else (bl.split(" — ")[0] if bl else "loaded"))
             self._boost_chip_lbl.setText(
-                f"Boost chip: {boost_det.variant.software_id}  •  build 0x{boost_det.build_number:04X}")
+                f"Boost chip: {what}  •  CRC 0x{getattr(boost_det, 'crc32', 0):08X}")
             self._boost_chip_lbl.setStyleSheet(f"color:{GREEN};font-size:11px;")
         else:
             self._boost_chip_lbl.setText("Boost chip: not loaded")
@@ -407,11 +411,14 @@ class OverviewTab(QWidget):
 
         # Checksum state
         sw_id = v.software_id if v else ""
-        from urrom.ecu_profiles import CHECKSUM_VARIANTS
-        if sw_id in CHECKSUM_VARIANTS:
-            self._checksum_lbl.setText("PRJmod checksum: applied on save")
+        from urrom.ecu_profiles import checksum_kind
+        kind = checksum_kind(v)
+        if kind == "551":
+            self._checksum_lbl.setText("PRJmod checksum at 0x3FFA: applied on save")
+        elif kind == "404":
+            self._checksum_lbl.setText("Bosch 16-bit checksum at 0x7F00 (ECU checks it at boot): applied on save")
         else:
-            self._checksum_lbl.setText("Stock Bosch ID string (no computed checksum)")
+            self._checksum_lbl.setText("No software checksum on this chip")
 
         # Boost chip pairing hint
         from urrom.ecu_profiles import get_boost_pairing, KNOWN_CRCS
@@ -468,6 +475,7 @@ class OverviewTab(QWidget):
 
         # Tuning note for unconfirmed / stock variants
         notes_txt = []
+        from urrom.ecu_profiles import CHECKSUM_VARIANTS
         if sw_id not in CHECKSUM_VARIANTS:
             notes_txt.append("This is a stock Bosch ROM. Map addresses confirmed from direct chip reads.")
         unconfirmed = [m.name for m in all_maps if m.confidence == "UNCONFIRMED" and m.rows > 1]
