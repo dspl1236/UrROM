@@ -15,7 +15,7 @@ Ordered. Each item is scoped so it can land on its own.
 4. **Guard rails in the editor.** *(landed 2026-09-09: urrom/guards.py; Edit line + cell marks on both tabs; also fixed edits being lost after a map switch)* Sensor headroom, checksum, load-axis clamp,
    knock-retard region: warn while typing with the reason; a "what this edit
    changes" line in real units next to the raw byte.
-5. **Undo you can read.** Session log as sentences, exportable as the tune's
+5. **Undo you can read.** *(landed 2026-09-09: sentences with axis position and units, collapse per cell, commit message, Undo last edit, Ctrl+L dialog; boost edits logged too)* Session log as sentences, exportable as the tune's
    commit message.
 6. **Bench mode.** Drive the loaded maps with a simulated engine (KWPBridge's
    mock) so the cursor walks the surfaces before a real ECU is involved.

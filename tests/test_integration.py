@@ -1671,3 +1671,64 @@ class TestEditsSurviveMapSwitch:
         tab._table.item(m.rows - 1, 0).setText("30.0")
         assert tab._table._current_raw[0][0] != before
         assert tab._table.has_changes() and tab._revert_btn.isEnabled()
+
+
+# -- Roadmap item 5: readable session log / commit message (2026-09-09) ---------
+
+class TestSessionSentences:
+    def test_sentences_collapse_and_commit_message(self):
+        from urrom.session_log import SessionLog
+        from urrom.ecu_profiles import VARIANT_404, get_axes
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        ign = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x71F8)
+        rows, cols = get_axes(rom, ign, VARIANT_404)
+        log = SessionLog(rom_name="3b_fuel-ign_404aa.bin", variant_name="404")
+        r, c = rows.index(4600), cols.index(174)
+        log.record(ign, r, c, 43, 47, rows, cols, "main", VARIANT_404)      # 9.8 -> 12.8
+        log.record(ign, r, c, 47, 51, rows, cols, "main", VARIANT_404)      # 12.8 -> 15.8
+        log.record(ign, 0, 0, 49, 52, rows, cols, "main", VARIANT_404)
+        log.record(ign, 0, 0, 52, 49, rows, cols, "main", VARIANT_404)      # back to start -> drops out
+        sents = log.sentences()
+        assert len(sents) == 1
+        assert sents[0] == "Ignition Map 2 (main, coding A) at 4600 rpm / load 174: 9.8 → 15.8 °BTDC (+6)"
+        assert log.count == 4 and len(log.collapsed()) == 1
+        msg = log.commit_message()
+        assert msg.startswith("tune: 1 cell in 1 map — 404 (3b_fuel-ign_404aa.bin)")
+        assert "- Ignition Map 2 (main, coding A) [main]: 1 cell, mean +6.0" in msg
+        assert "  Ignition Map 2" in msg
+
+    def test_boost_sentence_uses_sensor_units(self):
+        from urrom.session_log import SessionLog
+        from urrom.ecu_profiles import VARIANT_404, get_axes
+        from urrom import boost_sensor as bs
+        bs.set_sensor("404", "bosch200"); bs.set_display("404", "kpa")
+        rom = bytes(load_rom("rr_boost_404b.bin"))
+        m = next(x for x in VARIANT_404.boost_maps if x.main_addr == 0x1934)
+        rows, cols = get_axes(rom, m, VARIANT_404)
+        log = SessionLog("rr_boost_404b.bin", "404")
+        log.record(m, 7, 8, 242, 250, rows, cols, "boost", VARIANT_404)
+        s = log.sentences()[0]
+        assert s.startswith("Boost Target B (normal IAT band, default) at TPS 219 / 4886 rpm: 189.8 → 196.1 kPa abs (+6.3)"), s
+        assert log.undo_last().new_raw == 250 and log.count == 0
+
+    def test_dialog_undo_reverts_current_map(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt5.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main8", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        win = mod.MainWindow()
+        for name in ("_load_rom", "_open_rom", "_load_main"):
+            if hasattr(win, name):
+                try: getattr(win, name)(Path(__file__).resolve().parent.parent / "roms" / "3b_fuel-ign_404aa.bin"); break
+                except TypeError: pass
+        tab = win._main_chip_tab
+        i = next(k for k, x in enumerate(tab._maps) if x.main_addr == 0x71F8); tab._on_map_selected_by_real_idx(i)
+        m = tab._table._map_def; before = tab._table._current_raw[0][0]
+        tab._table.item(m.rows - 1, 0).setText("30.0")
+        assert win._session_log.count == 1 and "600 rpm / load 14" in win._session_log.sentences()[0]
+        msg = win._undo_logged_edit()
+        assert msg.startswith("Undone:") and tab._table._current_raw[0][0] == before
+        assert win._session_log.count == 0
+        assert win._undo_logged_edit() == "Nothing to undo."

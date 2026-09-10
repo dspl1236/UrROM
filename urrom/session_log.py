@@ -31,6 +31,40 @@ class EditRecord:
     old_dec:    Optional[float]
     new_dec:    Optional[float]
     unit:       str
+    row_label:  Optional[float] = None     # axis value of the row (rpm on main chips, TPS on the boost chip)
+    col_label:  Optional[float] = None     # axis value of the column (load / rpm)
+    chip:       str = "main"
+    note:       str = ""
+
+    @property
+    def where(self) -> str:
+        """'4600 rpm / load 174' (main chip) or 'TPS 219 / 4886 rpm' (boost chip)."""
+        def f(v):
+            try:
+                return f"{float(v):.0f}"
+            except (TypeError, ValueError):
+                return "?"
+        if self.row_label is None and self.col_label is None:
+            return f"cell [{self.row},{self.col}]"
+        if self.chip == "boost":
+            return f"TPS {f(self.row_label)} / {f(self.col_label)} rpm"
+        return f"{f(self.row_label)} rpm / load {f(self.col_label)}"
+
+    def sentence(self) -> str:
+        if self.old_dec is not None and self.new_dec is not None and self.unit and self.unit != "raw":
+            d = self.new_dec - self.old_dec
+            return (f"{self.map_name} at {self.where}: {_fmt(self.old_dec)} → {_fmt(self.new_dec)} "
+                    f"{self.unit} ({'+' if d >= 0 else ''}{_fmt(d)})")
+        d = self.new_raw - self.old_raw
+        return f"{self.map_name} at {self.where}: raw {self.old_raw} → {self.new_raw} ({d:+d})"
+
+
+def _fmt(v) -> str:
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return f"{v:.0f}" if abs(v - round(v)) < 1e-9 else f"{v:.1f}"
 
 
 class SessionLog:
@@ -46,13 +80,26 @@ class SessionLog:
         self._records: list[EditRecord] = []
 
     def record(self, map_def, row: int, col: int,
-               old_raw: int, new_raw: int) -> None:
-        """Record a single cell edit. Skips if old == new."""
+               old_raw: int, new_raw: int,
+               row_axis=None, col_axis=None, chip: str = "main",
+               variant=None, note: str = "") -> None:
+        """Record a single cell edit with its axis position. Skips if old == new."""
         if old_raw == new_raw:
             return
-        decode = getattr(map_def, 'decode', None)
-        old_dec = decode(old_raw) if decode else None
-        new_dec = decode(new_raw) if decode else None
+        unit = getattr(map_def, 'unit', '') or ''
+        old_dec = new_dec = None
+        try:
+            from urrom.guards import _unit_value     # boost-sensor aware, pure
+            old_dec, unit = _unit_value(map_def, variant, old_raw)
+            new_dec, _ = _unit_value(map_def, variant, new_raw)
+            if unit == "raw":
+                old_dec = new_dec = None
+        except Exception:
+            decode = getattr(map_def, 'decode', None)
+            old_dec = decode(old_raw) if decode else None
+            new_dec = decode(new_raw) if decode else None
+        rl = row_axis[row] if row_axis is not None and row < len(row_axis) else None
+        cl = col_axis[col] if col_axis is not None and col < len(col_axis) else None
         self._records.append(EditRecord(
             timestamp  = datetime.now().strftime("%H:%M:%S"),
             map_name   = map_def.name,
@@ -60,8 +107,76 @@ class SessionLog:
             row=row, col=col,
             old_raw=old_raw, new_raw=new_raw,
             old_dec=old_dec, new_dec=new_dec,
-            unit=getattr(map_def, 'unit', '') or '',
+            unit=unit, row_label=rl, col_label=cl, chip=chip, note=note,
         ))
+
+    # ── readable log (roadmap item 5) ─────────────────────────────────────
+
+    @property
+    def records(self) -> list[EditRecord]:
+        return list(self._records)
+
+    def collapsed(self) -> list[EditRecord]:
+        """One record per cell: first old value → last new value, in first-edit
+        order; cells edited back to their starting value drop out."""
+        first: dict[tuple, EditRecord] = {}
+        last: dict[tuple, EditRecord] = {}
+        order: list[tuple] = []
+        for r in self._records:
+            key = (r.chip, r.map_addr, r.row, r.col)
+            if key not in first:
+                first[key] = r; order.append(key)
+            last[key] = r
+        out = []
+        for key in order:
+            a, b = first[key], last[key]
+            if a.old_raw == b.new_raw:
+                continue
+            out.append(EditRecord(timestamp=b.timestamp, map_name=a.map_name, map_addr=a.map_addr,
+                                  row=a.row, col=a.col, old_raw=a.old_raw, new_raw=b.new_raw,
+                                  old_dec=a.old_dec, new_dec=b.new_dec, unit=a.unit,
+                                  row_label=a.row_label, col_label=a.col_label, chip=a.chip, note=b.note))
+        return out
+
+    def sentences(self, collapse: bool = True) -> list[str]:
+        return [r.sentence() for r in (self.collapsed() if collapse else self._records)]
+
+    def summary_by_map(self) -> list[dict]:
+        by: dict[str, list[EditRecord]] = {}
+        for r in self.collapsed():
+            by.setdefault(r.map_name, []).append(r)
+        out = []
+        for name, recs in by.items():
+            if recs[0].old_dec is not None and recs[0].unit and recs[0].unit != "raw":
+                ds = [r.new_dec - r.old_dec for r in recs]; unit = recs[0].unit
+            else:
+                ds = [float(r.new_raw - r.old_raw) for r in recs]; unit = "raw"
+            out.append({"map": name, "chip": recs[0].chip, "cells": len(recs), "unit": unit,
+                        "mean": sum(ds) / len(ds), "min": min(ds), "max": max(ds)})
+        return out
+
+    def commit_message(self, max_lines: int = 60) -> str:
+        """A git-style message: one-line title, blank line, per-map summary, then the sentences."""
+        cells = self.collapsed()
+        maps = {r.map_name for r in cells}
+        title = (f"tune: {len(cells)} cell{'s' if len(cells) != 1 else ''} in {len(maps)} map{'s' if len(maps) != 1 else ''}"
+                 + (f" — {self.variant_name}" if self.variant_name else "")
+                 + (f" ({self.rom_name})" if self.rom_name else ""))
+        body = []
+        for m in self.summary_by_map():
+            body.append(f"- {m['map']} [{m['chip']}]: {m['cells']} cell{'s' if m['cells'] != 1 else ''}, "
+                        f"mean {m['mean']:+.1f}, {m['min']:+.1f}…{m['max']:+.1f} {m['unit']}")
+        sents = self.sentences()
+        shown = sents[:max_lines]
+        body.append("")
+        body += [f"  {x}" for x in shown]
+        if len(sents) > max_lines:
+            body.append(f"  … and {len(sents) - max_lines} more")
+        return title + "\n\n" + "\n".join(body).rstrip() + "\n"
+
+    def undo_last(self) -> Optional[EditRecord]:
+        """Pop and return the most recent raw edit (the editor applies the revert)."""
+        return self._records.pop() if self._records else None
 
     def clear(self) -> None:
         self._records.clear()

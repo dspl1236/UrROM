@@ -104,6 +104,9 @@ python -m urrom.cli coding rom.bin --volts 2.5   # coding-plug bands → ignitio
 ### Live recording and trace
 With KWPBridge connected, **Tools → Start recording live data…** writes every sample to a CSV that `Tools → Overlay data log on map…` replays onto any map. **Tools → Live trace on current map** paints where the engine actually runs: cells lighten with their hit count on the table (hover for the count), and the Heat / 3D views draw the same trace as sized markers. The trace follows map switches and survives until cleared.
 
+### Session log
+**Tools → Session log… (Ctrl+L)** lists every edit of the session as a sentence with its axis position and real units, e.g. `Ignition Map 2 (main, coding A) at 4600 rpm / load 174: 9.8 → 15.8 °BTDC (+6)`, collapsed to one line per cell (edits back to the starting value drop out). **Copy as commit message** gives a git-style title, a per-map summary and the sentences; **Undo last edit** reverts the most recent logged change in whichever tab holds that map; **Save…** writes text or HTML. Boost-chip edits are logged in the sensor's units.
+
 ### Guard rails
 Every edit gets an **Edit** line under the map: the change in raw and in real units (°BTDC, kPa abs or bar at the selected sensor, fuel %), followed by anything the firmware traces say it risks: a boost target within a few counts of the sensor's full scale, added advance in the knock region (load ≥ 130 at ≥ 3500 rpm) that the boost board's knock control will pull back, a step against neighbouring cells, fuel taken out under boost, the last load column that runs at all of full boost, a typed value the byte cannot hold, and the checksum that will be rewritten on save. Flagged cells turn amber or red and carry the same text in their tooltip. Nothing is blocked; the tuner decides.
 

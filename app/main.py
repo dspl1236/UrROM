@@ -1699,9 +1699,10 @@ class MainChipTab(QWidget):
         return -1
 
     def set_session_log_fn(self, fn):
-        """Register fn(map_def, r, c, old_raw, new_raw) for per-cell changelog."""
+        """Register fn(map_def, r, c, old_raw, new_raw, row_axis, col_axis, chip) for the session log."""
         if fn:
-            self._table._log_fn = lambda m, r, c, old, new: fn(m, r, c, old, new)
+            self._table._log_fn = lambda m, r, c, old, new: fn(
+                m, r, c, old, new, list(self._table._row_axis), list(self._table._col_axis), "main")
         else:
             self._table._log_fn = None
 
@@ -2503,6 +2504,14 @@ class BoostTab(QWidget):
     def use_external_selector(self, external: bool = True):
         self._map_combo.setVisible(not external)
         self._map_title.setVisible(external)
+
+    def set_session_log_fn(self, fn):
+        """Boost-chip edits go to the same session log, tagged chip='boost'."""
+        if fn:
+            self._table._log_fn = lambda m, r, c, old, new: fn(
+                m, r, c, old, new, list(self._table._row_axis), list(self._table._col_axis), "boost")
+        else:
+            self._table._log_fn = None
 
     # ── Table / Heat / 3D views ───────────────────────────────────────────
 
@@ -4323,9 +4332,11 @@ class MainWindow(QMainWindow):
         # Hover status + session log + title
         self._main_chip_tab.set_status_fn(self._update_status)
 
-        def _log_cell(map_def, r, c, old_raw, new_raw):
-            self._session_log.record(map_def, r, c, old_raw, new_raw)
+        def _log_cell(map_def, r, c, old_raw, new_raw, row_axis=None, col_axis=None, chip="main"):
+            self._session_log.record(map_def, r, c, old_raw, new_raw, row_axis, col_axis, chip,
+                                     variant=self._det.variant if self._det else None)
         self._main_chip_tab.set_session_log_fn(_log_cell)
+        self._boost_tab.set_session_log_fn(_log_cell)
         self._main_chip_tab.set_title_fn(lambda name: self._update_title(name))
 
         # Status bar
@@ -4599,6 +4610,11 @@ class MainWindow(QMainWindow):
         fpr_act.triggered.connect(self._on_fpr_calculator)
         tools_menu.addAction(fpr_act)
 
+        tools_menu.addSeparator()
+        sess_act = QAction("Session log…", self)
+        sess_act.setShortcut("Ctrl+L")
+        sess_act.triggered.connect(self._on_session_log_dialog)
+        tools_menu.addAction(sess_act)
         tools_menu.addSeparator()
         self._rec_act = QAction("Start recording live data…", self)
         self._rec_act.triggered.connect(self._on_toggle_recording)
@@ -5554,6 +5570,78 @@ class MainWindow(QMainWindow):
                 f"<body>{html_str}</body></html>")
         Path(path).write_text(full, encoding="utf-8")
         self._update_status(f"Exported → {Path(path).name}")
+
+    # ── Session log as sentences (roadmap item 5) ─────────────────────────
+
+    def _undo_logged_edit(self) -> str:
+        """Revert the most recent logged edit in whichever tab holds that map."""
+        rec = self._session_log.undo_last()
+        if rec is None:
+            return "Nothing to undo."
+        tab = self._boost_tab if rec.chip == "boost" else self._main_chip_tab
+        tbl = tab._table
+        if tbl._map_def is None or tbl._map_def.main_addr != rec.map_addr:
+            self._session_log._records.append(rec)
+            return f"Select {rec.map_name} in the {'boost' if rec.chip == 'boost' else 'editor'} tab first, then undo."
+        tbl._push_undo()
+        tbl._current_raw[rec.row][rec.col] = rec.old_raw
+        tbl._redraw()
+        tbl.dataEdited.emit()
+        if hasattr(tab, "on_table_changed"):
+            tab.on_table_changed()
+        self._set_dirty()
+        return f"Undone: {rec.sentence()}"
+
+    def _on_session_log_dialog(self):
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel, QApplication
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Session log")
+        dlg.setMinimumSize(720, 480)
+        dlg.setStyleSheet(f"background:{BG};color:{FG};")
+        lay = QVBoxLayout(dlg)
+        head = QLabel("")
+        head.setStyleSheet(f"color:{FG_DIM};font-size:10px;")
+        lay.addWidget(head)
+        txt = QTextEdit(); txt.setReadOnly(True)
+        txt.setStyleSheet(f"QTextEdit{{background:{BG2};color:{FG};border:1px solid {BORDER};"
+                          f"font-family:Consolas,monospace;font-size:11px;}}")
+        lay.addWidget(txt, 1)
+
+        def refresh():
+            log = self._session_log
+            cells = log.collapsed()
+            head.setText(f"{log.rom_name or 'ROM'}  ·  {log.variant_name}  ·  started {log.started_at}  ·  "
+                         f"{log.count} edits, {len(cells)} cells net")
+            txt.setPlainText(log.commit_message(max_lines=500) if cells else "No edits recorded in this session yet.")
+
+        row = QHBoxLayout()
+        def _btn(text, fn):
+            b = QPushButton(text); b.setFixedHeight(26)
+            b.setStyleSheet(f"QPushButton{{background:{BG3};color:{FG};border:1px solid {BORDER};"
+                            f"border-radius:3px;padding:0 10px;font-size:10px;}}"
+                            f"QPushButton:hover{{border-color:{ACCENT};}}")
+            b.clicked.connect(fn); row.addWidget(b); return b
+        def copy_msg():
+            QApplication.clipboard().setText(self._session_log.commit_message())
+            self._update_status("Commit message copied to the clipboard")
+        def undo():
+            self._update_status(self._undo_logged_edit()); refresh()
+        def save():
+            path, _ = QFileDialog.getSaveFileName(self, "Save session log", f"tune_{self._session_log.rom_name}.txt",
+                                                  "Text (*.txt);;HTML (*.html)")
+            if not path:
+                return
+            Path(path).write_text(self._session_log.to_html() if path.endswith(".html")
+                                  else self._session_log.commit_message(max_lines=10000), encoding="utf-8")
+            self._update_status(f"Session log saved → {Path(path).name}")
+        _btn("Undo last edit", undo)
+        _btn("Copy as commit message", copy_msg)
+        _btn("Save…", save)
+        row.addStretch()
+        _btn("Close", dlg.accept)
+        lay.addLayout(row)
+        refresh()
+        dlg.exec_()
 
     def _on_export_changelog(self):
         """Export the session edit changelog as HTML or text."""
