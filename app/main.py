@@ -1418,6 +1418,17 @@ class MapTable(QTableWidget):
         else:
             tint = None
 
+        # Repainting backgrounds fires itemChanged for every cell; without the
+        # loading guard each live sample looked like 256 edits and made the
+        # plot views rebuild their whole figure (bench mode + Heat froze).
+        was_loading = self._loading
+        self._loading = True
+        try:
+            self._paint_overlay_cells(nrows, ncols, active, kwp_col, kwp_row, tint)
+        finally:
+            self._loading = was_loading
+
+    def _paint_overlay_cells(self, nrows, ncols, active, kwp_col, kwp_row, tint):
         for r in range(nrows):
             disp_r = nrows - 1 - r
             for c in range(ncols):

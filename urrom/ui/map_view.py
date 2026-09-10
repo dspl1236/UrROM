@@ -15,7 +15,7 @@ mode), the real axes, changed cells, and the live KWP cursor.
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 
 try:
     import matplotlib
@@ -54,6 +54,18 @@ class MapPlotView(QWidget):
         self._cursor: tuple[int, int] | None = None
         self._trace: dict | None = None      # (r, c) -> hit count
         self._azim, self._elev = -60.0, 28.0
+        # Live overlay bookkeeping.  The base render (image / surface, value
+        # labels, colourbar, tight_layout) costs well over 100 ms for a 16x16
+        # map, so it is only rebuilt when the map itself changes.  Cursor and
+        # trace updates swap a handful of artists in place and are coalesced
+        # through a timer so a 10 Hz live feed cannot starve the event loop.
+        self._overlay_artists: list = []
+        self._base_shape: tuple[int, int] | None = None
+        self._overlay_pending = False
+        self._overlay_timer = QTimer(self)
+        self._overlay_timer.setSingleShot(True)
+        self._overlay_timer.setInterval(120)
+        self._overlay_timer.timeout.connect(self._flush_overlay)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -98,12 +110,88 @@ class MapPlotView(QWidget):
         new = None if r is None or c is None else (int(r), int(c))
         if new != self._cursor:
             self._cursor = new
-            self._draw()
+            self._schedule_overlay()
 
     def set_trace(self, hits: dict | None) -> None:
         """Per-cell hit counts painted over the map (None clears)."""
         self._trace = dict(hits) if hits else None
-        self._draw()
+        self._schedule_overlay()
+
+    def overlay_pending(self) -> bool:
+        """True while a coalesced cursor/trace repaint is waiting on the timer."""
+        return self._overlay_pending
+
+    # ── overlay (cursor + trace) ──────────────────────────────────────────
+
+    def _schedule_overlay(self) -> None:
+        if not _MPL:
+            return
+        if self._ax is None or self._base_shape is None:
+            self._draw()                    # nothing rendered yet: full build
+            return
+        self._overlay_pending = True
+        if not self._overlay_timer.isActive():
+            self._overlay_timer.start()
+
+    def _flush_overlay(self) -> None:
+        if not self._overlay_pending:
+            return
+        self._overlay_pending = False
+        if self._ax is None or self._base_shape is None:
+            self._draw()
+            return
+        self._paint_overlay()
+        self._canvas.draw_idle()
+
+    def _clear_overlay(self) -> None:
+        for a in self._overlay_artists:
+            try:
+                a.remove()
+            except Exception:
+                pass
+        self._overlay_artists = []
+
+    def _paint_overlay(self) -> None:
+        """(Re)draw cursor and trace on top of the existing base render."""
+        self._clear_overlay()
+        ax = self._ax
+        if ax is None or self._base_shape is None or not self._vals:
+            return
+        nrows, ncols = self._base_shape
+        Z = np.array(self._vals, dtype=float)
+        if Z.shape != (nrows, ncols):
+            return
+        vmin, vmax = float(Z.min()), float(Z.max())
+        if vmax <= vmin:
+            vmax = vmin + 1.0
+        arts = self._overlay_artists
+        if self._mode == "heat":
+            if self._trace:
+                mx = max(self._trace.values()) or 1
+                xs = [c for (_, c) in self._trace]; ys = [r for (r, _) in self._trace]
+                sz = [30 + 260 * (n / mx) for n in self._trace.values()]
+                arts.append(ax.scatter(xs, ys, s=sz, facecolors="none", edgecolors="#FFFFFF",
+                                       linewidths=1.2, alpha=0.9, zorder=5))
+            if self._cursor is not None:
+                r, c = self._cursor
+                arts.append(ax.add_patch(matplotlib.patches.Rectangle(
+                    (c - 0.5, r - 0.5), 1, 1, fill=False, lw=2.2, ec=AMBER)))
+        else:
+            if self._trace:
+                mx = max(self._trace.values()) or 1
+                pts = [(c, r, Z[r, c], n) for (r, c), n in self._trace.items()
+                       if 0 <= r < nrows and 0 <= c < ncols]
+                if pts:
+                    arts.append(ax.scatter([p[0] for p in pts], [p[1] for p in pts],
+                                           [p[2] + (vmax - vmin) * 0.02 for p in pts],
+                                           s=[12 + 120 * (p[3] / mx) for p in pts], c="#FFFFFF",
+                                           alpha=0.85, depthshade=False, zorder=9))
+            if self._cursor is not None:
+                r, c = self._cursor
+                if 0 <= r < nrows and 0 <= c < ncols:
+                    arts.append(ax.scatter([c], [r], [Z[r, c]], s=60, c=AMBER, depthshade=False, zorder=10))
+                    arts.extend(ax.plot([c, c], [r, r], [vmin - (vmax - vmin) * 0.15, Z[r, c]],
+                                        color=AMBER, lw=1.2))
 
     def clear(self) -> None:
         self._vals = []
@@ -122,6 +210,10 @@ class MapPlotView(QWidget):
         if not _MPL:
             return
         fig = self._fig
+        self._overlay_artists = []          # fig.clear() discards them with everything else
+        self._overlay_pending = False
+        self._overlay_timer.stop()
+        self._base_shape = None
         fig.clear()
         if not self._vals:
             ax = fig.add_subplot(111)
@@ -166,15 +258,6 @@ class MapPlotView(QWidget):
                         if self._changed[r][c]:
                             ax.add_patch(matplotlib.patches.Rectangle(
                                 (c - 0.5, r - 0.5), 1, 1, fill=False, lw=1.4, ec=CHANGED))
-            if self._trace:
-                mx = max(self._trace.values()) or 1
-                xs = [c for (_, c) in self._trace]; ys = [r for (r, _) in self._trace]
-                sz = [30 + 260 * (n / mx) for n in self._trace.values()]
-                ax.scatter(xs, ys, s=sz, facecolors="none", edgecolors="#FFFFFF", linewidths=1.2, alpha=0.9, zorder=5)
-            if self._cursor is not None:
-                r, c = self._cursor
-                ax.add_patch(matplotlib.patches.Rectangle(
-                    (c - 0.5, r - 0.5), 1, 1, fill=False, lw=2.2, ec=AMBER))
             cb = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
             cb.ax.tick_params(colors=FG_DIM, labelsize=7)
             cb.outline.set_edgecolor(BORDER)
@@ -194,17 +277,6 @@ class MapPlotView(QWidget):
                            cmap=self._cmap, levels=8, linewidths=0.8)
             except Exception:
                 pass
-            if self._trace:
-                mx = max(self._trace.values()) or 1
-                pts = [(c, r, Z[r, c], n) for (r, c), n in self._trace.items() if 0 <= r < nrows and 0 <= c < ncols]
-                if pts:
-                    ax.scatter([p[0] for p in pts], [p[1] for p in pts], [p[2] + (vmax - vmin) * 0.02 for p in pts],
-                               s=[12 + 120 * (p[3] / mx) for p in pts], c="#FFFFFF", alpha=0.85, depthshade=False, zorder=9)
-            if self._cursor is not None:
-                r, c = self._cursor
-                if 0 <= r < nrows and 0 <= c < ncols:
-                    ax.scatter([c], [r], [Z[r, c]], s=60, c=AMBER, depthshade=False, zorder=10)
-                    ax.plot([c, c], [r, r], [vmin - (vmax - vmin) * 0.15, Z[r, c]], color=AMBER, lw=1.2)
             step_c = max(1, ncols // 8); step_r = max(1, nrows // 8)
             ax.set_xticks(range(0, ncols, step_c)); ax.set_xticklabels([_fmt_axis(cols[i]) for i in range(0, ncols, step_c)], fontsize=7)
             ax.set_yticks(range(0, nrows, step_r)); ax.set_yticklabels([_fmt_axis(rows[i]) for i in range(0, nrows, step_r)], fontsize=7)
@@ -222,10 +294,12 @@ class MapPlotView(QWidget):
             cb.ax.tick_params(colors=FG_DIM, labelsize=7)
             cb.outline.set_edgecolor(BORDER)
             self._ax = ax
+        self._base_shape = (nrows, ncols)
         try:
             fig.tight_layout()
         except Exception:
             pass
+        self._paint_overlay()
         self._canvas.draw_idle()
 
 

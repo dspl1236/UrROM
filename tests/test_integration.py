@@ -1784,3 +1784,76 @@ class TestPsiDisplay:
             assert bs.kpa_to_psi_gauge(180) == 11.6       # 1.8 bar abs on the cluster
         finally:
             bs.set_display("404", "kpa")
+
+
+class TestPlotOverlayThrottle:
+    """Bench mode + Heat view froze the app: every live sample rebuilt the whole
+    figure (256 labels, colourbar, tight_layout).  Cursor/trace updates must now
+    leave the base render alone and be coalesced through a timer."""
+
+    @pytest.fixture(autouse=True)
+    def _qt(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        pytest.importorskip("matplotlib")
+        QApplication = pytest.importorskip("PyQt5.QtWidgets").QApplication
+        self.app = QApplication.instance() or QApplication([])
+
+    def _view(self, mode):
+        from urrom.ui.map_view import MapPlotView
+        from urrom.ecu_profiles import VARIANT_404, read_map, get_axes
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x6A8E)
+        rows, cols = get_axes(rom, m, VARIANT_404)
+        vals = [[m.decode(v) for v in r] for r in read_map(rom, m)]
+        v = MapPlotView(); v.resize(640, 480); v.set_mode(mode)
+        v.set_map(rows, cols, vals, unit="raw", title=m.name)
+        v._canvas.draw()
+        return v
+
+    @pytest.mark.parametrize("mode", ["heat", "3d"])
+    def test_cursor_updates_do_not_rebuild_the_base(self, mode):
+        import time
+        v = self._view(mode)
+        base_ax = v._ax
+        n_texts = len(v._ax.texts)
+        calls = []
+        orig = v._draw
+        v._draw = lambda: (calls.append(1), orig())
+        t0 = time.perf_counter()
+        for i in range(50):                          # 5 s of a 10 Hz feed, delivered in a burst
+            v.set_cursor(i % 16, (i * 3) % 16)
+            v.set_trace({(i % 16, (i * 3) % 16): i + 1})
+        burst = time.perf_counter() - t0
+        assert calls == [], "a cursor/trace update rebuilt the whole figure"
+        assert burst < 0.5, f"100 overlay updates took {burst:.2f}s"
+        assert v.overlay_pending()
+        t0 = time.time()
+        while v.overlay_pending() and time.time() - t0 < 2:
+            self.app.processEvents(); time.sleep(0.01)
+        assert not v.overlay_pending()
+        assert v._ax is base_ax and len(v._ax.texts) == n_texts
+        assert v._overlay_artists, "cursor and trace were not painted"
+        v._canvas.draw()
+        v.set_map(v._rows, v._cols, v._vals, unit="raw", title="again")
+        assert calls and v._ax is not base_ax and v._overlay_artists
+
+    def test_live_overlay_repaint_is_not_an_edit(self):
+        """MapTable._refresh_overlay repaints every cell; that must not emit dataEdited."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main_ov", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        from urrom.ecu_profiles import VARIANT_404, get_axes
+        rom = bytearray(load_rom("3b_fuel-ign_404aa.bin"))
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x6A8E)
+        tab = mod.MainChipTab()
+        tab.load(rom, VARIANT_404)
+        i = next(k for k, x in enumerate(tab._maps) if x.main_addr == 0x6A8E)
+        tab._on_map_selected_by_real_idx(i)
+        assert tab._table._map_def is m
+        edits = []
+        tab._table.dataEdited.connect(lambda: edits.append(1))
+        tab._table._kwp_active = True
+        for i in range(10):
+            tab._table._kwp_row, tab._table._kwp_col, tab._table._kwp_lambda = i, i, 1.0
+            tab._table._refresh_overlay()
+        assert edits == []

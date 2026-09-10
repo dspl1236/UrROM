@@ -276,9 +276,9 @@ def build() -> Path:
           P("<b>Tools → Bench mode (simulated engine)</b> starts KWPBridge's mock ECU for the loaded chip inside UrROM. "
             "The cursor walks the maps through cold start, idle, cruise, a boost run and decel, the trace fills in, and "
             "the badge reads BENCH. Use it to learn the maps or rehearse a session before the cable goes on.")]
-    s += shot("guide_bench.png", "Bench mode on a 3B: the file bar reads BENCH with the simulated rpm, coolant, lambda "
-              "and timing, the status bar mirrors it, and the Edit line under the table confirms the checksum will be "
-              "recomputed on save. The mock walks the live cursor across Fuel Map 1 exactly as a car would.")
+    s += shot("guide_bench.png", "Bench mode on a 3B, Heat view: the file bar reads BENCH with the simulated rpm, "
+              "coolant, lambda and timing, the amber square is the live cursor and the white rings are the trace "
+              "filling in as the mock walks Fuel Map 1 through warm-up exactly as a car would.")
     s += [CondPageBreak(90 * mm)]
 
     # ── 8 Session log ───────────────────────────────────────────────────
