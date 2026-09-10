@@ -18,7 +18,7 @@ the port is value-by-value, but the values line up.
 | `3b_fuel-ign_404aa.bin` | 404 | the user's 200 20v (target) |
 | `aby_fuel-ign_551aa.bin` | 551 0x2E17 | real S2 Coupé ABY read |
 | `adu_fuel-ign_551c.bin` | 551 0x2E17 | real RS2 ADU read |
-| `prj_stock_aan-aby_551aa_0202.bin` | 551 0x0E13 (prjmod layout) | prj's "stock AAN/ABY" calibration (github.com/prj/m232, MIT) |
+| `prj_stock_aan-aby_551aa_0202.bin` | 551 0x0E13 (prjmod layout) | prj's "stock AAN/ABY" calibration (github.com/prj/m232, GPL-3.0) |
 
 ## Role matching by raw similarity (3B ↔ 551, resampled, raw bytes)
 
