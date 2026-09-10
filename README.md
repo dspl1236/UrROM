@@ -200,7 +200,11 @@ The following items are known and tracked for future work:
 
 ## License
 
-MIT — see LICENSE file.
+GPL-3.0 — see [LICENSE](LICENSE). The launch-control routine applied by the Hardware tab is
+vwnut8392's S&M Msport V1.01 (his m232 suite is GPL-3.0), prj's base ROM is MIT, and the
+factory chip images in `roms/` are Bosch / Audi firmware published for interoperability and
+research as the m232 community already does; they are not covered by this license and will be
+removed on request from the rights holder.
 
 ### Reverse-engineering notes
 - [docs/3B_KW1281_RE.md](docs/3B_KW1281_RE.md) — the 3B's K-line dialect: ID blocks (coding number in block 3), 0x12 group read → 0xF4 ten-byte block, read-RAM window; KWPBridge `--ecu 3b` mock

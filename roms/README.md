@@ -122,7 +122,16 @@ including blank/erased chips not stored here.
 
 | File | Base | What changed | CRC32 | Status |
 |---|---|---|---|---|
-| `3b_stage1_boost_rrbase_plus5kpa.bin` | RR boost chip `0xEA8D46DF` | Boost Target A/B/C +6 raw, capped 250 → peak 196 kPa abs / +0.96 bar (200 kPa scale assumed); duty, gains, knock tables, ceilings untouched | `0x8F9059E2` | ⚠ TUNE — road test in progress (2026-09-09), see `docs/3B_stage1_notes.md` |
+| `3b_stage1_boost_rrbase_plus5kpa.bin` | RR boost chip `0xEA8D46DF` | Boost Target A/B/C +6 raw, capped 250 → peak 196 kPa abs / +0.96 bar (200 kPa scale assumed); duty, gains, knock tables, ceilings untouched | `0x8F9059E2` | ⚠ EXPERIMENTAL — one car, one road test, sensor scale unconfirmed; see below |
+
+**Read before burning the stage-1 chip.** It has run on exactly one car (a 1991 200 20V with a
+stock RR boost board, stock turbo, stock fuel/ign or the S2 chip) for a handful of full pulls, and
+the road feel was good. That is all the evidence there is. The boost-sensor scale is still an
+assumption (the +0.96 bar peak figure depends on it), no mechanical gauge reading has been logged
+yet, the knock tables are untouched so the ECU still protects itself, and there is no warranty of
+any kind. If your intake, turbo, fuel pump, injectors or sensor differ from stock, the numbers do
+not transfer. Keep the original chip and put it back at the first sign of knock or lean running.
+
 
 ## Burner images — `roms/27c512/`
 

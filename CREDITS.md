@@ -17,7 +17,9 @@ XDF format, 2018).  This covers:
 - MAP target, WGDC, knock thresholds, and 130+ additional tables
 - Confirmed decode equations: `1/(X/128)*14.7` for fuel, `0.75*(X-30)` for ignition
 
-**vwnut8392 / S2 Forum community** (`s2forum.com`)
+**vwnut8392 / S2 Forum community** (`s2forum.com`, `github.com/vwnut8392/m232`, GPL-3.0)
+The 3B spark-cut launch control (S&M Msport V1.01) that the Hardware tab installs is his patch,
+carried byte for byte with its ID text; UrROM only ports the apply/revert and exposes the scalars.
 Map addresses for the ADU/RS2 aftermarket (build `0x4533`) firmware via `RS2.xdf`:
 - Fuel enrichment: `0x2E17`
 - Ignition maps 1–7: `0x30AC` through `0x3931`
