@@ -1583,3 +1583,91 @@ class TestProvenance:
         bt = mod.BoostTab(); bt.load(bytearray(load_rom("3b_boost_404aa.bin")), VARIANT_404)
         bt._map_combo.setCurrentIndex(1)
         assert "boost MCU table list at 0x1600" in bt._table.item(0, 0).toolTip()
+
+
+# -- Roadmap item 4: guard rails in the editor (2026-09-09) ---------------------
+
+class TestGuards:
+    def _ign(self):
+        from urrom.ecu_profiles import VARIANT_404, get_axes, read_map
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x71F8)
+        rows, cols = get_axes(rom, m, VARIANT_404)
+        return VARIANT_404, m, rows, cols, read_map(rom, m)
+
+    def test_ignition_knock_region_and_step(self):
+        from urrom.guards import check_edit, describe_edit, worst
+        v, m, rows, cols, grid = self._ign()
+        r, c = rows.index(4600), cols.index(174)          # high load, mid rpm
+        orig = grid[r][c]
+        gs = check_edit(m, v, r, c, orig, orig + 6, orig, rows, cols, grid)   # +4.5 deg
+        assert any("knock" in g.text and g.level == "warn" for g in gs)
+        assert "+4.5" in describe_edit(m, v, orig, orig + 6)
+        gs2 = check_edit(m, v, r, c, orig, orig + 12, orig, rows, cols, grid)  # +9 deg -> step too
+        assert any("step" in g.text for g in gs2) and worst(gs2) == "warn"
+        low = check_edit(m, v, rows.index(1000), cols.index(24), grid[2][1], grid[2][1] + 2, grid[2][1], rows, cols, grid)
+        assert not any("knock" in g.text for g in low)
+        assert any("0x7F00" in g.text for g in low)          # checksum reminder on a 404 chip
+
+    def test_fuel_lean_and_top_column(self):
+        from urrom.guards import check_edit
+        from urrom.ecu_profiles import VARIANT_404, get_axes, read_map
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        m = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x6A8E)
+        rows, cols = get_axes(rom, m, VARIANT_404); grid = read_map(rom, m)
+        r, c = rows.index(5200), len(cols) - 1
+        orig = grid[r][c]
+        gs = check_edit(m, VARIANT_404, r, c, orig, orig - 8, orig, rows, cols, grid)
+        assert any("leaner" in g.text and g.level == "warn" for g in gs)
+        assert any("last load column" in g.text and g.level == "info" for g in gs)
+        richer = check_edit(m, VARIANT_404, r, c, orig, orig + 8, orig, rows, cols, grid)
+        assert not any("leaner" in g.text for g in richer)
+
+    def test_boost_ceiling(self):
+        from urrom.guards import check_edit, describe_edit
+        from urrom import boost_sensor as bs
+        from urrom.ecu_profiles import VARIANT_404
+        bs.set_sensor("404", "bosch200"); bs.set_display("404", "kpa")
+        m = next(x for x in VARIANT_404.boost_maps if x.main_addr == 0x1934)
+        gs = check_edit(m, VARIANT_404, 7, 8, 237, 252, 237, [], [])
+        assert any("headroom" in g.text and g.level == "warn" for g in gs)
+        assert any("200 kPa" in g.text and g.level == "info" for g in gs)
+        gs2 = check_edit(m, VARIANT_404, 7, 8, 237, 255, 237, [], [])
+        assert any(g.level == "stop" and "full scale" in g.text for g in gs2)
+        assert "kPa abs" in describe_edit(m, VARIANT_404, 237, 252) and "197.6" in describe_edit(m, VARIANT_404, 237, 252)
+
+    def test_editor_shows_edit_line_and_marks_cell(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt5.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main6", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        from urrom.ecu_profiles import VARIANT_404
+        tab = mod.MainChipTab(); tab.load(bytearray(load_rom("3b_fuel-ign_404aa.bin")), VARIANT_404)
+        i = next(k for k, x in enumerate(tab._maps) if x.main_addr == 0x71F8); tab._on_map_selected_by_real_idx(i)
+        rows, cols = tab.current_axes()
+        r, c = rows.index(4600), cols.index(174)
+        disp_r = tab._table._map_def.rows - 1 - r
+        tab._table.item(disp_r, c).setText("40.0")          # +? deg at high load
+        assert tab._edit_lbl.isVisibleTo(tab) and "knock" in tab._edit_lbl.text()
+        assert "⚠" in tab._table.item(disp_r, c).toolTip()
+        assert tab._table._guards[(r, c)]
+
+
+class TestEditsSurviveMapSwitch:
+    def test_edit_after_tree_selection_is_stored(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt5.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("urrom_app_main7", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        from urrom.ecu_profiles import VARIANT_404
+        tab = mod.MainChipTab(); tab.load(bytearray(load_rom("3b_fuel-ign_404aa.bin")), VARIANT_404)
+        for _ in range(2):                      # switch maps twice, as the tree does
+            i = next(k for k, x in enumerate(tab._maps) if x.main_addr == 0x71F8); tab._on_map_selected_by_real_idx(i)
+        m = tab._table._map_def; before = tab._table._current_raw[0][0]
+        tab._table.item(m.rows - 1, 0).setText("30.0")
+        assert tab._table._current_raw[0][0] != before
+        assert tab._table.has_changes() and tab._revert_btn.isEnabled()

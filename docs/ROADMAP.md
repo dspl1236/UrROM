@@ -12,7 +12,7 @@ Ordered. Each item is scoped so it can land on its own.
 3. **Provenance on every byte.** *(landed 2026-09-09: urrom/provenance.py chains per family; editor line + cell tooltips on main and boost tabs)* Per-cell tooltip: where the address came from
    (descriptor / XDF / diff), which chips confirmed it, the decode formula and
    its source.
-4. **Guard rails in the editor.** Sensor headroom, checksum, load-axis clamp,
+4. **Guard rails in the editor.** *(landed 2026-09-09: urrom/guards.py; Edit line + cell marks on both tabs; also fixed edits being lost after a map switch)* Sensor headroom, checksum, load-axis clamp,
    knock-retard region: warn while typing with the reason; a "what this edit
    changes" line in real units next to the raw byte.
 5. **Undo you can read.** Session log as sentences, exportable as the tune's

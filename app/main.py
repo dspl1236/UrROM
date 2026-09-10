@@ -625,6 +625,8 @@ class MapTable(QTableWidget):
         self._redo_stack:   list[list[list[int]]] = []
         self._annotations:  dict[tuple[int,int], str] = {}  # (raw_r, col) → note
         self._trace: dict[tuple[int,int], int] | None = None  # live/log hit counts
+        self._guards: dict[tuple[int,int], list] = {}         # (r, c) → [Guard] from the last edit
+        self._edit_cb = None                                  # fn(summary_text, guards)
         self._log_fn = None   # fn(map_def, r, c, old_raw, new_raw) for session log
         self._rpm_axis:  list = []
         self._load_axis: list = []
@@ -637,6 +639,10 @@ class MapTable(QTableWidget):
         self._status_callback = None   # set by MainChipTab to push msgs to status bar
         self.itemChanged.connect(self._on_cell_changed)
         self._loading = False
+
+    def set_edit_callback(self, fn) -> None:
+        """fn(summary: str, guards: list[Guard]) after every accepted edit."""
+        self._edit_cb = fn
 
     def set_variant(self, variant) -> None:
         """Variant of the loaded chip — enables provenance in cell tooltips."""
@@ -806,7 +812,33 @@ class MapTable(QTableWidget):
         item.setBackground(QBrush(bg))
         item.setForeground(QBrush(_text_colour(bg)))
         item.setData(Qt.UserRole, "changed" if changed else None)
+
+        # Guard rails (roadmap item 4): what the edit means, and what it risks
+        try:
+            from urrom.guards import check_edit, describe_edit, worst
+            guards = check_edit(self._map_def, getattr(self, "_variant", None), r_log, c_log,
+                                old_byte, raw_byte, orig, self._row_axis, self._col_axis,
+                                grid=self._current_raw, typed_value=val)
+            summary = describe_edit(self._map_def, getattr(self, "_variant", None), old_byte, raw_byte)
+        except Exception:
+            guards, summary = [], f"raw {old_byte} → {raw_byte}"
+        self._guards[(r_log, c_log)] = guards
+        level = worst(guards) if guards else ""
+        if level in ("warn", "stop"):
+            item.setForeground(QBrush(QColor(RED if level == "stop" else AMBER)))
+            f = item.font(); f.setBold(True); item.setFont(f)
+        tip = [f"raw: {raw_byte}  decoded: {display_text} {self._map_def.unit or ''}", summary]
+        tip += [("⛔ " if g.level == "stop" else "⚠ " if g.level == "warn" else "ⓘ ") + g.text for g in guards]
+        prov = self._provenance_tip()
+        if prov:
+            tip += ["", prov]
+        item.setToolTip("\n".join(tip))
         self._loading = False
+        if self._edit_cb:
+            try:
+                self._edit_cb(f"r{r_log} c{c_log}: {summary}", guards)
+            except Exception:
+                pass
         self.dataEdited.emit()
 
     def commit_to_rom(self, rom: bytearray) -> bytearray:
@@ -1569,6 +1601,8 @@ class MainChipTab(QWidget):
         self._view_mode = "table"
         self._table.dataEdited.connect(self._refresh_plot)
         QTimer.singleShot(0, self._restore_view)
+        self._edit_lbl = _make_edit_line(layout)
+        self._table.set_edit_callback(lambda summ, g: _show_edit_line(self._edit_lbl, summ, g))
 
         # Statistics strip — updates on selection change
         stats_row = QHBoxLayout()
@@ -1722,11 +1756,7 @@ class MainChipTab(QWidget):
             from urrom.ecu_profiles import get_axes
             rpm_axis, load_axis = get_axes(bytes(self._rom), m, self._variant)
             self._table.load(self._rom, m, rpm_axis, load_axis)
-            try:
-                self._table.itemChanged.disconnect()
-            except TypeError:
-                pass
-            self._table.itemChanged.connect(lambda _: self.on_table_changed())
+            self._ensure_table_wired()
             if hasattr(self, "_status_fn"):
                 self._table.set_status_callback(self._status_fn)
             self._map_title.setText(f"{m.name}   <span style='color:{FG_DIM};font-weight:normal;font-size:11px;'>{m.rows}\xd7{m.cols}  {m.unit}</span>")
@@ -1809,11 +1839,7 @@ class MainChipTab(QWidget):
 
         self._table.load(self._rom, m, rpm_axis, load_axis)
         # Re-wire the signal each time a new map is loaded
-        try:
-            self._table.itemChanged.disconnect()
-        except TypeError:
-            pass
-        self._table.itemChanged.connect(lambda _: self.on_table_changed())
+        self._ensure_table_wired()
         # Wire hover → status via callback set by MainWindow
         if hasattr(self, "_status_fn"):
             self._table.set_status_callback(self._status_fn)
@@ -2088,6 +2114,16 @@ class MainChipTab(QWidget):
     def has_changes(self) -> bool:
         return self._table.has_changes()
 
+    def _ensure_table_wired(self):
+        """Connect the tab's dirty-tracking to the table exactly once.
+
+        The old code called itemChanged.disconnect() on every map switch, which
+        also removed the table's own _on_cell_changed handler, so edits made
+        after switching maps were never stored (fixed 2026-09-09)."""
+        if not getattr(self, "_table_wired", False):
+            self._table.itemChanged.connect(lambda _: self.on_table_changed())
+            self._table_wired = True
+
     def on_table_changed(self):
         self._revert_btn.setEnabled(self._table.has_changes())
         # Notify parent window to update title
@@ -2257,6 +2293,8 @@ class BoostTab(QWidget):
         self._view_mode = "table"
         self._table.dataEdited.connect(self._refresh_plot)
         QTimer.singleShot(0, self._restore_view)
+        self._edit_lbl = _make_edit_line(layout)
+        self._table.set_edit_callback(lambda summ, g: _show_edit_line(self._edit_lbl, summ, g))
 
         layout.addStretch()
         self._boost_rom = None
@@ -2539,6 +2577,36 @@ class BoostTab(QWidget):
         self._status.setText("No boost chip loaded")
         self._note.setVisible(True)
         self._table.setVisible(False)
+
+
+# ── Edit line: what the last edit changed + guard rails ───────────────────────
+
+def _make_edit_line(layout) -> QLabel:
+    lbl = QLabel("")
+    lbl.setStyleSheet(
+        f"color:{FG};font-size:10px;padding:3px 8px;background:{BG2};"
+        f"border-left:2px solid {BORDER};border-radius:2px;")
+    lbl.setWordWrap(True)
+    lbl.setTextFormat(Qt.RichText)
+    lbl.setVisible(False)
+    layout.addWidget(lbl)
+    return lbl
+
+
+def _show_edit_line(lbl: QLabel, summary: str, guards) -> None:
+    from urrom.guards import worst
+    level = worst(guards) if guards else ""
+    border = RED if level == "stop" else AMBER if level == "warn" else BORDER
+    lbl.setStyleSheet(
+        f"color:{FG};font-size:10px;padding:3px 8px;background:{BG2};"
+        f"border-left:3px solid {border};border-radius:2px;")
+    parts = [f"<b>Edit</b> {summary}"]
+    for g in guards:
+        col = RED if g.level == "stop" else AMBER if g.level == "warn" else FG_DIM
+        mark = "⛔" if g.level == "stop" else "⚠" if g.level == "warn" else "ⓘ"
+        parts.append(f"<span style='color:{col}'>{mark} {g.text}</span>")
+    lbl.setText("<br>".join(parts))
+    lbl.setVisible(True)
 
 
 # ── Map view switch (Table / Heat / 3D) shared by the editor tabs ─────────────

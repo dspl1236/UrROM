@@ -104,6 +104,9 @@ python -m urrom.cli coding rom.bin --volts 2.5   # coding-plug bands → ignitio
 ### Live recording and trace
 With KWPBridge connected, **Tools → Start recording live data…** writes every sample to a CSV that `Tools → Overlay data log on map…` replays onto any map. **Tools → Live trace on current map** paints where the engine actually runs: cells lighten with their hit count on the table (hover for the count), and the Heat / 3D views draw the same trace as sized markers. The trace follows map switches and survives until cleared.
 
+### Guard rails
+Every edit gets an **Edit** line under the map: the change in raw and in real units (°BTDC, kPa abs or bar at the selected sensor, fuel %), followed by anything the firmware traces say it risks: a boost target within a few counts of the sensor's full scale, added advance in the knock region (load ≥ 130 at ≥ 3500 rpm) that the boost board's knock control will pull back, a step against neighbouring cells, fuel taken out under boost, the last load column that runs at all of full boost, a typed value the byte cannot hold, and the checksum that will be rewritten on save. Flagged cells turn amber or red and carry the same text in their tooltip. Nothing is blocked; the tuner decides.
+
 ### Provenance
 Every map shows where it came from: a line under the description and the tail of every cell's tooltip give the address source (firmware descriptor tables, XDF, or diff), the real chips it was confirmed on, the decode formula and where that formula was established, the axis source, any open caveat, and the docs section to read. `urrom/provenance.py` holds the chains per chip family; they cite the 2026-09 reverse-engineering notes in `docs/`.
 
