@@ -1353,7 +1353,7 @@ class TestMapPlotView:
     def _qt(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         pytest.importorskip("matplotlib")
-        from PyQt5.QtWidgets import QApplication
+        QApplication = pytest.importorskip("PyQt5.QtWidgets").QApplication
         self.app = QApplication.instance() or QApplication([])
 
     def test_renders_3b_ignition_both_modes(self):
@@ -1448,7 +1448,7 @@ class TestLiveLog:
     def test_table_and_plot_take_a_trace(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         pytest.importorskip("matplotlib")
-        from PyQt5.QtWidgets import QApplication
+        QApplication = pytest.importorskip("PyQt5.QtWidgets").QApplication
         QApplication.instance() or QApplication([])
         import importlib.util
         spec = importlib.util.spec_from_file_location("urrom_app_main3", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
@@ -1501,7 +1501,7 @@ class TestCompareTab:
     def _qt(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         pytest.importorskip("matplotlib")
-        from PyQt5.QtWidgets import QApplication
+        QApplication = pytest.importorskip("PyQt5.QtWidgets").QApplication
         self.app = QApplication.instance() or QApplication([])
         import importlib.util
         spec = importlib.util.spec_from_file_location("urrom_app_main4", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
@@ -1569,7 +1569,7 @@ class TestProvenance:
 
     def test_cell_tooltips_and_editor_line(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from PyQt5.QtWidgets import QApplication
+        QApplication = pytest.importorskip("PyQt5.QtWidgets").QApplication
         QApplication.instance() or QApplication([])
         import importlib.util
         spec = importlib.util.spec_from_file_location("urrom_app_main5", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
@@ -1638,7 +1638,7 @@ class TestGuards:
 
     def test_editor_shows_edit_line_and_marks_cell(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from PyQt5.QtWidgets import QApplication
+        QApplication = pytest.importorskip("PyQt5.QtWidgets").QApplication
         QApplication.instance() or QApplication([])
         import importlib.util
         spec = importlib.util.spec_from_file_location("urrom_app_main6", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
@@ -1658,7 +1658,7 @@ class TestGuards:
 class TestEditsSurviveMapSwitch:
     def test_edit_after_tree_selection_is_stored(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from PyQt5.QtWidgets import QApplication
+        QApplication = pytest.importorskip("PyQt5.QtWidgets").QApplication
         QApplication.instance() or QApplication([])
         import importlib.util
         spec = importlib.util.spec_from_file_location("urrom_app_main7", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
@@ -1713,7 +1713,7 @@ class TestSessionSentences:
 
     def test_dialog_undo_reverts_current_map(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from PyQt5.QtWidgets import QApplication
+        QApplication = pytest.importorskip("PyQt5.QtWidgets").QApplication
         QApplication.instance() or QApplication([])
         import importlib.util
         spec = importlib.util.spec_from_file_location("urrom_app_main8", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
@@ -1746,7 +1746,7 @@ class TestBenchMode:
         busy = s.connect_ex(("127.0.0.1", DEFAULT_PORT)) == 0; s.close()
         if busy:
             pytest.skip("a KWPBridge is already running on the default port")
-        from PyQt5.QtWidgets import QApplication
+        QApplication = pytest.importorskip("PyQt5.QtWidgets").QApplication
         app = QApplication.instance() or QApplication([])
         import importlib.util
         spec = importlib.util.spec_from_file_location("urrom_app_main9", str(Path(__file__).resolve().parent.parent / "app" / "main.py"))
