@@ -198,3 +198,42 @@ those from the chip's catalogue entry).
 Stock 3B target peak (raw 0xED) reads 186 kPa abs / +0.86 bar gauge at the
 assumed 200 kPa scale, or 242 kPa / +1.42 bar if the board were an MPX4250A —
 the logged boost reading from the car decides between them.
+
+## The control loop's pressure handling (traced 2026-09-10)
+
+- **72h = MAP sensor**, ADC channel 1 (`0x032B`: `ADCON=1`, wait, `72h = ADDAT`).
+  Channel 4 is IAT (`6Eh`), 3 → `71h`, 5 → `6Fh`, 7 → `73h` (TPS-derived).
+- **3Eh:3Fh** is the filtered pressure (16-bit accumulator, `0x0E5B`…`0x0E81`).
+- **42h = ambient reference**: set to `72h` at init (`0x0E09`) and then pulled
+  down whenever the sensor reads below it (`0x0E83`…`0x0EB2`, scaled by the
+  byte at `0x1DEA`, floored by `0x1C57`). It is the lowest pressure seen since
+  key-on, i.e. atmospheric.
+- **44h = boost above ambient** = `3Eh − 42h`, sign in `21h.5` (`0x0EB4`…`0x0EBF`).
+- **45h = target above ambient** = `3Dh − 42h`, sign in `20h.6` (`0x0EE9`…`0x0EEC`),
+  where `3Dh = table − 7Ah − 7Bh` (`0x0B84`): the Boost Target table value
+  (`0x12CA` lookup on the TPS axis `64h`) minus an adaptive offset `7Ah`
+  (tables `0x1EA2/0x1EB3/0x1EBB`, `0x10C4`) and a correction `7Bh` from the
+  small table at `0x1C6A` (`0x0B19`…`0x0B3F`, indexed from `73h` and `5Eh`).
+- The P/I loop then works on `45h` vs `44h` (`0x0F80`…); `4Bh` is the base
+  duty, `43h/3Bh` the output copies (`0x0DCD`), clamped by the per-band
+  ceiling at `0x1C47` (`0x0E16` → `0x1112`). The N75 PWM is CC1 on P1.1 with
+  on/off periods `D9h:DAh` / `DBh:DCh` (`0x0219`…`0x0245`).
+- Overboost checks compare `72h` directly against the per-band thresholds at
+  `0x1EC6` and the `0x1890` list (`0x1163`…`0x11DD`), setting `25h.3/27h.3`.
+
+**What this means for units.** The target tables are *absolute* sensor
+counts — the same scale as the raw ADC byte — and the controller subtracts
+its own measured ambient from both sides. So the sensor's transfer function
+never enters the control; it only decides what a count *is* in kPa. With the
+stock 200 kPa sensor a raw 237 target sits 109 counts above an ambient of
+~128 (≈ 0.86 bar); with an MPX4250A the same bytes sit 145 counts above an
+ambient of ~92 (≈ 1.42 bar). That is exactly why the 250 kPa swap raises
+boost without touching the tables.
+
+**The cluster gauge.** The main ECU never receives a pressure byte (its only
+shared bytes with the boost board are the two status bytes and the `0xA080`
+handshake latch), so the 200 20V's cluster boost display must be driven off
+the boost board itself. Its scaling constant has not been found yet, so a
+cluster reading (1.8 bar absolute reported on the stage-1 chip, 2026-09-10)
+cannot yet confirm the sensor scale; a mechanical gauge on the manifold can.
+
