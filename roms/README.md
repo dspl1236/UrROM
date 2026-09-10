@@ -59,7 +59,7 @@ including blank/erased chips not stored here.
 | `aan_fuel-ign_551a.bin` | 4A0907551A | AAN — UrS4/UrS6 D02PMC dist. | D02PMC dist | — | `0xF7432BB5` | ✗ BLANK |
 | `aan_fuel-ign_551aa.bin` | 4A0907551AA | AAN — UrS4/UrS6 D03PMC cam | D03PMC cam | — | `0xBF11DB48` | ✗ BLANK |
 | `aan_boost_551aa.bin` | 4A0907551AA boost | AAN boost chip (32KB) | — | — | `0x16707F66` | ✓ REAL |
-| `prj_stock_aan-aby_551aa_0202.bin` | 4A0907551AA (prjmod layout) | prj's AAN/ABY **base** (github.com/prj/m232, MIT): RS2 D02 firmware + the ABY/ADU/RS2 D02 calibration, but fuel and ign map 2 **re-gridded to a 10…240 load / 7400 rpm axis** (300 kPa-sensor shape), fuel +10…+28 raw at high load, map 2 −5…−13 raw in the boost region, map 4 −5.6 raw; maps 1/3/5/6/7 byte-identical to the real chips. Not AAN maps, not stock | — | `0x81D197CF` | ⚠ prj BASE tune |
+| `prj_stock_aan-aby_551aa_0202.bin` | 4A0907551AA (prjmod layout) | prj's AAN/ABY **base** (github.com/prj/m232, GPL-3.0): RS2 D02 firmware + the ABY/ADU/RS2 D02 calibration, but fuel and ign map 2 **re-gridded to a 10…240 load / 7400 rpm axis** (300 kPa-sensor shape), fuel +10…+28 raw at high load, map 2 −5…−13 raw in the boost region, map 4 −5.6 raw; maps 1/3/5/6/7 byte-identical to the real chips. Not AAN maps, not stock | — | `0x81D197CF` | ⚠ prj BASE tune |
 
 **Notes — M2.3.2 (551 family):**
 - Fuel/ign chip is 27C512 (64KB), split-bank: lower 32KB = firmware, upper 32KB =

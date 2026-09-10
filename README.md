@@ -201,7 +201,7 @@ The following items are known and tracked for future work:
 ## License
 
 GPL-3.0 — see [LICENSE](LICENSE). The launch-control routine applied by the Hardware tab is
-vwnut8392's S&M Msport V1.01 (his m232 suite is GPL-3.0), prj's base ROM is MIT, and the
+vwnut8392's S&M Msport V1.01 (his m232 suite is GPL-3.0), prj's m232 suite and base ROM are GPL-3.0, and the
 factory chip images in `roms/` are Bosch / Audi firmware published for interoperability and
 research as the m232 community already does; they are not covered by this license and will be
 removed on request from the rights holder.
