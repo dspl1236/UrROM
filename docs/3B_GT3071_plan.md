@@ -62,10 +62,15 @@ Check the 3B's regulator pressure before ordering: flow ratings are quoted at
    Load is MAF-derived; the MAP sensor only feeds a neutral 3-point table, so
    the 3-bar sensor matters on the boost board only. Fuel Map 4 is the
    coding-2/7 map under the boost-board flag, not a WOT map.
-2. **Load ceiling.** Raise `Load limiter 1/2` (done in the editor), then trace
-   how the main ECU derives load and whether the 190-count top of the fuel/ign
-   load axis can be re-gridded for a 3-bar sensor, as prj did on the 551
-   (10…240 axis in `prj_stock_aan-aby_551aa_0202.bin`).
+2. ~~Load ceiling~~ **Traced 2026-09-14**, see `docs/3B_load_headroom_RE.md`.
+   The MAF is a pulse counter on Timer 1; air-per-rev is clamped by the
+   `Air-per-rev cap` table (0x6970, = load 200 on every stock chip) 5 % above
+   the 190 axis top, then the maps hold their last column. A GT3071 at 23 psi
+   needs ~LOAD 280 in stock units, so the scale is compressed, not uncapped:
+   `python -m urrom.cli rescale-load 3b.bin out.bin --factor 0.75` scales the
+   MAF gain, all 22 load axes, the limiters and the closed-loop limits by k and
+   raises the cap to 255 (stock-load 340 of headroom). Still to do on the car:
+   log LOAD (group 000) on a full pull with the present chip to see the margin.
 3. **Boost board.** 3-bar sensor preset (034 VMAP scale is in the sensor list),
    targets, ceilings and the N75 duty tables rescaled; knock tables untouched.
 4. **Fuel and spark.** Fuel map 1/4 for the injectors, IAT compensation,

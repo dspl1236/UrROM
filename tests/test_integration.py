@@ -1972,3 +1972,38 @@ class TestInjectionPathFacts:
         assert [r[0] for r in read_map(rom, by[0x6967])] == [128, 128, 128]
         assert [r[0] for r in read_map(rom, by[0x6BC8])] == [216, 100, 48, 32, 11, 8]
         assert "WOT" not in by[0x6E98].description
+
+
+class TestLoadHeadroom:
+    def test_cap_and_gain_facts(self):
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        assert list(rom[0x6970:0x6974]) == [200] * 4            # cap = load 200 at every rpm
+        assert rom[0x6351] == 185 and rom[0x6352] == 3
+        # 0x0787: MOV R0,#8Bh; MOV A,@R0; MOV B,#19h; MUL AB  -> cap x 25
+        assert rom[0x0787:0x078E] == bytes.fromhex("788be675f019a4")
+        assert rom[0x1099:0x109C] == bytes.fromhex("758951")   # TMOD=0x51: Timer1 external counter (MAF)
+
+    def test_rescale_identity_and_075(self):
+        from urrom.load_rescale import rescale_load, load_axis_of, GAIN_ADDR
+        from urrom.ecu_profiles import VARIANT_404, verify_checksum_for, read_map, decode_descriptor_tables
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        same, r1 = rescale_load(rom, 1.0, cap=200)
+        assert bytes(same) == rom and r1.gain_after == 185
+        out, rep = rescale_load(rom, 0.75)
+        out = bytes(out)
+        assert verify_checksum_for(out, VARIANT_404)
+        assert out[GAIN_ADDR] == 139 and list(out[0x6970:0x6974]) == [255] * 4
+        assert load_axis_of(out, 0x6A8E)[-1] == 143 and load_axis_of(out, 0x6A8E)[0] == 11
+        assert load_axis_of(out, 0x71F8)[-1] == 143
+        assert list(out[0x6951:0x6956]) == [131, 131, 126, 120, 117]
+        # map data untouched, rpm axes untouched, every load axis still monotonic
+        fm = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x6A8E)
+        assert read_map(out, fm) == read_map(rom, fm)
+        for tb in decode_descriptor_tables(out):
+            if 0x3F not in (tb["x_input"], tb["y_input"]):
+                continue
+            for ax in (tb["x_axis"], tb["y_axis"]):
+                assert ax == sorted(ax) and len(set(ax)) == len(ax), hex(tb["data"])
+        rpm = [tb for tb in decode_descriptor_tables(out) if tb["data"] == 0x6A8E][0]["x_axis"]
+        assert rpm == [600, 1000, 1240, 1520, 1760, 2000, 2520, 3000, 3520, 4000, 4600, 5200, 5720, 6000, 6520, 7200]
+        assert len(rep.axes) == 22

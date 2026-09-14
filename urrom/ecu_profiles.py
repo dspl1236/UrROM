@@ -524,6 +524,29 @@ _MAPS_3B_MAIN = [
     _b3_raw("Cranking enrichment (ECT, 0x6BC8)", 0x6BC8, 6, 1,
             "Fuel task slot 15: 6-pt coolant table (216 100 48 32 11 8) used INSTEAD of the fuel map "
             "while cranking (28h.1).", conf="PROVISIONAL"),
+    _b3_raw("Air-per-rev cap (RPM, 0x6970)", 0x6970, 4, 1,
+            "Fuel task slot 1 -> RAM 8Bh: air-per-rev is clamped to value x 25 (0x0787), i.e. the "
+            "MAXIMUM LOAD the ECU can register, in load counts (200 = load 200 on every stock chip; "
+            "map axes end at 190). Raise to 255 for a bigger turbo; see docs/3B_load_headroom_RE.md.",
+            unit="load"),
+    _b3_raw("MAF gain / linearisation scalars (0x634F)", 0x634F, 1, 4,
+            "offset hi, offset lo (0x00F4), GAIN (185), exponent seed (3): air-per-rev = (offset + "
+            "MAF range offset) x GAIN x pulses >> exp. LOAD is proportional to GAIN; "
+            "urrom.load_rescale scales it with every load axis.", conf="PROVISIONAL"),
+    _b3_raw("MAF range offset A (RPM, 0x7000)", 0x7000, 6, 1,
+            "Task 0x1C42 slot 0 -> RAM 46h when 28h.6 (low pulse-rate class): hot-wire linearisation offset.",
+            conf="PROVISIONAL"),
+    _b3_raw("MAF range offset B (RPM, 0x7019)", 0x7019, 6, 1,
+            "Slot 1 -> 46h when 28h.7 (mid class).", conf="PROVISIONAL"),
+    _b3_raw("MAF range offset C (RPM, 0x7032)", 0x7032, 6, 1,
+            "Slot 2 -> 46h (high class).", conf="PROVISIONAL"),
+    _b3_raw("Transient enrichment (dLOAD index, 0x66F0)", 0x66F0, 1, 32,
+            "Indexed by 4Ah (0..31, the air-per-rev rise per event, 0x07A5-0x0831) x 60h -> 66h, added to "
+            "the pulse while it exceeds the running value (0x083A). Stock: 0 x4 then 13..255 ramp.",
+            conf="PROVISIONAL"),
+    _b3_raw("Transient ignition retard (dLOAD index, 0x6710)", 0x6710, 1, 32,
+            "Indexed by 4Ah; added to 59h and written to 54h (ignition) with 55h = cal[0x1D]+1 hold "
+            "(0x085E-0x087A). Stock: 0 x6, 5 6 7 8, then 10.", conf="PROVISIONAL"),
     _b3_raw("RPM fuel trim (0x6BBB)", 0x6BBB, 5, 1,
             "Fuel task slot 14: 5-pt rpm multiplier 2000..6000 (129 133 136 136 137, /128), skipped "
             "while 20h.1 is set.", unit="x", decode=_x128_decode, encode=_x128_encode, conf="PROVISIONAL"),

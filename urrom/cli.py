@@ -325,6 +325,28 @@ def cmd_coding(args):
         print(f"-> band {b.band}: {b.ign_set} {b.main_map}  (coding no. {b.coding_no})")
 
 
+def cmd_rescale_load(args):
+    """Compress the 404 load scale for a bigger turbo (docs/3B_load_headroom_RE.md)."""
+    import argparse
+    p = argparse.ArgumentParser(prog='urrom rescale-load')
+    p.add_argument('rom'); p.add_argument('out')
+    p.add_argument('--factor', type=float, required=True, help='0.2..1.0; stock-load headroom = 255/factor')
+    p.add_argument('--cap', type=int, default=255, help='new air-per-rev cap in load counts (default 255)')
+    ns = p.parse_args(args)
+    from urrom.load_rescale import rescale_load
+    path = Path(ns.rom)
+    if not path.exists():
+        print(f"ERROR: {path} not found"); sys.exit(3)
+    rom = path.read_bytes()
+    _, det = _load_rom(path)
+    sw = det.variant.software_id if det and det.variant else ""
+    if sw != "404":
+        print(f"ERROR: {path.name} is not a 3B/RR/S2 (404) fuel/ign chip ({sw or 'unknown'})"); sys.exit(2)
+    out, report = rescale_load(rom, ns.factor, ns.cap)
+    Path(ns.out).write_bytes(bytes(out))
+    print(report.text()); print(f"written {ns.out} (checksum applied)")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
         print("urrom <command> [options]")
@@ -334,6 +356,7 @@ def main():
         print("  chip <rom>  [--to 27c512|native]  — fill a 27C512 image / fold one back to native size")
         print("  xcompare <A> <B> [--role fuel|ign] — decoded cross-family map comparison (B resampled onto A)")
         print("  coding <rom> [--adc N | --volts V] — coding-plug bands -> ignition set (3B/RR/S2 and 551)")
+        print("  rescale-load <rom> <out> --factor K [--cap N] — compress the 404 load scale (GAIN, axes, limiters, cap)")
         sys.exit(0)
     cmd = sys.argv[1]
     rest = sys.argv[2:]
@@ -347,6 +370,8 @@ def main():
         cmd_chip(rest)
     elif cmd == 'xcompare':
         cmd_xcompare(rest)
+    elif cmd == 'rescale-load':
+        cmd_rescale_load(rest)
     elif cmd == 'coding':
         cmd_coding(rest)
     else:
