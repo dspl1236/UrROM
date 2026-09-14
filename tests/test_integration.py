@@ -1930,3 +1930,45 @@ class Test034Definitions:
         names = {m.name: m for m in d.maps}
         assert names["Load Limiter 1"].data_addr == 0x6951 and names["Load Limiter 1"].rows == 1
         assert names["Primary Timing Table"].decode(60) == 22.5
+
+
+class TestInjectionPathFacts:
+    """Anchors for docs/3B_injection_path_RE.md: the bytes the trace rests on."""
+
+    def test_fuel_map_selection_stub_and_output_pin(self):
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        # stub 0x3472: DPTR=#6360, 75h:76h = 65E4, then 20h.2 / A0h.4 / A0h.5 pick the index table
+        assert rom[0x3472:0x347B] == bytes.fromhex("90636075756575 76e4".replace(" ", ""))
+        assert rom[0x347E:0x3481] == bytes.fromhex("30021b")          # JNB 20h.2
+        picks = {0x3487: 0x60, 0x3491: 0x76, 0x3498: 0x4A, 0x34A2: 0x1E, 0x34AC: 0x34, 0x34B3: 0x08}
+        for addr, lo in picks.items():
+            assert rom[addr:addr + 3] == bytes([0x75, 0x78, lo]), hex(addr)
+        # Timer0 one-shot: MOV TL0,R6; MOV TH0,R7; SETB TR0; CLR P1.3 ... and TF0 ISR = SETB P1.3; RETI
+        assert rom[0x0AC8:0x0AD0] == bytes.fromhex("8e8a8f8cd28cc293")
+        assert rom[0x2010:0x2013] == bytes.fromhex("d29332")
+        # load = (40h:41h * 0xA4) >> 12  ->  MOV 3Fh,A at 0x1D6A after MOV R5,#A4h
+        assert rom[0x1D58:0x1D5A] == bytes.fromhex("7da4") and rom[0x1D6A:0x1D6C] == bytes.fromhex("f53f")
+
+    def test_index_tables_put_the_fuel_maps_in_slot_12(self):
+        from urrom.ecu_profiles import decode_descriptor_tables
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        ts = {t["data"]: t for t in decode_descriptor_tables(rom)}
+        ptr = 0x65E4
+        expect = {0x6008: 0x6A8E, 0x601E: 0x6C1C, 0x6034: 0x6A8E, 0x604A: 0x6D74, 0x6060: 0x6E98, 0x6076: 0x6D74}
+        for idx, fuel in expect.items():
+            ib = rom[idx + 12]; assert ib & 1, "fuel map slot must be 2-D"
+            desc = (rom[ptr + (ib & 0xFE)] << 8) | rom[ptr + (ib & 0xFE) + 1]
+            n = rom[desc + 1]; m = rom[desc + 2 + n + 1]
+            assert desc + 2 + n + 2 + m == fuel, hex(idx)
+            assert ts[fuel]["rows"] == 16 and ts[fuel]["cols"] == 16
+
+    def test_new_fuel_task_tables_are_profiled(self):
+        from urrom.ecu_profiles import VARIANT_404, get_axes, read_map
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        by = {m.main_addr: m for m in VARIANT_404.main_maps}
+        for a in (0x697B, 0x6967, 0x6A47, 0x6BC8, 0x6BBB, 0x698E, 0x6A31):
+            assert a in by, hex(a)
+        assert get_axes(rom, by[0x697B], VARIANT_404)[0] == [117, 147, 176, 206, 235]
+        assert [r[0] for r in read_map(rom, by[0x6967])] == [128, 128, 128]
+        assert [r[0] for r in read_map(rom, by[0x6BC8])] == [216, 100, 48, 32, 11, 8]
+        assert "WOT" not in by[0x6E98].description

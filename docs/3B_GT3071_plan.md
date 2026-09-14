@@ -54,10 +54,14 @@ Check the 3B's regulator pressure before ordering: flow ratings are quoted at
 
 ## Order of work on the 404
 
-1. **Find the 3B's injection-time path** in firmware: is there an injector
-   constant like the AAN's 0x8380, and how do Fuel Map 1–4 and the load signal
-   combine into pulse width. Decides whether a 550 cc swap is one scalar or a
-   map rescale.
+1. ~~Find the 3B's injection-time path~~ **Done 2026-09-14**, see
+   `docs/3B_injection_path_RE.md`. Pulse = MAF air-per-rev × fuel-map factor
+   (Q7) × warm-up / IAT / lambda terms, Timer 0 one-shot on P1.3. No injector
+   constant: a 550 cc swap is a rescale of the four fuel maps plus the cranking
+   and post-start tables (×stock/new), or of the MAF scale bytes at 0x6328.
+   Load is MAF-derived; the MAP sensor only feeds a neutral 3-point table, so
+   the 3-bar sensor matters on the boost board only. Fuel Map 4 is the
+   coding-2/7 map under the boost-board flag, not a WOT map.
 2. **Load ceiling.** Raise `Load limiter 1/2` (done in the editor), then trace
    how the main ECU derives load and whether the 190-count top of the fuel/ign
    load axis can be re-gridded for a 3-bar sensor, as prj did on the 551

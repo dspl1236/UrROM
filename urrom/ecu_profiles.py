@@ -454,10 +454,18 @@ def _b3_raw(name, addr, rows, cols, desc, unit="raw", conf="PROVISIONAL", decode
                   notes="Address and axes firmware-confirmed; function not yet traced.")
 
 _MAPS_3B_MAIN = [
-    _b3_fuel("Fuel Map 1", 0x6A8E, "Part-throttle fuel map 1 (primary). Header @ 0x6A6A, data +36."),
-    _b3_fuel("Fuel Map 2", 0x6C1C, "Fuel map 2 — identical to map 1 in stock chips (alternate/failsafe copy)."),
-    _b3_fuel("Fuel Map 3", 0x6D74, "Fuel map 3 — identical to map 1 in stock chips (alternate copy)."),
-    _b3_fuel("Fuel Map 4", 0x6E98, "Fuel map 4 — WOT / high-load enrichment (up to raw 205 on the S2 chip)."),
+    # Selection traced 2026-09-14 (docs/3B_injection_path_RE.md §2, stub 0x3472):
+    # boost-board flag 20h.2 clear -> map 1 (default) / map 2 (coding A0h.4 = coding no. 2, 7);
+    # 20h.2 set -> map 3 (default) / map 4 (A0h.4).  Values are Q7 factors, 128 = 1.00,
+    # multiplied into the MAF air-per-rev pulse with warm-up, IAT and lambda terms.
+    _b3_fuel("Fuel Map 1", 0x6A8E, "Fuel map 1: the DEFAULT map (boost-board flag 20h.2 clear, coding bits "
+                                   "A0h.4/.5 clear). Q7 factor, 128 = 1.00. Header @ 0x6A6A, data +36."),
+    _b3_fuel("Fuel Map 2", 0x6C1C, "Fuel map 2: coding numbers 2 / 7 (A0h.4) with the boost-board flag clear. "
+                                   "Identical to map 1 on stock chips."),
+    _b3_fuel("Fuel Map 3", 0x6D74, "Fuel map 3: DEFAULT map when the boost-board flag 20h.2 is set. "
+                                   "Identical to map 1 on stock chips."),
+    _b3_fuel("Fuel Map 4", 0x6E98, "Fuel map 4: coding numbers 2 / 7 (A0h.4) with the boost-board flag set "
+                                   "(not a full-load enrichment map: same axes and role as the others)."),
     _b3_ign("Ignition Map 1 (fault fallback)", 0x7076,
             "Read via slot 04 when any of the fault flags XRAM F3.0 / F4.0 / D9.0 / D9.1 is set "
             "(IGN_CALC 0x1611-0x162F). Byte-identical on 3B / RR / S2. Decode raw×0.75−22.5."),
@@ -498,8 +506,27 @@ _MAPS_3B_MAIN = [
             unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
     _b3_raw("RPM x Load 6x8 (0x7CB2)", 0x7CB2, 6, 8, "6 RPM x 8 load table."),
     _b3_raw("RPM x Load 6x4 (0x7D4A)", 0x7D4A, 6, 4, "6 RPM x 4 load table."),
-    _b3_raw("RPM x Load 6x4 (0x698E)", 0x698E, 6, 4, "6 RPM x 4 load table (800–…rpm)."),
-    _b3_raw("RPM x Load 5x3 (0x6A31)", 0x6A31, 5, 3, "5 RPM x 3 load table."),
+    _b3_raw("Air-per-rev filter gain (RPM x Load, 0x698E)", 0x698E, 6, 4,
+            "Fuel task slot 3 -> RAM 65h: gain of the 40h:41h air-per-rev filter that load (3Fh) is "
+            "derived from (docs/3B_injection_path_RE.md §4)."),
+    _b3_raw("Warm-up shaping (RPM x Load, 0x6A31)", 0x6A31, 5, 3,
+            "Fuel task slot 7: multiplies the warm-up enrichment (0x6A01) by rpm/load. Q7, 128 = 1.00."),
+    _b3_raw("Injector voltage correction (UBAT, 0x697B)", 0x697B, 5, 1,
+            "Fuel task slot 2 -> RAM 6Fh: 5-pt battery-voltage table (117..235 raw), 208 -> 39 with "
+            "rising voltage: injector dead-time / opening compensation.", conf="PROVISIONAL"),
+    _b3_raw("MAP pulse correction (0x6967)", 0x6967, 3, 1,
+            "Fuel task slot 0: 3-pt table on the MAP sensor (ADC ch5, RAM 39h) -> signed RAM 63h, "
+            "added x5 to the injection pulse. 128/128/128 = no effect on every stock chip; the ONLY "
+            "place the main ECU reads the MAP sensor.", conf="PROVISIONAL"),
+    _b3_raw("Post-start enrichment (ECT, 0x6A47)", 0x6A47, 5, 1,
+            "Fuel task slot 8: 5-pt coolant table (255 123 40 18 6) multiplied into the pulse after "
+            "start and decayed through table 0x6760.", conf="PROVISIONAL"),
+    _b3_raw("Cranking enrichment (ECT, 0x6BC8)", 0x6BC8, 6, 1,
+            "Fuel task slot 15: 6-pt coolant table (216 100 48 32 11 8) used INSTEAD of the fuel map "
+            "while cranking (28h.1).", conf="PROVISIONAL"),
+    _b3_raw("RPM fuel trim (0x6BBB)", 0x6BBB, 5, 1,
+            "Fuel task slot 14: 5-pt rpm multiplier 2000..6000 (129 133 136 136 137, /128), skipped "
+            "while 20h.1 is set.", unit="x", decode=_x128_decode, encode=_x128_encode, conf="PROVISIONAL"),
     _b3_raw("RPM x Load 3x4 (0x69B1)", 0x69B1, 3, 4, "3 RPM x 4 load table."),
     _b3_raw("Dwell / RPM x UBAT 12x12 (0x68BA)", 0x68BA, 12, 12,
             "12 RPM x 12 battery-voltage table — the 551 has the same shape as its dwell map."),

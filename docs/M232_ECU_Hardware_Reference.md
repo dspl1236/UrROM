@@ -811,7 +811,7 @@ align the DPTR push sequence with a slightly different register state.
 #### Timer0 ISR: the actual hardware difference
 
 ```
-3B   Timer0: d2 93 32 → SETB P1.3, RETI    (drives single ignition coil)
+3B   Timer0: d2 93 32 → SETB P1.3, RETI    (ends the injector pulse — P1.3 is the injector drive, P1.5 the coil; see docs/3B_injection_path_RE.md §5)
 551AA Timer0: d2 eb 32 → SETB bit_0xEB, RETI (drives coil pack output circuit)
 ```
 
