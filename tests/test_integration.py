@@ -1331,13 +1331,30 @@ class TestPublishedImages:
                 covered.add(addr + i)
         assert all(st[i] == rr[i] for i in range(len(rr)) if i not in covered)
 
+    def test_hybrid_is_3b_with_s2_ignition_maps(self):
+        from urrom.ecu_profiles import VARIANT_404, KNOWN_CRCS, verify_checksum_for
+        import zlib
+        b3 = bytes(load_rom("3b_fuel-ign_404aa.bin")); s2 = bytes(load_rom("s2_fuel-ign_404.bin"))
+        hy = bytes(load_rom("tunes/3b_hybrid_3bfuel_s2ign_404aa.bin"))
+        assert zlib.crc32(hy) & 0xFFFFFFFF in KNOWN_CRCS
+        assert verify_checksum_for(hy, VARIANT_404)
+        s2_cells = set()
+        for m in VARIANT_404.main_maps:
+            if m.main_addr in (0x71F8, 0x731C, 0x7667, 0x77CF, 0x7937):
+                s2_cells.update(range(m.main_addr, m.main_addr + m.rows * m.cols))
+        assert len(s2_cells) == 1280
+        for i in range(0x7F00):
+            assert hy[i] == (s2[i] if i in s2_cells else b3[i]), hex(i)
+        assert hy[0x7F02:] == b3[0x7F02:]          # ID text and everything after the checksum = 3B
+
     def test_27c512_images_fold_to_their_chips(self):
         from urrom.ecu_profiles import fold_repeated_image, verify_checksum_404
         pairs = {"3b_fuel-ign_404aa_27C512.bin": ("3b_fuel-ign_404aa.bin", 2),
                  "3b_boost_404aa_27C512.bin": ("3b_boost_404aa.bin", 8),
                  "rr_boost_404b_27C512.bin": ("rr_boost_404b.bin", 8),
                  "s2_fuel-ign_404_27C512.bin": ("s2_fuel-ign_404.bin", 2),
-                 "3b_stage1_boost_rrbase_plus5kpa_27C512.bin": ("tunes/3b_stage1_boost_rrbase_plus5kpa.bin", 8)}
+                 "3b_stage1_boost_rrbase_plus5kpa_27C512.bin": ("tunes/3b_stage1_boost_rrbase_plus5kpa.bin", 8),
+                 "3b_hybrid_3bfuel_s2ign_404aa_27C512.bin": ("tunes/3b_hybrid_3bfuel_s2ign_404aa.bin", 2)}
         for img, (native, copies) in pairs.items():
             b = bytes(load_rom("27c512/" + img)); o = bytes(load_rom(native))
             folded, n, _ = fold_repeated_image(b)

@@ -64,6 +64,37 @@ tables and ceilings untouched. `3b_stage1_boost_rrbase_plus5kpa.bin` and its
 27C512 image in the same folder. **Untested on a car** — run with a boost
 gauge.
 
+## Road test 2 and the hybrid chip (2026-09-14)
+
+After a few days on RR boost + S2 fuel/ign the car stumbles slightly at a
+2000 rpm cruise when the throttle is leaned in and boost starts to arrive.
+Two things meet in that cell:
+
+- **RR N75 base duty below 3300 rpm is roughly double the 3B's** (TPS 99 /
+  2252 rpm: 3B 28.6 %, RR 44.3 %; TPS 118: 32.9 % vs 51.4 %). The targets are
+  only +5 kPa, but the wastegate is held shut much harder at low rpm, so boost
+  arrives sooner. Above 3300 rpm the two chips are nearly the same.
+- **The S2 fuel maps are 3–6 raw leaner at 1760–2000 rpm / load 14–66** (1760
+  rpm / load 54: 3B 128, S2 122, about 5 % leaner). S2 ignition at those cells
+  equals the 3B or is a degree softer, so knock retard is the less likely cause.
+
+Byte diff of the two fuel/ign chips (1578 bytes): fuel maps 1–4 (255 each),
+ignition maps 2/3/5/6/7 (the S2's 0x731C map 3 differs in full), single bytes
+in the idle ignition maps, 19 bytes at 0x7BE8 (unlabelled ramp table), 8 at
+0x7542, the ID/serial text and checksum, and the shared rpm axis top point:
+**S2 = 7000 rpm, 3B = 7200 rpm** (the `11 4C` / `0C 51` pair before every map).
+Ignition maps 1 and 4 and all axes below the top row are identical.
+
+**Hybrid chip** `roms/tunes/3b_hybrid_3bfuel_s2ign_404aa.bin` (CRC
+`0x8C966737`, 27C512 image `0x0748FFD0`): the 3B chip with the S2's ignition
+maps 2/3/5/6/7 copied in (1280 bytes), checksum recomputed. Fuel maps, idle
+ignition, the 7200 rpm axis, the unlabelled tables and the ID text stay 3B.
+The S2's 7000 rpm row lands on the 3B's 7200 rpm breakpoint; the two top rows
+differ by at most one step, and the rev limiter sits below either. Intended
+pairing: hybrid fuel/ign + RR (or stage-1) boost. If the stumble survives it,
+the next move is a softer-spool RR boost chip: RR targets with the 3B duty in
+the 2252–3304 rpm columns.
+
 ## The real ceiling
 
 Raw 255 = 200 kPa on the stock sensor, so +1.0 bar gauge is the most any

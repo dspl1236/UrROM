@@ -122,6 +122,7 @@ including blank/erased chips not stored here.
 
 | File | Base | What changed | CRC32 | Status |
 |---|---|---|---|---|
+| `3b_hybrid_3bfuel_s2ign_404aa.bin` | 3B fuel/ign chip `0x0AE3CACD` | S2 ignition maps 2/3/5/6/7 copied in (1280 bytes); 3B fuel maps 1–4, idle ignition A–E, axes (7200 rpm top row), ID text kept; checksum at 0x7F00 recomputed | `0x8C966737` | ⚠ EXPERIMENTAL — built 2026-09-14 for the 2000 rpm stumble on RR boost + S2 fuel/ign; not yet driven |
 | `3b_stage1_boost_rrbase_plus5kpa.bin` | RR boost chip `0xEA8D46DF` | Boost Target A/B/C +6 raw, capped 250 → peak 196 kPa abs / +0.96 bar (200 kPa scale assumed); duty, gains, knock tables, ceilings untouched | `0x8F9059E2` | ⚠ EXPERIMENTAL — one car, one road test, sensor scale unconfirmed; see below |
 
 **Read before burning the stage-1 chip.** It has run on exactly one car (a 1991 200 20V with a
@@ -146,10 +147,13 @@ native` folds them back; UrROM's File → Open does it automatically.
 | `rr_boost_404b_27C512.bin` | `rr_boost_404b.bin` (stock RR boost) | 8 | `0xD2D38A92` |
 | `s2_fuel-ign_404_27C512.bin` | `s2_fuel-ign_404.bin` (stock S2, checksum OK) | 2 | `0x8405BD3F` |
 | `3b_stage1_boost_rrbase_plus5kpa_27C512.bin` | `tunes/3b_stage1_boost_rrbase_plus5kpa.bin` | 8 | `0xA3792C99` |
+| `3b_hybrid_3bfuel_s2ign_404aa_27C512.bin` | `tunes/3b_hybrid_3bfuel_s2ign_404aa.bin` | 2 | `0x0748FFD0` |
 
 OEM combo for a 3B: `rr_boost_404b_27C512` + `s2_fuel-ign_404_27C512`
 (or the car's own 3B fuel/ign chip). Stage 1: the `3b_stage1_boost…` image
-in place of the RR one. All 404 fuel/ign images carry a valid 16-bit
+in place of the RR one. If the S2 fuel map stumbles at 2000 rpm on the RR
+boost chip, `3b_hybrid_3bfuel_s2ign_404aa_27C512` keeps the S2 timing on the
+3B fuel maps. All 404 fuel/ign images carry a valid 16-bit
 checksum at 0x7F00, which the ECU verifies at boot.
 
 ## Calibration Status Key

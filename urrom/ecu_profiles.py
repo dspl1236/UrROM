@@ -2086,6 +2086,11 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                                "A/B/C +6 raw capped at 250: peak 196 kPa abs / +0.96 bar at the assumed 200 kPa "
                                "sensor scale. Duty, gains, knock tables, ceilings = RR. Pair with 3B or S2 "
                                "fuel/ign chip. roms/tunes/3b_stage1_boost_rrbase_plus5kpa.bin. Road test in progress."),
+    0x8C966737: ("404",       "UrROM HYBRID (2026-09-14) — 3B 447907404AA fuel/ign chip with the S2 895907404 "
+                               "ignition maps 2/3/5/6/7 (1280 bytes) dropped in; fuel maps, idle ignition, axes, "
+                               "ID text = 3B. Checksum at 0x7F00 valid. For a 3B on the RR boost chip that "
+                               "stumbled at 2000 rpm on the leaner S2 fuel map. "
+                               "roms/tunes/3b_hybrid_3bfuel_s2ign_404aa.bin"),
     0xEA8D46DF: ("404_boost", "Stock — RR boost chip, 857907404B, build 0x0255 (direct read). "
                                "Executable 8051 MCU code — NOT a data-only ROM. "
                                "Correct filename: rr_boost_404b.bin"),
