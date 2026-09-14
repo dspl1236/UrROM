@@ -431,6 +431,22 @@ def _b3_ign(name, addr, desc):
                   notes="Firmware descriptor table (X=RPM 3Ah, Y=LOAD 3Fh). "
                         "Which condition selects it is still to be traced.")
 
+def _x128_decode(raw: int) -> float:
+    return round(raw / 128.0, 3)
+
+
+def _x128_encode(v: float) -> int:
+    return max(0, min(255, round(float(v) * 128.0)))
+
+
+def _x10_decode(raw: int) -> float:
+    return float(raw * 10)
+
+
+def _x10_encode(v: float) -> int:
+    return max(0, min(255, round(float(v) / 10.0)))
+
+
 def _b3_raw(name, addr, rows, cols, desc, unit="raw", conf="PROVISIONAL", decode=None, encode=None):
     return MapDef(name, desc, main_addr=addr, rows=rows, cols=cols,
                   map_type="raw" if decode is None else "ign", unit=unit,
@@ -488,8 +504,49 @@ _MAPS_3B_MAIN = [
     _b3_raw("Dwell / RPM x UBAT 12x12 (0x68BA)", 0x68BA, 12, 12,
             "12 RPM x 12 battery-voltage table — the 551 has the same shape as its dwell map."),
     _b3_raw("RPM x UBAT 12x7 (0x7583)", 0x7583, 12, 7, "12 RPM x 7 battery-voltage table."),
-    _b3_raw("RPM x IAT 6x4 (0x6B9C)", 0x6B9C, 6, 4,
-            "6 RPM x 4 IAT table — differs S2 vs 3B (IAT breakpoints 82.. vs 120..)."),
+    _b3_raw("IAT fuel compensation (RPM x IAT, 0x6B9C)", 0x6B9C, 6, 4,
+            "6 RPM x 4 IAT multiplier, raw/128 (1.00 → 1.14 on the 3B, S2 flatter and leaner). "
+            "Name and scale from 034's Rip Chip 3B definition; address and axes firmware-confirmed. "
+            "Differs S2 vs 3B (IAT breakpoints 82.. vs 120..).",
+            unit="x", decode=_x128_decode, encode=_x128_encode),
+
+    # ── 1-D limiter / idle tables named by 034's Rip Chip "3B ECU Generic 1.01" ─
+    # definition (Z:\...\034 Files\3B ECU Generic 1.01.ECU, decoded 2026-09-14).  034's
+    # axis addresses were off (they read the raw deltas), but every data address
+    # is in the 3B firmware's descriptor index with an exact [xin][n][deltas]
+    # header, so the addresses and axes are confirmed; the function names are
+    # 034's and are consistent with the values (RR raises limiter 1 with its boost).
+    _b3_raw("Load limiter 1 (fuel cut, 0x6951)", 0x6951, 5, 1,
+            "5-pt RPM table (2000…6000) of the maximum load before fuel cut, in the same "
+            "counts as the map load axis (3B 174 174 168 160 156; RR 180 at 2000). 034: "
+            "'fuel cut will occur if too much boost/load is run and this table is not set "
+            "sufficiently high' — the ceiling to raise for a bigger turbo.",
+            unit="load", conf="PROVISIONAL"),
+    _b3_raw("Load limiter 2 (limp, 0x695D)", 0x695D, 5, 1,
+            "Same axis; the load ceiling used in limp mode (3B 140 130 130 120 110).",
+            unit="load", conf="PROVISIONAL"),
+    _b3_raw("Closed-loop lambda load limit (0x7C72)", 0x7C72, 6, 1,
+            "6-pt RPM table (1000…6520): above this load the ECU leaves closed-loop "
+            "lambda control and runs the fuel maps open loop (3B 54 90 96 80 62 50).",
+            unit="load", conf="PROVISIONAL"),
+    _b3_raw("Closed-loop lambda load limit, limp (0x7C80)", 0x7C80, 6, 1,
+            "Limp-mode copy of the closed-loop load limit.", unit="load", conf="PROVISIONAL"),
+    _b3_raw("Idle timing by RPM (0x717F)", 0x717F, 7, 1,
+            "7-pt RPM table (560…2800) of ignition at idle. First point differs S2 vs 3B "
+            "(9.75° vs 15°).",
+            unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
+    _b3_raw("Decel fuel-cut threshold (0x6FE6)", 0x6FE6, 4, 1,
+            "4-pt RPM table (2000…5000); 034 calls it the overrun cut-off (raw 10 13 13 13).",
+            conf="PROVISIONAL"),
+    _b3_raw("Idle target RPM by coolant (0x7B83)", 0x7B83, 3, 1,
+            "3-pt coolant-temperature table (raw axis 3/82/143) of target idle speed, "
+            "raw x10 rpm: 1300 / 1000 / 800.",
+            unit="rpm", decode=_x10_decode, encode=_x10_encode, conf="PROVISIONAL"),
+    _b3_raw("Warm-up enrichment (ECT x IAT, 0x6A01)", 0x6A01, 6, 6,
+            "6 coolant x 6 IAT multiplier, raw/128 (034: 'Warm Up Enrichment Factor'; it "
+            "calls the cells 16-bit but the bytes only make sense as 8-bit). Identical on "
+            "3B / RR / S2.",
+            unit="x", decode=_x128_decode, encode=_x128_encode),
 
     MapDef("End-of-Cal RPM table",
            "32-byte RPM table at 0x3FE0–0x3FFF. On the 404 this sits inside firmware; "
@@ -2823,6 +2880,24 @@ def _scale_axis(input_ram: int, bps: list[int]) -> list:
     return [b * 40 for b in bps] if input_ram == 0x3A else bps
 
 
+_DESCRIPTOR_INPUTS = (0x3A, 0x3F, 0x38, 0x37, 0x36, 0x39)   # RPM LOAD ECT IAT UBAT MFTS
+
+
+def read_descriptor_axis_1d(rom: bytes, data_addr: int, n: int) -> list | None:
+    """
+    Exact axis read for a 1-D table whose Bosch descriptor immediately precedes
+    the data:  [xin][n][n deltas][data].  Returns the breakpoints (RPM x40) or
+    None if the bytes do not look like a descriptor for this length.
+    """
+    desc = data_addr - (2 + n)
+    if desc < 0 or data_addr > len(rom):
+        return None
+    xin, nx = rom[desc], rom[desc + 1]
+    if nx != n or xin not in _DESCRIPTOR_INPUTS:
+        return None
+    return _scale_axis(xin, _descriptor_breakpoints(list(rom[desc + 2: desc + 2 + n])))
+
+
 def read_descriptor_axes(rom: bytes, data_addr: int, rows: int, cols: int
                          ) -> tuple[list, list] | None:
     """
@@ -3052,6 +3127,10 @@ def get_axes(rom: bytes, map_def: MapDef, variant: ROMVariant
         return rpm, load
 
     if sw in ("404", "404V8", "RR"):
+        if map_def.cols == 1:                      # 1-D table: [xin][n][deltas][data]
+            axis = read_descriptor_axis_1d(rom, map_def.main_addr, map_def.rows)
+            if axis is not None:
+                return axis, [0]
         exact = read_descriptor_axes(rom, map_def.main_addr, map_def.rows, map_def.cols)
         if exact is not None:
             return exact

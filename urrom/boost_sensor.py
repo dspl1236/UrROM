@@ -57,8 +57,12 @@ SENSORS: list[BoostSensor] = [
                 250.0, 10.0, "Vout = Vs(0.004 P - 0.04): P = raw/255*250 + 10 kPa."),
     BoostSensor("lin250", "Generic linear 250 kPa", 250.0, 0.0,
                 "raw/255*250. Use when the fitted 250 kPa sensor is not an MPX4250A."),
-    BoostSensor("lin300", "Generic linear 300 kPa (RS2 / 034 '3 bar')", 300.0, 0.0,
-                "raw/255*300. RS2 R201 swap / 034EFI Rip Chip sensor; transfer not verified."),
+    BoostSensor("lin300", "Generic linear 300 kPa (RS2 R201 swap)", 300.0, 0.0,
+                "raw/255*300. RS2 R201 sensor; transfer not verified."),
+    BoostSensor("vmap300_034", "034 3-bar VMAP (Rip Chip scale: 300 kPa span, 21 kPa at 0 V)",
+                300.0, 21.0, "From 034's AAN Boost R2 definition: psi gauge = raw*0.170588 - 11.5, "
+                             "i.e. kPa abs = raw/255*300 + 21. Their 26 psi overboost is raw 220, "
+                             "which is the max in their GT2871/GT3071 boost chips."),
     BoostSensor("mpxh6400", "MPXH6400A 400 kPa (prjmod SD)", 413.05, 3.48,
                 "Vout = Vs(0.002421 P - 0.00842): P = raw/255*413.05 + 3.48 kPa."),
 ]

@@ -1874,3 +1874,59 @@ class TestPlotOverlayThrottle:
             tab._table._kwp_row, tab._table._kwp_col, tab._table._kwp_lambda = i, i, 1.0
             tab._table._refresh_overlay()
         assert edits == []
+
+
+class Test034Definitions:
+    """The 034 Rip Chip 3B definition named nine tables we had not labelled; all
+    of them are in the 3B firmware's descriptor index with exact axes."""
+
+    ADDRS = {0x6951: (5, 1, 0x3A), 0x695D: (5, 1, 0x3A), 0x7C72: (6, 1, 0x3A), 0x7C80: (6, 1, 0x3A),
+             0x717F: (7, 1, 0x3A), 0x6FE6: (4, 1, 0x3A), 0x7B83: (3, 1, 0x38),
+             0x6B9C: (6, 4, 0x3A), 0x6A01: (6, 6, 0x38)}
+
+    def test_tables_are_firmware_referenced_on_the_3b(self):
+        from urrom.ecu_profiles import decode_descriptor_tables
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        found = {t["data"]: t for t in decode_descriptor_tables(rom)}
+        for addr, (rows, cols, xin) in self.ADDRS.items():
+            assert addr in found, hex(addr)
+            assert (found[addr]["rows"], found[addr]["cols"], found[addr]["x_input"]) == (rows, cols, xin), hex(addr)
+
+    def test_profile_has_them_with_real_axes(self):
+        from urrom.ecu_profiles import VARIANT_404, get_axes, read_map
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin")); rr = bytes(load_rom("rr_fuel-ign_404b.bin"))
+        by = {m.main_addr: m for m in VARIANT_404.main_maps}
+        for addr in self.ADDRS:
+            assert addr in by, hex(addr)
+        lim = by[0x6951]
+        rows, cols = get_axes(rom, lim, VARIANT_404)
+        assert rows == [2000, 3000, 4000, 5000, 6000] and cols == [0]
+        assert [r[0] for r in read_map(rom, lim)] == [174, 174, 168, 160, 156]
+        assert read_map(rr, lim)[0][0] == 180                       # RR raises the 2000 rpm ceiling
+        assert get_axes(rom, by[0x7C72], VARIANT_404)[0] == [1000, 2000, 3000, 4000, 4800, 6520]
+        assert get_axes(rom, by[0x717F], VARIANT_404)[0] == [560, 720, 920, 1240, 1400, 1680, 2800]
+        idle = by[0x7B83]
+        assert [idle.decode(r[0]) for r in read_map(rom, idle)] == [1300.0, 1000.0, 800.0]
+        iat = by[0x6B9C]
+        assert iat.decode(read_map(rom, iat)[5][3]) == round(146 / 128, 3)
+
+    def test_034_three_bar_sensor_matches_their_boost_chips(self):
+        import urrom.boost_sensor as bs
+        s = next(x for x in bs.sensors() if x.key == "vmap300_034")
+        psi = lambda raw: raw * 0.170588 - 11.5                     # 034's own decode
+        for raw in (0, 100, 220, 255):
+            assert abs(bs.kpa_to_psi_gauge(s.kpa(raw)) - psi(raw)) < 0.3, raw
+        assert s.raw(100 + 26 * bs.KPA_PER_PSI) == 220             # 26 psi overboost = raw 220
+
+    def test_ecu_definition_reader(self):
+        pytest.importorskip("javaobj")
+        p = Path(r"Z:/Archive/Google Drive/home flashing/034 Files/034 Files/3B ECU Generic 1.01.ECU")
+        if not p.exists():
+            pytest.skip("034 archive not mounted")
+        from urrom.ecu034 import load_definition
+        d = load_definition(p)
+        assert d.ecu_name == "3B Fueling/Timing" and d.ecu_size_kb == 32
+        assert (d.checksum_from, d.checksum_to, d.checksum_store) == (0, 0x7EFF, 0x7F00)
+        names = {m.name: m for m in d.maps}
+        assert names["Load Limiter 1"].data_addr == 0x6951 and names["Load Limiter 1"].rows == 1
+        assert names["Primary Timing Table"].decode(60) == 22.5

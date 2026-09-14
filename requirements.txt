@@ -3,3 +3,4 @@ pyinstaller>=6.0
 pytest>=8.0
 matplotlib>=3.8
 numpy>=1.26
+javaobj-py3>=0.4    # optional: 034 Rip Chip .ecu definitions
