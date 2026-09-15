@@ -893,6 +893,32 @@ _MAPS_BOOST_404 = [
            confidence="UNCONFIRMED"),
 
     # ── Scalars / small tables that differ between chips ───────────────────
+    MapDef("Overboost duty-release thresholds (0x1EC7)",
+           "8 absolute sensor counts by rpm band (stock 210 220 238 243 244 245 245 245 = 165..192 kPa on "
+           "the 200 kPa sensor). 72h above the band's value for [0x1EC6] (=7) passes sets 25h.3, which "
+           "skips the loop and forces the duty output to 0 (0x0DC0 -> 0x0DDE): the wastegate opens. "
+           "There is NO fuel cut on the 3B boost board (the main ECU's cut is its load limiter).",
+           main_addr=0x1EC7, rows=1, cols=8, map_type="raw", unit="raw", chip="boost",
+           confidence="PROVISIONAL"),
+    MapDef("Ambient floor (0x1C57)",
+           "Lowest absolute count the ambient tracker 42h will accept (stock 110 = 86 kPa on the 200 kPa "
+           "sensor). Absolute: re-encode for another sensor.",
+           main_addr=0x1C57, rows=1, cols=1, map_type="raw", unit="raw", chip="boost",
+           confidence="PROVISIONAL"),
+    MapDef("Target correction by 73h (0x1C6A)",
+           "16 boost-above-ambient counts subtracted from the target (7Bh, 0x0B19..0x0B3F). Delta units.",
+           main_addr=0x1C6A, rows=1, cols=16, map_type="raw", unit="raw", chip="boost",
+           confidence="PROVISIONAL"),
+    MapDef("Adaptive offset cap / step (0x1EA2)",
+           "[0] cap on the adaptive target offset 7Ah, [1..8] its step per rpm band (0x10D9..0x10EA). "
+           "Delta units.",
+           main_addr=0x1EA2, rows=1, cols=9, map_type="raw", unit="raw", chip="boost",
+           confidence="PROVISIONAL"),
+    MapDef("P / I gain tables (0x1BBE, 0x1C0D, 0x1C1C)",
+           "4Dh (P), 50h and 51h (I) loaded by index 4Ch (0x0D81..0x0D96). Per raw count, so a larger "
+           "sensor span raises duty per kPa unless these are scaled by the inverse ratio.",
+           main_addr=0x1BBE, rows=1, cols=15, map_type="raw", unit="raw", chip="boost",
+           confidence="UNCONFIRMED"),
     MapDef("IAT mode thresholds (0x17ED)",
            "4 bytes: hi / hi-hyst / lo / lo-hyst thresholds on ADC ch4 that pick "
            "which A-F table pair is active (0x0B5F-0x0B82). 3B: 67 63 38 2D. "
@@ -2198,6 +2224,10 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                                "ID text = 3B. Checksum at 0x7F00 valid. For a 3B on the RR boost chip that "
                                "stumbled at 2000 rpm on the leaner S2 fuel map. "
                                "roms/tunes/3b_hybrid_3bfuel_s2ign_404aa.bin"),
+    0x0BCA8FA9: ("404_boost", "UrROM RR-on-3-bar (2026-09-15) — RR boost chip (0xEA8D46DF) re-encoded for the 034 "
+                               "3-bar VMAP (kPa = raw/255*300 + 21): every target, threshold, ceiling and delta table "
+                               "keeps its stock kPa meaning; duty tables untouched. Fit the 3-bar sensor first. "
+                               "roms/tunes/rr_boost_404b_3bar034.bin"),
     0xEA8D46DF: ("404_boost", "Stock — RR boost chip, 857907404B, build 0x0255 (direct read). "
                                "Executable 8051 MCU code — NOT a data-only ROM. "
                                "Correct filename: rr_boost_404b.bin"),

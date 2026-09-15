@@ -347,6 +347,36 @@ def cmd_rescale_load(args):
     print(report.text()); print(f"written {ns.out} (checksum applied)")
 
 
+def cmd_boost_sensor(args):
+    """Re-encode a 404 boost chip for a different MAP sensor (docs/3B_boost_chip_RE.md)."""
+    import argparse
+    import urrom.boost_sensor as bs
+    keys = [s.key for s in bs.sensors()]
+    p = argparse.ArgumentParser(prog='urrom boost-sensor')
+    p.add_argument('rom'); p.add_argument('out')
+    p.add_argument('--from', dest='src', default='bosch200', choices=keys)
+    p.add_argument('--to', dest='dst', required=True, choices=keys)
+    p.add_argument('--limits-psi', type=float, default=None, help='raise target ceiling / overboost release to this boost')
+    p.add_argument('--scale-gains', action='store_true', help='keep duty-per-kPa by scaling the P/I gain tables')
+    ns = p.parse_args(args)
+    from urrom.boost_rescale import convert_sensor, target_summary
+    path = Path(ns.rom)
+    if not path.exists():
+        print(f"ERROR: {path} not found"); sys.exit(3)
+    rom = path.read_bytes()
+    if len(rom) not in (0x2000, 0x10000):
+        print(f"ERROR: {path.name} is {len(rom)} bytes; expected an 8 KB 404 boost chip (or its 27C512 image)"); sys.exit(2)
+    if len(rom) == 0x10000:
+        from urrom.ecu_profiles import fold_repeated_image
+        rom, _, _ = fold_repeated_image(rom)
+    out, report = convert_sensor(rom, ns.src, ns.dst, ns.limits_psi, ns.scale_gains)
+    Path(ns.out).write_bytes(bytes(out))
+    print(report.text())
+    for a, (lo, hi, psi) in target_summary(bytes(out), ns.dst).items():
+        print(f"  target 0x{a:04X} on {ns.dst}: {lo}..{hi} kPa abs (peak {psi:+.1f} psi)")
+    print(f"written {ns.out} (8 KB native; use 'chip' for the 27C512 image)")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
         print("urrom <command> [options]")
@@ -357,6 +387,7 @@ def main():
         print("  xcompare <A> <B> [--role fuel|ign] — decoded cross-family map comparison (B resampled onto A)")
         print("  coding <rom> [--adc N | --volts V] — coding-plug bands -> ignition set (3B/RR/S2 and 551)")
         print("  rescale-load <rom> <out> --factor K [--cap N] — compress the 404 load scale (GAIN, axes, limiters, cap)")
+        print("  boost-sensor <rom> <out> --to KEY [--from KEY] [--limits-psi P] [--scale-gains] — re-encode a 404 boost chip for another MAP sensor")
         sys.exit(0)
     cmd = sys.argv[1]
     rest = sys.argv[2:]
@@ -370,6 +401,8 @@ def main():
         cmd_chip(rest)
     elif cmd == 'xcompare':
         cmd_xcompare(rest)
+    elif cmd == 'boost-sensor':
+        cmd_boost_sensor(rest)
     elif cmd == 'rescale-load':
         cmd_rescale_load(rest)
     elif cmd == 'coding':

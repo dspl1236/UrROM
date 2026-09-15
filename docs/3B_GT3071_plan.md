@@ -71,8 +71,14 @@ Check the 3B's regulator pressure before ordering: flow ratings are quoted at
    MAF gain, all 22 load axes, the limiters and the closed-loop limits by k and
    raises the cap to 255 (stock-load 340 of headroom). Still to do on the car:
    log LOAD (group 000) on a full pull with the present chip to see the margin.
-3. **Boost board.** 3-bar sensor preset (034 VMAP scale is in the sensor list),
-   targets, ceilings and the N75 duty tables rescaled; knock tables untouched.
+3. ~~Boost board~~ **Tooled 2026-09-15** (docs/3B_boost_chip_RE.md, last
+   section). Targets and overboost thresholds are absolute counts, ceilings /
+   corrections / adaptive steps are deltas, duty tables are sensor-independent;
+   `python -m urrom.cli boost-sensor rr_boost_404b.bin out.bin --to vmap300_034`
+   re-encodes them for the 3-bar sensor, `--limits-psi 26 --scale-gains` opens
+   the ceiling and keeps duty-per-kPa. Overboost on this board is a duty
+   release, not a fuel cut. First on-car step: `rr_boost_404b_3bar034.bin`
+   with the 3-bar sensor fitted must drive like the RR chip.
 4. **Fuel and spark.** Fuel map 1/4 for the injectors, IAT compensation,
    closed-loop limit, and the GT3071 timing retards ported by cell through
    Compare with the 034 R9 chip as ROM B. Wideband on the car for every step.

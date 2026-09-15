@@ -1354,7 +1354,8 @@ class TestPublishedImages:
                  "rr_boost_404b_27C512.bin": ("rr_boost_404b.bin", 8),
                  "s2_fuel-ign_404_27C512.bin": ("s2_fuel-ign_404.bin", 2),
                  "3b_stage1_boost_rrbase_plus5kpa_27C512.bin": ("tunes/3b_stage1_boost_rrbase_plus5kpa.bin", 8),
-                 "3b_hybrid_3bfuel_s2ign_404aa_27C512.bin": ("tunes/3b_hybrid_3bfuel_s2ign_404aa.bin", 2)}
+                 "3b_hybrid_3bfuel_s2ign_404aa_27C512.bin": ("tunes/3b_hybrid_3bfuel_s2ign_404aa.bin", 2),
+                 "rr_boost_404b_3bar034_27C512.bin": ("tunes/rr_boost_404b_3bar034.bin", 8)}
         for img, (native, copies) in pairs.items():
             b = bytes(load_rom("27c512/" + img)); o = bytes(load_rom(native))
             folded, n, _ = fold_repeated_image(b)
@@ -2007,3 +2008,45 @@ class TestLoadHeadroom:
         rpm = [tb for tb in decode_descriptor_tables(out) if tb["data"] == 0x6A8E][0]["x_axis"]
         assert rpm == [600, 1000, 1240, 1520, 1760, 2000, 2520, 3000, 3520, 4000, 4600, 5200, 5720, 6000, 6520, 7200]
         assert len(rep.axes) == 22
+
+
+class TestBoostSensorConversion:
+    def test_overboost_is_a_duty_release_not_a_cut(self):
+        rom = bytes(load_rom("rr_boost_404b.bin"))
+        assert rom[0x1163:0x116B] == bytes.fromhex("20441f901ec6e55e")      # JB 28h.4; DPTR=#1EC6; A=5Eh
+        assert rom[0x1189:0x118D] == bytes.fromhex("d22bd23b")              # SETB 25h.3; SETB 27h.3
+        assert rom[0x0DC0:0x0DC3] == bytes.fromhex("202b1b")                # JB 25h.3 -> 0DDE
+        assert rom[0x0DDE:0x0DE1] == bytes.fromhex("e4f543")                # CLR A; MOV 43h,A (duty 0)
+        assert list(rom[0x1EC6:0x1ECF]) == [7, 210, 220, 238, 243, 244, 245, 245, 245]
+
+    def test_convert_rr_to_034_three_bar_keeps_kpa(self):
+        import urrom.boost_sensor as bs
+        from urrom.boost_rescale import convert_sensor, TARGETS
+        rom = bytes(load_rom("rr_boost_404b.bin"))
+        out, rep = convert_sensor(rom, "bosch200", "vmap300_034")
+        out = bytes(out)
+        old = bs.get_sensor("404"); new = next(s for s in bs.sensors() if s.key == "vmap300_034")
+        for a in TARGETS:
+            for i in range(128):
+                assert abs(new.kpa(out[a + i]) - old.kpa(rom[a + i])) <= 1.2, hex(a + i)
+        # duty tables untouched
+        assert out[0x1A34:0x1BB4] == rom[0x1A34:0x1BB4]
+        # ceiling is a delta: 123 counts (96 kPa) -> 82 counts on the 300 span
+        assert out[0x1C4F + 7] == round(123 * 200 / 300)
+        assert out[0x1C57] == new.raw(old.kpa(110))
+        assert len(out) == 0x2000
+        # identity conversion is a no-op
+        same, _ = convert_sensor(rom, "bosch200", "bosch200")
+        assert bytes(same) == rom
+
+    def test_limits_psi_and_gain_scaling(self):
+        import urrom.boost_sensor as bs
+        from urrom.boost_rescale import convert_sensor
+        rom = bytes(load_rom("rr_boost_404b.bin"))
+        out, rep = convert_sensor(rom, "bosch200", "vmap300_034", limits_psi=26, scale_gains=True)
+        new = next(s for s in bs.sensors() if s.key == "vmap300_034")
+        amb = new.raw(100)
+        assert all(v == out[0x1C4F] for v in out[0x1C4F:0x1C57])
+        assert abs(bs.kpa_to_psi_gauge(new.kpa(amb + out[0x1C4F])) - 26) < 0.6
+        assert abs(bs.kpa_to_psi_gauge(new.kpa(out[0x1EC7])) - 29) < 0.6
+        assert out[0x1BBE] == round(rom[0x1BBE] * 2 / 3) or abs(out[0x1BBE] - rom[0x1BBE] * 2 / 3) < 1

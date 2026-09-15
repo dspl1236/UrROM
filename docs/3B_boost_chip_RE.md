@@ -237,3 +237,35 @@ the boost board itself. Its scaling constant has not been found yet, so a
 cluster reading (1.8 bar absolute reported on the stage-1 chip, 2026-09-10)
 cannot yet confirm the sensor scale; a mechanical gauge on the manifold can.
 
+## Overboost = duty release, and the 3-bar conversion (2026-09-15)
+
+- The per-band thresholds at `0x1EC7` (stock 210 220 238 243 244 245 245 245
+  absolute counts, 165…192 kPa on the 200 kPa sensor; `0x1EC6` = 7-pass
+  debounce) set `25h.3`, and `25h.3` makes the main loop skip straight to
+  `0x0DDE`, which writes **duty 0** (`43h = 0`): the wastegate opens. `27h.3`
+  is set alongside and never read. **The 3B/RR/S2 boost board has no fuel
+  cut**; the only cut on this car is the main chip's load limiter. (The AAN's
+  551 boost chip is different and does cut.)
+- Everything the controller compares is in raw counts, in two flavours:
+
+  | absolute counts (sensor scale) | boost-above-ambient deltas | % duty (sensor-independent) |
+  |---|---|---|
+  | Boost Target A/B/C | target ceiling per band `0x1C4F` | N75 duty D/E/F |
+  | overboost thresholds `0x1EC7` | target correction `0x1C6A` | duty ceiling `0x1C47` |
+  | plausibility `0x1892`/`0x1894` | adaptive cap/steps `0x1EA2` | duty correction `0x1D6A` |
+  | ambient floor `0x1C57` | I-term dead-band `0x1DEB` | |
+
+  `urrom.boost_rescale.convert_sensor()` / `python -m urrom.cli boost-sensor
+  rr_boost_404b.bin out.bin --to vmap300_034 [--limits-psi 26] [--scale-gains]`
+  re-encodes the first two columns so each table keeps its kPa meaning on the
+  new sensor, optionally raises the ceiling and the release threshold to a
+  given boost, and optionally scales the P/I gain tables (`0x1BBE`, `0x1C0D`,
+  `0x1C1C`, by `4Ch`) by the inverse span ratio so duty per kPa is unchanged.
+- On the 034 3-bar scale (`kPa = raw/255·300 + 21`) ambient is raw 67, the
+  stock RR peak (153 kPa) is raw 112, a 23 psi hold is raw 202 (135 above
+  ambient) and 26 psi is raw 220 — the number 034's own GT3071 boost chips
+  top out at.
+- `roms/tunes/rr_boost_404b_3bar034.bin` is the RR chip converted at the same
+  kPa: fit the 3-bar sensor, burn it, and the car should drive exactly as on
+  the RR chip. That is the test that proves the sensor scale and the
+  conversion before any target is raised.
