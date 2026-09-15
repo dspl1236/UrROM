@@ -377,6 +377,33 @@ def cmd_boost_sensor(args):
     print(f"written {ns.out} (8 KB native; use 'chip' for the 27C512 image)")
 
 
+def cmd_gt_scaffold(args):
+    """Scaffold a 404 fuel/ign chip for a bigger turbo (docs/3B_GT3071_step4_fuel_spark.md)."""
+    import argparse
+    p = argparse.ArgumentParser(prog='urrom gt-scaffold')
+    p.add_argument('rom'); p.add_argument('out')
+    p.add_argument('--factor', type=float, default=0.75, help='load-scale factor (default 0.75)')
+    p.add_argument('--top', type=int, default=225, help='new LOAD axis top (default 225)')
+    p.add_argument('--new-cols', type=int, default=3, help='columns added above the old top (default 3)')
+    p.add_argument('--enrich', type=float, default=0.08, help='fuel ramp in the new columns (default 0.08)')
+    p.add_argument('--retard-deg', type=float, default=1.5, help='ignition ramp in the new columns (default 1.5)')
+    p.add_argument('--limiter', type=int, default=250, help='load limiter 1 (default 250)')
+    p.add_argument('--injector-ratio', type=float, default=1.0, help='stock_cc / new_cc (default 1.0 = not scaled)')
+    ns = p.parse_args(args)
+    from urrom.gt_builder import build_scaffold
+    path = Path(ns.rom)
+    if not path.exists():
+        print(f"ERROR: {path} not found"); sys.exit(3)
+    _, det = _load_rom(path)
+    sw = det.variant.software_id if det and det.variant else ""
+    if sw != "404":
+        print(f"ERROR: {path.name} is not a 3B/RR/S2 (404) fuel/ign chip ({sw or 'unknown'})"); sys.exit(2)
+    out, report = build_scaffold(path.read_bytes(), ns.factor, ns.top, ns.new_cols, ns.enrich,
+                                 ns.retard_deg, ns.limiter, ns.injector_ratio)
+    Path(ns.out).write_bytes(bytes(out))
+    print(report.text()); print(f"written {ns.out} (checksum applied) — a scaffold, not a tune")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
         print("urrom <command> [options]")
@@ -387,6 +414,7 @@ def main():
         print("  xcompare <A> <B> [--role fuel|ign] — decoded cross-family map comparison (B resampled onto A)")
         print("  coding <rom> [--adc N | --volts V] — coding-plug bands -> ignition set (3B/RR/S2 and 551)")
         print("  rescale-load <rom> <out> --factor K [--cap N] — compress the 404 load scale (GAIN, axes, limiters, cap)")
+        print("  gt-scaffold <rom> <out> [--factor K --top N --injector-ratio R ...] — big-turbo scaffold for a 404 fuel/ign chip")
         print("  boost-sensor <rom> <out> --to KEY [--from KEY] [--limits-psi P] [--scale-gains] — re-encode a 404 boost chip for another MAP sensor")
         sys.exit(0)
     cmd = sys.argv[1]
@@ -401,6 +429,8 @@ def main():
         cmd_chip(rest)
     elif cmd == 'xcompare':
         cmd_xcompare(rest)
+    elif cmd == 'gt-scaffold':
+        cmd_gt_scaffold(rest)
     elif cmd == 'boost-sensor':
         cmd_boost_sensor(rest)
     elif cmd == 'rescale-load':

@@ -79,9 +79,15 @@ Check the 3B's regulator pressure before ordering: flow ratings are quoted at
    the ceiling and keeps duty-per-kPa. Overboost on this board is a duty
    release, not a fuel cut. First on-car step: `rr_boost_404b_3bar034.bin`
    with the 3-bar sensor fitted must drive like the RR chip.
-4. **Fuel and spark.** Fuel map 1/4 for the injectors, IAT compensation,
-   closed-loop limit, and the GT3071 timing retards ported by cell through
-   Compare with the 034 R9 chip as ROM B. Wideband on the car for every step.
+4. **Fuel and spark — scaffold built 2026-09-15**, see
+   `docs/3B_GT3071_step4_fuel_spark.md`. `python -m urrom.cli gt-scaffold`
+   composes the load rescale, a re-gridded 16-point LOAD axis (11…105, 145,
+   185, 225) with resampled maps, a conservative starter ramp in the three new
+   columns, the limiter release and the injector scaling into one chip.
+   `roms/tunes/3b_gt3071_scaffold_k075.bin` is that build with the injector
+   ratio unset. The calibration itself is data-driven and waits on the car:
+   injector part number → ratio, idle/cruise lambda on the new injectors,
+   the 3-bar boost chip at stock kPa, then boost in steps with a wideband.
 
 ## Hardware assumed
 

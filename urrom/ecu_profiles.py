@@ -2224,6 +2224,10 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                                "ID text = 3B. Checksum at 0x7F00 valid. For a 3B on the RR boost chip that "
                                "stumbled at 2000 rpm on the leaner S2 fuel map. "
                                "roms/tunes/3b_hybrid_3bfuel_s2ign_404aa.bin"),
+    0x983B2317: ("404",       "UrROM GT3071 SCAFFOLD (2026-09-15) — NOT DRIVABLE. 3B 447907404AA on a x0.75 load "
+                               "scale (GAIN 139, cap 255), fuel/ign maps re-gridded to LOAD 11..105,145,185,225 with a "
+                               "starter ramp in the three new columns, load limiter 250/200, injectors NOT scaled. "
+                               "Open next to the 034 GT3071 R9 chip; see docs/3B_GT3071_step4_fuel_spark.md."),
     0x0BCA8FA9: ("404_boost", "UrROM RR-on-3-bar (2026-09-15) — RR boost chip (0xEA8D46DF) re-encoded for the 034 "
                                "3-bar VMAP (kPa = raw/255*300 + 21): every target, threshold, ceiling and delta table "
                                "keeps its stock kPa meaning; duty tables untouched. Fit the 3-bar sensor first. "

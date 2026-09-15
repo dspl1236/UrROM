@@ -1355,7 +1355,8 @@ class TestPublishedImages:
                  "s2_fuel-ign_404_27C512.bin": ("s2_fuel-ign_404.bin", 2),
                  "3b_stage1_boost_rrbase_plus5kpa_27C512.bin": ("tunes/3b_stage1_boost_rrbase_plus5kpa.bin", 8),
                  "3b_hybrid_3bfuel_s2ign_404aa_27C512.bin": ("tunes/3b_hybrid_3bfuel_s2ign_404aa.bin", 2),
-                 "rr_boost_404b_3bar034_27C512.bin": ("tunes/rr_boost_404b_3bar034.bin", 8)}
+                 "rr_boost_404b_3bar034_27C512.bin": ("tunes/rr_boost_404b_3bar034.bin", 8),
+                 "3b_gt3071_scaffold_k075_27C512.bin": ("tunes/3b_gt3071_scaffold_k075.bin", 2)}
         for img, (native, copies) in pairs.items():
             b = bytes(load_rom("27c512/" + img)); o = bytes(load_rom(native))
             folded, n, _ = fold_repeated_image(b)
@@ -2050,3 +2051,36 @@ class TestBoostSensorConversion:
         assert abs(bs.kpa_to_psi_gauge(new.kpa(amb + out[0x1C4F])) - 26) < 0.6
         assert abs(bs.kpa_to_psi_gauge(new.kpa(out[0x1EC7])) - 29) < 0.6
         assert out[0x1BBE] == round(rom[0x1BBE] * 2 / 3) or abs(out[0x1BBE] - rom[0x1BBE] * 2 / 3) < 1
+
+
+class TestGtScaffold:
+    def test_scaffold_keeps_stock_cells_and_ramps_new_columns(self):
+        from urrom.gt_builder import build_scaffold, load_axis, FUEL_MAPS, IGN_MAPS
+        from urrom.ecu_profiles import VARIANT_404, read_map, verify_checksum_for, KNOWN_CRCS
+        import zlib
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        out, rep = build_scaffold(rom, 0.75, 225, 3)
+        out = bytes(out)
+        assert verify_checksum_for(out, VARIANT_404)
+        axis, _ = load_axis(out, 0x6A8E)
+        assert axis[:13] == [11, 18, 26, 33, 41, 50, 59, 68, 75, 83, 90, 98, 105] and axis[-1] == 225
+        assert rep.new_columns == [145, 185, 225]
+        for addr in FUEL_MAPS + IGN_MAPS:
+            assert load_axis(out, addr)[0] == axis
+        fm = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x6A8E)
+        im = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x71F8)
+        old_f, new_f = read_map(rom, fm), read_map(out, fm)
+        old_i, new_i = read_map(rom, im), read_map(out, im)
+        # first 13 columns are the stock values at the same (scaled) breakpoints, exactly
+        for r in range(16):
+            assert new_f[r][:13] == old_f[r][:13] and new_i[r][:13] == old_i[r][:13], r
+            # new top column: fuel = stock top x 1.08, ignition = stock top - 2 raw
+            assert new_f[r][15] == min(255, int(old_f[r][15] * 1.08 + 0.5)), r
+            assert new_i[r][15] == int(old_i[r][15] - 2 + 0.5), r
+        assert list(out[0x6951:0x6956]) == [250] * 5 and list(out[0x695D:0x6962]) == [200] * 5
+        assert out[0x6351] == 139 and list(out[0x6970:0x6974]) == [255] * 4
+        # injector scaling
+        out2, _ = build_scaffold(rom, injector_ratio=0.6)
+        assert read_map(bytes(out2), fm)[0][0] == int(new_f[0][0] * 0.6 + 0.5)
+        pub = bytes(load_rom("tunes/3b_gt3071_scaffold_k075.bin"))
+        assert pub == out and zlib.crc32(pub) & 0xFFFFFFFF in KNOWN_CRCS

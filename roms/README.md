@@ -123,6 +123,7 @@ including blank/erased chips not stored here.
 | File | Base | What changed | CRC32 | Status |
 |---|---|---|---|---|
 | `3b_hybrid_3bfuel_s2ign_404aa.bin` | 3B fuel/ign chip `0x0AE3CACD` | S2 ignition maps 2/3/5/6/7 copied in (1280 bytes); 3B fuel maps 1–4, idle ignition A–E, axes (7200 rpm top row), ID text kept; checksum at 0x7F00 recomputed | `0x8C966737` | ⚠ EXPERIMENTAL — built 2026-09-14 for the 2000 rpm stumble on RR boost + S2 fuel/ign; not yet driven |
+| `3b_gt3071_scaffold_k075.bin` | 3B fuel/ign chip `0x0AE3CACD` | `urrom.cli gt-scaffold` defaults: load scale ×0.75, fuel/ign maps re-gridded to LOAD 11…105 / 145 / 185 / 225 with a conservative ramp in the new columns, load limiter 250/200, checksum; **injectors not scaled** | `0x983B2317` | ⛔ SCAFFOLD — not drivable; a starting point for the GT3071 calibration, see `docs/3B_GT3071_step4_fuel_spark.md` |
 | `rr_boost_404b_3bar034.bin` | RR boost chip `0xEA8D46DF` | Re-encoded for the 034 3-bar VMAP sensor (`urrom.cli boost-sensor --to vmap300_034`): targets, overboost release thresholds, ambient floor, ceilings, corrections and adaptive steps converted so every kPa stays the same; duty tables untouched. Stock RR boost on a 3-bar sensor | `0x0BCA8FA9` | ⚠ EXPERIMENTAL — requires the 3-bar sensor fitted; first step of the GT3071 build, not yet driven |
 | `3b_stage1_boost_rrbase_plus5kpa.bin` | RR boost chip `0xEA8D46DF` | Boost Target A/B/C +6 raw, capped 250 → peak 196 kPa abs / +0.96 bar (200 kPa scale assumed); duty, gains, knock tables, ceilings untouched | `0x8F9059E2` | ⚠ EXPERIMENTAL — one car, one road test, sensor scale unconfirmed; see below |
 
@@ -150,6 +151,7 @@ native` folds them back; UrROM's File → Open does it automatically.
 | `3b_stage1_boost_rrbase_plus5kpa_27C512.bin` | `tunes/3b_stage1_boost_rrbase_plus5kpa.bin` | 8 | `0xA3792C99` |
 | `3b_hybrid_3bfuel_s2ign_404aa_27C512.bin` | `tunes/3b_hybrid_3bfuel_s2ign_404aa.bin` | 2 | `0x0748FFD0` |
 | `rr_boost_404b_3bar034_27C512.bin` | `tunes/rr_boost_404b_3bar034.bin` | 8 | `0x2043B69E` |
+| `3b_gt3071_scaffold_k075_27C512.bin` | `tunes/3b_gt3071_scaffold_k075.bin` (⛔ scaffold) | 2 | `0x5157818C` |
 
 OEM combo for a 3B: `rr_boost_404b_27C512` + `s2_fuel-ign_404_27C512`
 (or the car's own 3B fuel/ign chip). Stage 1: the `3b_stage1_boost…` image
