@@ -93,8 +93,10 @@ Check the 3B's regulator pressure before ordering: flow ratings are quoted at
 
 ## Hardware assumed
 
-GT3071 / K26 hybrid, 3.0 bar MAP, Bosch 550 cc injectors (owner's choice), uprated pump,
-stock MAF (same part as the AAN).
+GT3071 / K26 hybrid, 3.0 bar MAP, Bosch 550 cc injectors (owner's choice), **3.0 bar
+regulator kept** (decided 2026-09-15: duty at 23 psi decides a later move to 4 bar;
+above ~85 % rebuild with `--new-cc 635`), uprated pump (stock 3B pump 8A0 906 091 G,
+with 4A0 201 351 C and N 102 582 01 per the parts list), stock MAF (same part as the AAN).
 
 Injectors (owner, 2026-09-15): stock 3B = **Bosch 0 280 150 737, 305 cc/min
 (29 lb/h) at 3 bar, 16 ohm**. So the ratio for Bosch 550s rated at 3 bar is
