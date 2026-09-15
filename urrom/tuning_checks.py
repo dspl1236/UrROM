@@ -48,8 +48,13 @@ def check_fuel_range(rom: bytes, variant, *, lean_threshold=170, rich_threshold=
     # a stock 3B chip, so widen the window for the 404 family unless the caller
     # overrode the defaults.
     sw = getattr(variant, "software_id", "") if variant else ""
-    if sw in ("404", "404V8") and lean_threshold == 170 and rich_threshold == 80:
+    q7 = sw in ("404", "404V8")
+    if q7 and lean_threshold == 170 and rich_threshold == 80:
         lean_threshold, rich_threshold = 215, 100
+    # On the 404 the fuel map is a Q7 multiplier on the MAF air-per-rev pulse
+    # (docs/3B_injection_path_RE.md): HIGH raw = more fuel = rich, LOW raw = lean.
+    # So the 215 threshold is a "very rich" warning and 100 a "potentially lean"
+    # error there, the opposite of the 551 wording.
     # Only check primary tunable fuel maps — skip failsafe, race fuel, correction, LPG
     _SKIP_FUEL = {"failsafe", "race fuel", "lpg", "correction", "warmup",
                   "decel", "overrun", "wall film", "lambda", "cat"}
@@ -68,17 +73,19 @@ def check_fuel_range(rom: bytes, variant, *, lean_threshold=170, rich_threshold=
                     decode = m.decode
                     dv = decode(rv) if decode else rv
                     issues.append(TuningIssue(
-                        severity='warning', category='fuel',
+                        severity='error' if q7 else 'warning', category='fuel',
                         map_name=m.name,
-                        description=f"Very rich cell: raw={rv} ({dv:.1f} {m.unit})",
+                        description=(f"Potentially lean (low Q7 factor): raw={rv} ({dv:.1f} {m.unit})" if q7
+                                     else f"Very rich cell: raw={rv} ({dv:.1f} {m.unit})"),
                         cell=(r, c), value=float(rv)))
                 elif rv > lean_threshold:
                     decode = m.decode
                     dv = decode(rv) if decode else rv
                     issues.append(TuningIssue(
-                        severity='error', category='fuel',
+                        severity='warning' if q7 else 'error', category='fuel',
                         map_name=m.name,
-                        description=f"Potentially lean: raw={rv} ({dv:.1f} {m.unit})",
+                        description=(f"Very rich cell (high Q7 factor): raw={rv} ({dv:.1f} {m.unit})" if q7
+                                     else f"Potentially lean: raw={rv} ({dv:.1f} {m.unit})"),
                         cell=(r, c), value=float(rv)))
     return issues
 
