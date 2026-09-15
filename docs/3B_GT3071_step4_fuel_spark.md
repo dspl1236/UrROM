@@ -15,20 +15,25 @@ that needs the car.
 | re-grid | fuel maps 1–4 and ignition maps 1–7 get a 16-point LOAD axis that keeps the first 13 scaled breakpoints (11…105) and adds 145 / 185 / 225; data bilinearly resampled | every cell in the stock range keeps its value; three new columns reach stock-load 300 |
 | starter fill | new columns start as the old top column, fuel ×(1 + 0.08·frac), ignition −1.5°·frac | a conservative first guess; the wideband replaces it |
 | limiter release | load limiter 1 → 250, limiter 2 → 200 | 034 set 254 on every GT3071 chip; the stock 174 would cut fuel at 23 psi |
-| injectors | fuel maps 1–4, cranking and post-start tables × stock/new (`--injector-ratio`) | the 3B has no injector constant (docs/3B_injection_path_RE.md §6) |
+| injectors | fuel maps 1–4 and the cranking table × stock/new (`--injector-ratio`; post-start and IAT/warm-up are relative and stay) | the 3B has no injector constant (docs/3B_injection_path_RE.md §6) |
 | checksum | 0x7F00 recomputed | the ECU checks it at boot |
 
-`roms/tunes/3b_gt3071_scaffold_k075.bin` is that build with the injector ratio
-left at 1.0. **It is not drivable**: it is the stock calibration on a
-compressed load scale with three guessed columns and no injector correction.
-Its purpose is to be opened in UrROM next to the 034 GT3071 R9 chip.
+`roms/tunes/3b_gt3071_scaffold_k075.bin` is that build with the 305/550 = 0.555
+injector ratio (stock 3B injector: Bosch 0 280 150 737, 305 cc at 3 bar).
+**It is still not drivable** — the three new columns are guesses and the
+turbo is not on the car — its purpose is to be opened in UrROM next to the
+034 GT3071 R9 chip.
+
+`roms/tunes/3b_inj550_404aa.bin` (`python -m urrom.cli injectors 3b.bin out.bin
+--new-cc 550`) is the other thing the ratio makes possible: the stock 3B
+calibration re-fuelled for the Bosch 550s and nothing else. That is the chip
+for step 2 below.
 
 ## What the car has to supply, in order
 
-1. **Injector ratio.** Stock 3B injector part number (and the regulator
-   pressure) → `stock_cc / 550`. Bosch quotes flow at 3 bar; if the 3B runs
-   3.0 bar and the Bosch 550s are rated at 3 bar the ratio is simply
-   stock/550. Rebuild the scaffold with `--injector-ratio`.
+1. ~~Injector ratio~~ 305 / 550 = 0.555 (both rated at 3 bar; the regulator
+   pressure cancels as long as both injectors are quoted at the same
+   reference). Applied to the scaffold and to `3b_inj550_404aa.bin`.
 2. **Idle and cruise on the new injectors, stock turbo.** Burn the scaffold
    with the injector ratio and the stock RR boost chip, log lambda at idle,
    1500–3000 rpm part load. Closed loop will hide small errors; the

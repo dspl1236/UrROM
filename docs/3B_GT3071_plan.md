@@ -84,13 +84,25 @@ Check the 3B's regulator pressure before ordering: flow ratings are quoted at
    composes the load rescale, a re-gridded 16-point LOAD axis (11…105, 145,
    185, 225) with resampled maps, a conservative starter ramp in the three new
    columns, the limiter release and the injector scaling into one chip.
-   `roms/tunes/3b_gt3071_scaffold_k075.bin` is that build with the injector
-   ratio unset. The calibration itself is data-driven and waits on the car:
+   `roms/tunes/3b_gt3071_scaffold_k075.bin` is that build with the 305/550
+   injector ratio applied; `roms/tunes/3b_inj550_404aa.bin` is the stock 3B
+   re-fuelled for the 550s only (drivable on the stock turbo: step 2 of the
+   procedure). The calibration itself is data-driven and waits on the car:
    injector part number → ratio, idle/cruise lambda on the new injectors,
    the 3-bar boost chip at stock kPa, then boost in steps with a wideband.
 
 ## Hardware assumed
 
 GT3071 / K26 hybrid, 3.0 bar MAP, Bosch 550 cc injectors (owner's choice), uprated pump,
-stock MAF (same part as the AAN),
+stock MAF (same part as the AAN).
+
+Injectors (owner, 2026-09-15): stock 3B = **Bosch 0 280 150 737, 305 cc/min
+(29 lb/h) at 3 bar, 16 ohm**. So the ratio for Bosch 550s rated at 3 bar is
+305 / 550 = **0.555**. For reference the AAN's black 0 280 150 951 (034 906
+031B) flow 280 / 315 / 323 / 361 cc at 3.0 / 3.8 / 4.0 / 5.0 bar and run 4.0 bar
+in the S4/S6; the ADU/RS2 green 0 280 150 984 (034 906 031F) 360 / 405 / 416 /
+465 cc at the same pressures and run 3.8 bar. The 034 GT3071 "440 cc" kit on a
+4 bar AAN is therefore a 323→440 swap (ratio 0.73), and its fuel map moved
+from 110…174 to 69…109 (×0.63): ratio × a ~0.86 lean-out from the stock AAN
+calibration, i.e. the map rewrite was mostly the injector ratio after all.
 RS2-style manifold optional. Fuel pressure regulator to be confirmed.

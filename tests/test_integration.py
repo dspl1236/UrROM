@@ -1356,7 +1356,8 @@ class TestPublishedImages:
                  "3b_stage1_boost_rrbase_plus5kpa_27C512.bin": ("tunes/3b_stage1_boost_rrbase_plus5kpa.bin", 8),
                  "3b_hybrid_3bfuel_s2ign_404aa_27C512.bin": ("tunes/3b_hybrid_3bfuel_s2ign_404aa.bin", 2),
                  "rr_boost_404b_3bar034_27C512.bin": ("tunes/rr_boost_404b_3bar034.bin", 8),
-                 "3b_gt3071_scaffold_k075_27C512.bin": ("tunes/3b_gt3071_scaffold_k075.bin", 2)}
+                 "3b_gt3071_scaffold_k075_27C512.bin": ("tunes/3b_gt3071_scaffold_k075.bin", 2),
+                 "3b_inj550_404aa_27C512.bin": ("tunes/3b_inj550_404aa.bin", 2)}
         for img, (native, copies) in pairs.items():
             b = bytes(load_rom("27c512/" + img)); o = bytes(load_rom(native))
             folded, n, _ = fold_repeated_image(b)
@@ -2079,8 +2080,30 @@ class TestGtScaffold:
             assert new_i[r][15] == int(old_i[r][15] - 2 + 0.5), r
         assert list(out[0x6951:0x6956]) == [250] * 5 and list(out[0x695D:0x6962]) == [200] * 5
         assert out[0x6351] == 139 and list(out[0x6970:0x6974]) == [255] * 4
-        # injector scaling
+        # injector scaling: fuel maps + cranking only; post-start untouched
         out2, _ = build_scaffold(rom, injector_ratio=0.6)
         assert read_map(bytes(out2), fm)[0][0] == int(new_f[0][0] * 0.6 + 0.5)
+        assert bytes(out2)[0x6A47:0x6A4C] == rom[0x6A47:0x6A4C]
+        assert bytes(out2)[0x6BC8] == int(216 * 0.6 + 0.5)
         pub = bytes(load_rom("tunes/3b_gt3071_scaffold_k075.bin"))
+        exp, _ = build_scaffold(rom, injector_ratio=305 / 550)
+        assert pub == bytes(exp) and zlib.crc32(pub) & 0xFFFFFFFF in KNOWN_CRCS
+
+    def test_injector_chip_for_bosch_550(self):
+        from urrom.gt_builder import injector_chip
+        from urrom.ecu_profiles import VARIANT_404, verify_checksum_for, read_map, KNOWN_CRCS
+        import zlib
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        out, ratio = injector_chip(rom, 550)
+        out = bytes(out)
+        assert abs(ratio - 0.5545) < 1e-3 and verify_checksum_for(out, VARIANT_404)
+        fm = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x6A8E)
+        assert read_map(out, fm)[0][0] == int(read_map(rom, fm)[0][0] * ratio + 0.5)
+        # everything outside the four fuel maps and the cranking table is byte-identical (bar the checksum)
+        touched = set()
+        for a in (0x6A8E, 0x6C1C, 0x6D74, 0x6E98):
+            touched.update(range(a, a + 256))
+        touched.update(range(0x6BC8, 0x6BCE)); touched.update((0x7F00, 0x7F01))
+        assert all(out[i] == rom[i] for i in range(len(rom)) if i not in touched)
+        pub = bytes(load_rom("tunes/3b_inj550_404aa.bin"))
         assert pub == out and zlib.crc32(pub) & 0xFFFFFFFF in KNOWN_CRCS

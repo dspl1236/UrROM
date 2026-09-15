@@ -14,8 +14,10 @@ docs/3B_load_headroom_RE.md into one repeatable build:
                              the column sits — a conservative place to begin, to be
                              corrected cell by cell from wideband logs
   4. release the load limiter (stock 174..156 -> `limiter`) so the ECU does not cut
-  5. optional injector scaling: fuel maps 1-4, cranking and post-start enrichment
-     x stock_cc / new_cc (Q7 factors, clamped)
+  5. optional injector scaling: fuel maps 1-4 and the cranking table x stock_cc /
+     new_cc (they are Q7 factors on the pulse).  The post-start table is a relative
+     term (1 + v/128, 0x1C29) and the IAT / warm-up tables are multipliers around
+     1.00, so none of those move with the injectors.
   6. 404 checksum
 
 Nothing here is a tune.  It is the scaffold on which the tune is written.
@@ -32,7 +34,9 @@ from urrom.xcompare import _interp1
 FUEL_MAPS = (0x6A8E, 0x6C1C, 0x6D74, 0x6E98)
 IGN_MAPS = (0x7076, 0x71F8, 0x731C, 0x7440, 0x7667, 0x77CF, 0x7937)
 LOAD_LIMITER_1, LOAD_LIMITER_2 = 0x6951, 0x695D
-CRANKING_ENRICH, POST_START_ENRICH = (0x6BC8, 6), (0x6A47, 5)
+CRANKING_ENRICH = (0x6BC8, 6)          # Q7 factor used INSTEAD of the map while cranking
+POST_START_ENRICH = (0x6A47, 5)        # relative (1 + v/128): NOT scaled with injectors
+STOCK_3B_INJECTOR_CC = 305             # Bosch 0 280 150 737, 29 lb/h at 3 bar, 16 ohm
 IGN_RAW_PER_DEG = 1 / 0.75
 
 
@@ -109,14 +113,22 @@ def regrid_load_axis(rom: bytearray, new_axis: list[int], enrich: float = 0.08,
 
 
 def scale_injectors(rom: bytearray, ratio: float) -> None:
-    """ratio = stock_cc / new_cc.  Fuel maps and the cranking/post-start tables are Q7 factors."""
+    """ratio = stock_cc / new_cc.  Fuel maps 1-4 and the cranking table are Q7 factors on the pulse."""
     if ratio == 1.0:
         return
     for addr in FUEL_MAPS:
         m = next(x for x in VARIANT_404.main_maps if x.main_addr == addr)
         write_map(rom, m, [[int(v * ratio + 0.5) for v in row] for row in read_map(bytes(rom), m)])
-    for a, n in (CRANKING_ENRICH, POST_START_ENRICH):
-        rom[a:a + n] = bytes(max(0, min(255, int(v * ratio + 0.5))) for v in rom[a:a + n])
+    a, n = CRANKING_ENRICH
+    rom[a:a + n] = bytes(max(0, min(255, int(v * ratio + 0.5))) for v in rom[a:a + n])
+
+
+def injector_chip(rom: bytes, new_cc: float, stock_cc: float = STOCK_3B_INJECTOR_CC) -> tuple[bytearray, float]:
+    """A stock-scale chip re-fuelled for different injectors (same reference pressure), checksum applied."""
+    ratio = stock_cc / new_cc
+    out = bytearray(rom)
+    scale_injectors(out, ratio)
+    return apply_checksum_for(out, VARIANT_404), ratio
 
 
 def build_scaffold(rom: bytes, factor: float = 0.75, top: int = 225, new_cols: int = 3,

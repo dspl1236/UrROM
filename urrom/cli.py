@@ -377,6 +377,27 @@ def cmd_boost_sensor(args):
     print(f"written {ns.out} (8 KB native; use 'chip' for the 27C512 image)")
 
 
+def cmd_injectors(args):
+    """Re-fuel a 404 chip for different injectors: fuel maps 1-4 and cranking x stock/new."""
+    import argparse
+    p = argparse.ArgumentParser(prog='urrom injectors')
+    p.add_argument('rom'); p.add_argument('out')
+    p.add_argument('--new-cc', type=float, required=True, help='new injector flow at the same reference pressure')
+    p.add_argument('--stock-cc', type=float, default=305.0, help='stock flow (3B: 305 cc, Bosch 0 280 150 737)')
+    ns = p.parse_args(args)
+    from urrom.gt_builder import injector_chip
+    path = Path(ns.rom)
+    if not path.exists():
+        print(f"ERROR: {path} not found"); sys.exit(3)
+    _, det = _load_rom(path)
+    sw = det.variant.software_id if det and det.variant else ""
+    if sw != "404":
+        print(f"ERROR: {path.name} is not a 3B/RR/S2 (404) fuel/ign chip ({sw or 'unknown'})"); sys.exit(2)
+    out, ratio = injector_chip(path.read_bytes(), ns.new_cc, ns.stock_cc)
+    Path(ns.out).write_bytes(bytes(out))
+    print(f"fuel maps 1-4 and cranking x {ratio:.4f} ({ns.stock_cc:g} / {ns.new_cc:g} cc); checksum applied -> {ns.out}")
+
+
 def cmd_gt_scaffold(args):
     """Scaffold a 404 fuel/ign chip for a bigger turbo (docs/3B_GT3071_step4_fuel_spark.md)."""
     import argparse
@@ -414,6 +435,7 @@ def main():
         print("  xcompare <A> <B> [--role fuel|ign] — decoded cross-family map comparison (B resampled onto A)")
         print("  coding <rom> [--adc N | --volts V] — coding-plug bands -> ignition set (3B/RR/S2 and 551)")
         print("  rescale-load <rom> <out> --factor K [--cap N] — compress the 404 load scale (GAIN, axes, limiters, cap)")
+        print("  injectors <rom> <out> --new-cc N [--stock-cc 305] — re-fuel a 404 chip for different injectors")
         print("  gt-scaffold <rom> <out> [--factor K --top N --injector-ratio R ...] — big-turbo scaffold for a 404 fuel/ign chip")
         print("  boost-sensor <rom> <out> --to KEY [--from KEY] [--limits-psi P] [--scale-gains] — re-encode a 404 boost chip for another MAP sensor")
         sys.exit(0)
@@ -429,6 +451,8 @@ def main():
         cmd_chip(rest)
     elif cmd == 'xcompare':
         cmd_xcompare(rest)
+    elif cmd == 'injectors':
+        cmd_injectors(rest)
     elif cmd == 'gt-scaffold':
         cmd_gt_scaffold(rest)
     elif cmd == 'boost-sensor':
