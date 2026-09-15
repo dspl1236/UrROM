@@ -65,15 +65,17 @@ territory above the old top is where the GT3071 fuel and spark go, filled in
 the editor with the 034 GT3071 R9 map as the reference shape.
 
 prj did the equivalent on the 551 by re-gridding to a 10…240 axis on a
-speed-density conversion; the 3B stays MAF-based, so the scale moves at the
-gain instead.
+speed-density conversion. The same cap-and-8-bit-load ceiling exists there,
+which is very likely why prjmod went MAF-less: a MAP sensor gives a load
+signal that scales with the sensor instead of with a clamped pulse count. The
+3B stays MAF-based here, so the scale moves at the gain instead.
 
 ## 4. The sensor itself
 
 - 034 shipped every GT2871 / GT28RS / GT3071 kit for the AAN "stock MAF in all
   applications" at 22–23 psi to redline (docs/034_RipChip_definitions_RE.md), so
-  the Bosch hot-wire in this family meters that airflow. The 3B and AAN use the
-  same sensor family; confirm the part numbers match before relying on it.
+  the Bosch hot-wire meters that airflow. The 3B and AAN use the **same MAF**
+  (confirmed by the owner, 2026-09-15), so that precedent transfers directly.
 - The ECU-side pulse counter is 16-bit per crank segment and never gets near
   overflow; the firmware saturation at 0xFFFF (0x076A) is before the cap and
   is unreachable with a stock-range sensor.

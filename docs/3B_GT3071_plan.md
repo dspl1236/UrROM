@@ -79,5 +79,6 @@ Check the 3B's regulator pressure before ordering: flow ratings are quoted at
 
 ## Hardware assumed
 
-GT3071 / K26 hybrid, 3.0 bar MAP, 550 cc EV14 injectors, uprated pump,
+GT3071 / K26 hybrid, 3.0 bar MAP, Bosch 550 cc injectors (owner's choice), uprated pump,
+stock MAF (same part as the AAN),
 RS2-style manifold optional. Fuel pressure regulator to be confirmed.
