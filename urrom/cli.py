@@ -398,6 +398,37 @@ def cmd_injectors(args):
     print(f"fuel maps 1-4 and cranking x {ratio:.4f} ({ns.stock_cc:g} / {ns.new_cc:g} cc); checksum applied -> {ns.out}")
 
 
+def cmd_maf_swap(args):
+    """Re-linearise a 404 chip for a different MAF from a pair of logs (roms/tunes/404/MAF_HOTFILM_1.8T_README.md)."""
+    import argparse
+    p = argparse.ArgumentParser(prog='urrom maf-swap')
+    p.add_argument('rom'); p.add_argument('out')
+    p.add_argument('--stock-log', help='CSV logged with the stock hot-wire: point,rpm,rate,pulses[,lambda]')
+    p.add_argument('--new-log', help='CSV logged with the new sensor, same points')
+    p.add_argument('--ratio', type=float, help='bench-less first pass: M\' = M x RATIO everywhere')
+    p.add_argument('--rpm-bin', type=float, default=250.0)
+    ns = p.parse_args(args)
+    from urrom import maf_swap
+    path = Path(ns.rom)
+    if not path.exists():
+        print(f"ERROR: {path} not found"); sys.exit(3)
+    _, det = _load_rom(path)
+    sw = det.variant.software_id if det and det.variant else ""
+    if sw != "404":
+        print(f"ERROR: {path.name} is not a 3B/RR/S2 (404) fuel/ign chip ({sw or 'unknown'})"); sys.exit(2)
+    rom = path.read_bytes()
+    if ns.stock_log and ns.new_log:
+        offs, gain, rep = maf_swap.fit_from_logs(rom, maf_swap.read_log(Path(ns.stock_log)),
+                                                 maf_swap.read_log(Path(ns.new_log)), ns.rpm_bin)
+    elif ns.ratio:
+        offs, gain, rep = maf_swap.uniform(rom, ns.ratio)
+    else:
+        print("ERROR: give --stock-log and --new-log, or --ratio"); sys.exit(2)
+    out = maf_swap.apply(rom, offs, gain)
+    Path(ns.out).write_bytes(bytes(out))
+    print(rep.text()); print(f"written {ns.out} (checksum applied) — EXPERIMENTAL, see roms/tunes/404/MAF_HOTFILM_1.8T_README.md")
+
+
 def cmd_rs2_chipset(args):
     """Build the RS2-turbo 3B chipset from the bundled 3B and RS2/ADU chips (docs/3B_RS2_turbo_chipset.md)."""
     import argparse
@@ -450,6 +481,7 @@ def main():
         print("  xcompare <A> <B> [--role fuel|ign] — decoded cross-family map comparison (B resampled onto A)")
         print("  coding <rom> [--adc N | --volts V] — coding-plug bands -> ignition set (3B/RR/S2 and 551)")
         print("  rescale-load <rom> <out> --factor K [--cap N] — compress the 404 load scale (GAIN, axes, limiters, cap)")
+        print("  maf-swap <rom> <out> --stock-log A.csv --new-log B.csv | --ratio R — re-linearise a 404 chip for another MAF")
         print("  rs2-chipset [--roms DIR] [--out DIR]          — build the RS2-turbo 3B chipset (boost on MPX4250A + fuel/ign for RS2 greens)")
         print("  injectors <rom> <out> --new-cc N [--stock-cc 305] — re-fuel a 404 chip for different injectors")
         print("  gt-scaffold <rom> <out> [--factor K --top N --injector-ratio R ...] — big-turbo scaffold for a 404 fuel/ign chip")
@@ -467,6 +499,8 @@ def main():
         cmd_chip(rest)
     elif cmd == 'xcompare':
         cmd_xcompare(rest)
+    elif cmd == 'maf-swap':
+        cmd_maf_swap(rest)
     elif cmd == 'rs2-chipset':
         cmd_rs2_chipset(rest)
     elif cmd == 'injectors':

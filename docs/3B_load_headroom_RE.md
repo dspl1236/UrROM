@@ -27,10 +27,12 @@ on the 3B, RR and S2 chips.
 0x1D51:  LOAD (3Fh) = (40h:41h x 0xA4) >> 12         8-bit; wraps (not clamps) at 40h:41h >= 6394
 ```
 
-- **46h** is a MAF-range offset: tables 0x7000 / 0x7019 / 0x7032 (6 x RPM,
-  values 99…12 / 108…202 / 245…235) selected by flags 28h.6/28h.7 that task
-  0x1C42 sets from the pulse-rate class (4Bh < 0x10 / < 0x40 / above). This is
-  the piecewise hot-wire linearisation; leave it alone unless the MAF changes.
+- **46h is the hot-wire linearisation**: one curve of offset versus pulse
+  rate, auto-ranged into three tables indexed by RAM 4Bh (descriptor input
+  0x4B): 0x7000 (10 points, rate < 0x10, 4Bh = rate × 16), 0x7019 (13 points,
+  rate < 0x40, 4Bh = rate × 4), 0x7032 (10 points, rate ≥ 0x40, 4Bh = rate).
+  Task 0x1C42 (0x1D24–0x1D4D) does the ranging and sets 28h.6 / 28h.7 to pick
+  the table. Leave it alone unless the MAF changes (`urrom.maf_swap`).
 - **The cap table 0x6970** (`Air-per-rev cap`, 4 x RPM 800…6000) is 200 at every
   point on every stock chip. 200 x 25 = 5000 air counts = LOAD 200. So the stock
   ECU cannot register more than LOAD 200 no matter what the MAF does, and the
@@ -93,7 +95,7 @@ signal that scales with the sensor instead of with a clamped pulse count. The
 | 0x6351 | 185 | **GAIN** |
 | 0x6352 | 3 | exponent seed |
 | 0x6970 (4) | 200 ×4 | **cap**, load counts, by rpm 800/2000/4000/6000 |
-| 0x7000/19/32 | see §2 | MAF range offsets A/B/C by rpm |
+| 0x7000/19/32 | see §2 | MAF linearisation: offset vs pulse rate, 10/13/10 pts, auto-ranged ×16/×4/×1 |
 | 0x66F0 (32) | 0…0xFF ramp | transient enrichment by ΔLOAD index 4Ah (→ 66h) |
 | 0x6710 (32) | 0…10 | transient ignition retard by 4Ah (→ 54h/55h) |
 | 0x1D58 | 0xA4 | LOAD = air × 164 / 4096 (code constant) |

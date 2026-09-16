@@ -32,9 +32,12 @@ citing Audi's 1991 200 20V and S4/V8 Motronic training publications).
   the T1 pin); the crank ISR captures the count per crank segment into 42h:43h.
 - Air per revolution = pulses × (0x00F4 + range offset 46h) × GAIN (0x6351)
   >> exp, capped by the table at 0x6970, then LOAD = air × 0xA4 >> 12.
-- **46h is the hot-wire linearisation**: three 6-point rpm tables
-  (0x7000 / 0x7019 / 0x7032) selected by pulse-rate class (4Bh < 0x10 /
-  < 0x40 / above). This is the piece a different sensor changes.
+- **46h is the hot-wire linearisation**: one curve of offset versus pulse
+  rate, auto-ranged into three tables indexed by RAM 4Bh — 0x7000 (10 points,
+  rate < 0x10, ×16), 0x7019 (13 points, rate < 0x40, ×4), 0x7032 (10 points,
+  ×1). air = (244 + offset) × GAIN × pulses. This is the piece a different
+  sensor changes, and `urrom.maf_swap` / `urrom.cli maf-swap` rewrites it from
+  a pair of logs (roms/tunes/404/MAF_HOTFILM_1.8T_README.md).
 - Failure behaviour per Audi's training text, which the firmware agrees
   with: at idle the ECU runs the idle timing table and a **precalculated
   amount of air** (the fixed air-per-rev at 0x6343 = 20 × 25 counts is that
@@ -58,8 +61,8 @@ Two separate questions, and the second is the work:
    idle, 3000 rpm cruise, and a pull. The frequency-output hot-film variants
    avoid this entirely — feed Timer 1 directly, bypass the V/F, and
    pulses-per-gram is a datasheet number.
-2. **The calibration**: the three range-offset tables, the offset/GAIN/exponent
-   bytes at 0x634F–0x6352, and possibly the cap (0x6970). Fuel and ignition
+2. **The calibration**: the three linearisation tables and GAIN (the tool
+   spills overflow into GAIN; the exponent byte 0x6352 is the reserve). Fuel and ignition
    maps do not change, because LOAD is defined in air-per-rev, not in sensor
    volts. That is the difference from HachiROM's 7A patch, which had to move
    the 16-point MAF axis of an analogue-input ECU; 034's equivalent 7A

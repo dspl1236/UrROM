@@ -2169,3 +2169,60 @@ class TestRS2TurboChipset:
         # fault map 1 untouched
         m1 = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x7076)
         assert read_map(main, m1) == read_map(rom, m1)
+
+
+class TestMafSwap:
+    """A synthetic sensor with a known transfer must be recovered from two logs."""
+
+    @staticmethod
+    def _stock_rate_pulses(rpm, load):
+        # a plausible hot-wire operating map: pulses/segment grow with load, rate with rpm x load
+        pulses = 40 + load * 6.0
+        rate = pulses * rpm / 6000.0 / 4.0
+        return rate, pulses
+
+    def _logs(self, rom, transform):
+        from urrom import maf_swap
+        stock, new = [], []
+        points = [("idle", 850, 18), ("cruise2k", 2000, 40), ("cruise3k", 3000, 60), ("cruise4k", 4000, 80),
+                  ("wot3k", 3000, 150), ("wot4k", 4000, 180), ("wot5k", 5000, 190), ("wot6k", 6000, 195)]
+        for name, rpm, load in points:
+            for k in range(5):
+                r, p = self._stock_rate_pulses(rpm + k * 10, load)
+                stock.append({"point": name, "rpm": rpm + k * 10, "rate": r, "pulses": p, "lambda": 1.0})
+                p2 = transform(p); r2 = r * p2 / p
+                new.append({"point": name, "rpm": rpm + k * 10, "rate": r2, "pulses": p2, "lambda": 1.0})
+        return stock, new
+
+    def test_tables_are_offset_vs_rate(self):
+        from urrom.maf_swap import tables, multiplier, BASE
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        t = tables(rom)
+        assert [len(x[1]) for x in t] == [10, 13, 10]
+        assert t[0][2][:3] == [99, 29, 7] and t[2][2][0] == 245
+        assert multiplier(rom, 0x80) == BASE + 245 or 400 < multiplier(rom, 0x80) < 520
+
+    def test_uniform_and_fit_recover_a_scaled_sensor(self):
+        from urrom import maf_swap
+        from urrom.ecu_profiles import VARIANT_404, verify_checksum_for
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin"))
+        # sensor giving 1.25x the pulses everywhere -> M' = M / 1.25
+        stock, new = self._logs(rom, lambda p: p * 1.25)
+        offs, gain, rep = maf_swap.fit_from_logs(rom, stock, new)
+        out = bytes(maf_swap.apply(rom, offs, gain))
+        assert verify_checksum_for(out, VARIANT_404)
+        for s, n in zip(stock, new):
+            m_old = maf_swap.multiplier(rom, s["rate"]) * rom[maf_swap.GAIN_ADDR] * s["pulses"]
+            m_new = maf_swap.multiplier(out, n["rate"]) * out[maf_swap.GAIN_ADDR] * n["pulses"]
+            assert abs(m_new / m_old - 1) < 0.06, (s["point"], m_new / m_old)
+        # the uniform shortcut with the same ratio lands in the same place
+        offs2, gain2, _ = maf_swap.uniform(rom, 0.8)
+        out2 = bytes(maf_swap.apply(rom, offs2, gain2))
+        mg = lambda r, x: maf_swap.multiplier(r, x) * r[maf_swap.GAIN_ADDR]
+        assert abs(mg(out2, 0x80) / mg(rom, 0x80) - 0.8) < 0.02 and abs(mg(out2, 5) / mg(rom, 5) - 0.8) < 0.03
+        # identity leaves the chip byte-identical
+        offs3, gain3, _ = maf_swap.uniform(rom, 1.0)
+        assert bytes(maf_swap.apply(rom, offs3, gain3)) == rom
+        # a sensor needing MORE multiplier than the tables can hold spills into GAIN
+        offs4, gain4, rep4 = maf_swap.uniform(rom, 1.3)
+        assert gain4 > rom[maf_swap.GAIN_ADDR] and max(max(v) for v in offs4.values()) <= 255

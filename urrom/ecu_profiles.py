@@ -533,13 +533,18 @@ _MAPS_3B_MAIN = [
             "offset hi, offset lo (0x00F4), GAIN (185), exponent seed (3): air-per-rev = (offset + "
             "MAF range offset) x GAIN x pulses >> exp. LOAD is proportional to GAIN; "
             "urrom.load_rescale scales it with every load axis.", conf="PROVISIONAL"),
-    _b3_raw("MAF range offset A (RPM, 0x7000)", 0x7000, 6, 1,
-            "Task 0x1C42 slot 0 -> RAM 46h when 28h.6 (low pulse-rate class): hot-wire linearisation offset.",
+    # The hot-wire linearisation: ONE curve of offset vs pulse rate, auto-ranged into
+    # three tables indexed by RAM 4Bh (0x1CE8-0x1D4D: rate < 0x10 -> x16 table A,
+    # < 0x40 -> x4 table B, else x1 table C).  air = (244 + offset) x GAIN x pulses.
+    _b3_raw("MAF linearisation A (rate x16, 0x7000)", 0x7000, 10, 1,
+            "Offset vs pulse rate for rates below 0x10 (4Bh = rate x 16). Task 0x1C42 slot 0 -> RAM 46h "
+            "when 28h.6. Stock 99 29 7 3 3 12 ... docs/3B_MAF_hotfilm_notes.md; urrom.maf_swap rewrites it.",
             conf="PROVISIONAL"),
-    _b3_raw("MAF range offset B (RPM, 0x7019)", 0x7019, 6, 1,
-            "Slot 1 -> 46h when 28h.7 (mid class).", conf="PROVISIONAL"),
-    _b3_raw("MAF range offset C (RPM, 0x7032)", 0x7032, 6, 1,
-            "Slot 2 -> 46h (high class).", conf="PROVISIONAL"),
+    _b3_raw("MAF linearisation B (rate x4, 0x7019)", 0x7019, 13, 1,
+            "Offset vs pulse rate for rates 0x10..0x3F (4Bh = rate x 4). Slot 1 -> 46h when 28h.7.",
+            conf="PROVISIONAL"),
+    _b3_raw("MAF linearisation C (rate x1, 0x7032)", 0x7032, 10, 1,
+            "Offset vs pulse rate for rates >= 0x40 (4Bh = rate). Slot 2 -> 46h.", conf="PROVISIONAL"),
     _b3_raw("Transient enrichment (dLOAD index, 0x66F0)", 0x66F0, 1, 32,
             "Indexed by 4Ah (0..31, the air-per-rev rise per event, 0x07A5-0x0831) x 60h -> 66h, added to "
             "the pulse while it exceeds the running value (0x083A). Stock: 0 x4 then 13..255 ramp.",
@@ -2979,7 +2984,7 @@ def _scale_axis(input_ram: int, bps: list[int]) -> list:
     return [b * 40 for b in bps] if input_ram == 0x3A else bps
 
 
-_DESCRIPTOR_INPUTS = (0x3A, 0x3F, 0x38, 0x37, 0x36, 0x39)   # RPM LOAD ECT IAT UBAT MFTS
+_DESCRIPTOR_INPUTS = (0x3A, 0x3F, 0x38, 0x37, 0x36, 0x39, 0x4B)   # RPM LOAD ECT IAT UBAT MFTS, 4Bh = MAF pulse rate
 
 
 def read_descriptor_axis_1d(rom: bytes, data_addr: int, n: int) -> list | None:
