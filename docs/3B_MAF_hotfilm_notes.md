@@ -100,6 +100,18 @@ curve for no reason. Three wires: +12 V, signal ground, signal (AEB 4-pin, or
 the ATW/AUG/AWM 5-pin with its integrated IAT left open). The 7A-era AAH
 housing option in the HachiROM notes does not apply here.
 
+## The bigger option: the B5 RS4 hot-film
+
+S2Forum thread 59697 ("RS4 MAF modification", intake & exhaust) looked at the
+B5 RS4's Bosch hot-film element for the 20V turbo: Bosch element about €60–70
+in a €20 housing, but the housing is **87 mm outer diameter** against the
+S2's ~82 mm, so it needs a milled spacer at the airbox and CNC reducers at
+both ends, a new harness connector, and a recalibration — prj had a map that
+ran with it on the 551. The thread ends before anyone fitted one, with no
+pinout or signal data recorded. For the 3B it is the >500 hp answer, where
+the 70 mm bore itself is the limit; the same `maf-swap` procedure applies,
+with the V/F gate check first, and the housing work is the real cost.
+
 ## When it is worth doing
 
 Not for the K24-7200 or a GT3071 at 23 psi: the stock hot-wire meters that
