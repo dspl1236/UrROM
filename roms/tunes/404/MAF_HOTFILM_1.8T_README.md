@@ -11,8 +11,12 @@ with the signal, the maths) is built and tested on synthetic data.
 
 - **Sensor:** Bosch 1.8T hot-film element in the **69.85 mm VR6 / TT225
   housing** — 0280218042 or 0280218116. That bore is about the stock 3B
-  housing's, so the intake plumbing stays and the ECU's three pulse-rate ranges
-  stay closest to where the stock curve lives. Not the 60 mm 1.8T housing.
+  housing's (the OE S2/3B meter is 72 mm ID), so the intake plumbing stays and
+  the ECU's three pulse-rate ranges stay closest to where the stock curve
+  lives. Not the 60 mm 1.8T housing. The step above it is the B5 RS4 element
+  (0 280 218 067) in the 72 mm Alfa HFM5 housing 0 280 217 531, good for
+  ~400 hp per the S2Forum thread (docs/3B_MAF_hotfilm_notes.md); same wiring,
+  same procedure.
 - **Wiring:** three wires — +12 V, signal ground, signal. AEB 4-pin: ground 1,
   signal ground 2, +12 V 3, signal 4. ATW/AUG/AWM 5-pin: +12 V 2, signal ground
   3, signal 5; pins 1 and 4 are the integrated IAT — **leave open**, the 3B has

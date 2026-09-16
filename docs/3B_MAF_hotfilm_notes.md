@@ -100,17 +100,50 @@ curve for no reason. Three wires: +12 V, signal ground, signal (AEB 4-pin, or
 the ATW/AUG/AWM 5-pin with its integrated IAT left open). The 7A-era AAH
 housing option in the HachiROM notes does not apply here.
 
-## The bigger option: the B5 RS4 hot-film
+## The B5 RS4 hot-film — what the S2Forum thread actually established
 
-S2Forum thread 59697 ("RS4 MAF modification", intake & exhaust) looked at the
-B5 RS4's Bosch hot-film element for the 20V turbo: Bosch element about €60–70
-in a €20 housing, but the housing is **87 mm outer diameter** against the
-S2's ~82 mm, so it needs a milled spacer at the airbox and CNC reducers at
-both ends, a new harness connector, and a recalibration — prj had a map that
-ran with it on the 551. The thread ends before anyone fitted one, with no
-pinout or signal data recorded. For the 3B it is the >500 hp answer, where
-the 70 mm bore itself is the limit; the same `maf-swap` procedure applies,
-with the V/F gate check first, and the housing work is the real cost.
+S2Forum thread 59697 ("RS4 MAF modification", six pages, 2013–2016). Facts
+recorded there, quoted where they gave numbers:
+
+- **Sensor**: B5 RS4 MAF **Bosch 0 280 218 067**, exchange unit 0 986 280 219,
+  insert F00C 2G2 047 — "not available separately from Bosch, you need the
+  exchange MAF" (a refurbished unit went for £94). HFM5 family.
+- **Sizes**: RS4 housing **87 mm OD, ~78 mm ID**, inlet 82 mm; the OE S2 MAF
+  is **72 mm ID** (RS2 housing 80 mm OD). So the 3B's bore is ~72 mm, and the
+  1.8T VR6/TT housing at 69.85 mm is the closest bolt-in.
+- **The hybrid**: the RS4 element in the Alfa HFM5 housing **Bosch 0 280 217
+  531** (Chinese copy CH-XX009, ~€20, **72 mm ID measured**, same as OE). Quote:
+  "It can do 550–600 in the big tube. It'll max out at like 400 in the small
+  one." So RS4 element + 72 mm housing ≈ a 400 hp sensor that fits the stock
+  plumbing; the full 87 mm RS4 is for 450 hp and up and needs a milled airbox
+  spacer, machined reducers (a one-off adapter was quoted at £150) or the MAF
+  sealed straight into a modified RS2 airbox with a Roose hose.
+- **Where the stock sensor stops**: "5.67 V, which is maximum before 390 hp —
+  beyond this the ECU is going blind"; one car's "MAF was maxed by 5000 rpm,
+  the rest was last-cell mapping". That is the same wall the firmware trace
+  found from the other side: the air-per-rev cap and READ_MAP holding the
+  last column (docs/3B_load_headroom_RE.md §2), seen here as a hot-wire
+  output that tops out near 5.7 V.
+- **Who ran it**: Dmitri (prj) wired a new plug and made "the necessary ECU
+  mods" on the 551 for a full RS4 MAF in an RS2 airbox; recalibration was an
+  extra-cost item. Fault code **2324** = MAF wire failure (idle trouble,
+  boost hesitation). No pinout, supply-voltage or frequency data was ever
+  posted, and no one documented the ECU-side change.
+- A pressure-side Pro-M meter (2700 kg/h in a 3" tube, ~800 hp) was mentioned
+  for extreme builds.
+
+For the 3B that gives three candidates in order of reach:
+
+| option | bore | reach (thread) | work |
+|---|---|---|---|
+| 1.8T element, VR6/TT 69.85 mm housing | ≈ stock | into the 300s | pigtail |
+| RS4 element in the Alfa 72 mm housing (0 280 217 531) | = stock | ~400 hp | pigtail + housing swap |
+| full RS4 87 mm | +15 mm | 550–600 | machining or airbox surgery |
+
+All three are HFM5-family analogue-output sensors, so all three face the same
+V/F front-end gate on the 3B and use the same `maf-swap` log-and-fit
+procedure. The thread's own datasheet link (guzzimental.com, "Bosch HFM5
+Sensors.pdf") was not retrievable when this was written.
 
 ## When it is worth doing
 
