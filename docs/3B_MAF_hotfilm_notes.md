@@ -1,5 +1,10 @@
 # The 3B's MAF, and what a hot-film swap would take
 
+> **EXPERIMENTAL — untested.** Nothing in the swap section has been tried on a
+> car. It is a build-out for when it is needed (a failing sensor, or well north
+> of 500 hp), kept out of the how-to guide on purpose until it has been run.
+> The stock-sensor and firmware sections are fact.
+
 Notes gathered 2026-09-16 from the firmware trace (docs/3B_load_headroom_RE.md),
 the HachiROM 7A MAF work (github.com/dspl1236/HachiROM, docs/MAF_SENSOR_WIRING.md)
 and SJM Autotechnik's 20V MAF page (sjmautotechnik.com/trouble_shooting/20vmassa.html,
@@ -82,14 +87,15 @@ KW1281 with the 3B's read-RAM command, which KWPBridge speaks. Procedure:
    gives the old air-per-rev; confirm with lambda under closed loop (the
    long-term correction should return to where it was on the hot-wire).
 
-## Candidates and housings (from the HachiROM work)
+## The one candidate worth building out
 
-- Bosch 1.8T hot-film (AEB 4-pin, or ATW/AUG/AWM 5-pin with an unused
-  integrated IAT) in the 60 mm stock housing or the 69.85 mm VR6 / TT225
-  housing (0280218042 / 0280218116). Three wires needed: +12 V, signal
-  ground, signal; leave the IAT pins open.
-- Housing part-number traps: `078 133 471` fits, the `A` / `AX` suffixes have
-  mirrored holes and a different sensor depth.
+The **Bosch 1.8T hot-film element in the 69.85 mm VR6 / TT225 housing**
+(0280218042 / 0280218116). That bore is about the stock 3B housing's size, so
+the intake plumbing stays and the pulse-rate classes stay closest to where
+the hot-wire tables expect them; the 60 mm 1.8T housing would move the whole
+curve for no reason. Three wires: +12 V, signal ground, signal (AEB 4-pin, or
+the ATW/AUG/AWM 5-pin with its integrated IAT left open). The 7A-era AAH
+housing option in the HachiROM notes does not apply here.
 
 ## When it is worth doing
 
