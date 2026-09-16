@@ -310,6 +310,10 @@ def build() -> Path:
             "while leaning idle and cruise; the S2 boost chip is 0.2 bar lower. The combination that moves the right "
             "things is the <b>RR boost chip with the S2 fuel/ignition chip</b>, every byte factory. Images are in "
             "<b>roms/27c512/404/</b>."),
+          P("Repository layout: stock chip reads sit flat in <b>roms/</b>; UrROM-built tunes are filed by ECU family under "
+            "<b>roms/tunes/&lt;family&gt;/</b> and their burner images under <b>roms/27c512/&lt;family&gt;/</b>, where "
+            "<b>404</b> is the 3B / RR / S2 fuel-ign and boost chips and <b>551</b> is AAN / ABY / ADU / RS2. Every tune has a row "
+            "in roms/README.md with its base chip, what changed, its CRC32 and its status.", SMALL),
           table([["Boost chip", "Target B peak (200 kPa scale)", "gauge"],
                  ["3B stock", "186 kPa", "+0.86 bar / 12.5 psi"],
                  ["RR", "191 kPa", "+0.91 bar / 13.2 psi"],
