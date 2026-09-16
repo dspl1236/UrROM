@@ -341,6 +341,21 @@ def build() -> Path:
             "tab confirms the preset from that number. The cluster boost gauge is driven off the boost board with an untraced "
             "scale and will read about 1.5 × high on a 3-bar sensor; use a mechanical gauge. One raw count is now 1.18 kPa instead "
             "of 0.78, so the loop acts 1.5 × harder per kPa; if boost hunts on a steady pull, rebuild with --scale-gains.", NOTE),
+          P("Wiring an external 3-bar sensor", H3 if "H3" in globals() else H2),
+          P("The stock sensor sits on the boost board inside the ECU case with a hose nipple through the wall. An external "
+            "GM 3-bar is three wires from that board's sensor pads out through the case, plus its own vacuum line."),
+          bullets(["<b>Ground and 5 V from the boost board's sensor pads</b>, not from a chassis ground or the coding-plug 5 V at "
+                   "the connector: the signal is 0–5 V read against the board's own reference, and a 0.1 V ground offset is 6 kPa.",
+                   "<b>Short and away from ignition.</b> A metre of twisted three-core is fine; shield it if it must run near the coil "
+                   "or plug leads, shield grounded at the ECU end only.",
+                   "<b>GM 3-bar pins</b>: the three-pin Delphi connector is ground / signal / 5 V on A / B / C — verify on the "
+                   "datasheet for your part, some aftermarket copies swap the outer two.",
+                   "<b>Vacuum</b>: tee into the line that feeds the ECU nipple today (after the throttle body); keep the hose short "
+                   "and add a restrictor if the live boost trace looks noisy.",
+                   "<b>Bench it first</b>: sensor on 5 V from a bench supply, meter on the signal, about 1.3 V at atmosphere. "
+                   "Enter that in the boost tab's identifier and it should pick the 034 3-bar preset.",
+                   "Leave the old board sensor in place unpowered and move only the signal, or remove it; the first is easier "
+                   "to revert."]),
           P("The RS2-turbo chipset", H2),
           P("What the 200 20V would have shipped with if it had the RS2's K24-7200: <b>roms/tunes/404/3b_rs2turbo_boost_mpx4250.bin</b> "
             "and <b>3b_rs2turbo_fuel-ign_greens38.bin</b>, built by <b>python -m urrom.cli rs2-chipset</b> from the 3B's own chips "
