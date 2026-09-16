@@ -1356,6 +1356,7 @@ class TestPublishedImages:
                  "3b_stage1_boost_rrbase_plus5kpa_27C512.bin": ("tunes/404/3b_stage1_boost_rrbase_plus5kpa.bin", 8),
                  "3b_hybrid_3bfuel_s2ign_404aa_27C512.bin": ("tunes/404/3b_hybrid_3bfuel_s2ign_404aa.bin", 2),
                  "rr_boost_404b_3bar034_27C512.bin": ("tunes/404/rr_boost_404b_3bar034.bin", 8),
+                 "3b_boost_404aa_3bar034_27C512.bin": ("tunes/404/3b_boost_404aa_3bar034.bin", 8),
                  "3b_gt3071_scaffold_k075_27C512.bin": ("tunes/404/3b_gt3071_scaffold_k075.bin", 2),
                  "3b_inj550_404aa_27C512.bin": ("tunes/404/3b_inj550_404aa.bin", 2),
                  "3b_rs2turbo_boost_mpx4250_27C512.bin": ("tunes/404/3b_rs2turbo_boost_mpx4250.bin", 8),

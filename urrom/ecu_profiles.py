@@ -2239,6 +2239,10 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x71FE7FA3: ("404",       "UrROM RS2-TURBO 3B (2026-09-16) — 3B 447907404AA fuel/ign for RS2 greens at 3.8 bar "
                                "(fuel x0.753), ADU main ignition map resampled into maps 2/5/6/7, cap 255, load limiter "
                                "210/168, checksum valid. Pair with 3b_rs2turbo_boost_mpx4250. Fuel to be trimmed on a wideband."),
+    0x4A9B1E46: ("404_boost", "UrROM 3B-on-3-bar (2026-09-16) — stock 3B boost chip (0xF50660DA) re-encoded for the GM/034 "
+                               "3-bar MAP (kPa = raw/255*300 + 21): every target, threshold, ceiling and delta table keeps "
+                               "its stock kPa; duty tables untouched. Stock 3B boost on a 3-bar sensor. "
+                               "roms/tunes/404/3b_boost_404aa_3bar034.bin"),
     0x0BCA8FA9: ("404_boost", "UrROM RR-on-3-bar (2026-09-15) — RR boost chip (0xEA8D46DF) re-encoded for the 034 "
                                "3-bar VMAP (kPa = raw/255*300 + 21): every target, threshold, ceiling and delta table "
                                "keeps its stock kPa meaning; duty tables untouched. Fit the 3-bar sensor first. "
