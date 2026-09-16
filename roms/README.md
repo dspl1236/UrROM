@@ -123,6 +123,8 @@ including blank/erased chips not stored here.
 | File | Base | What changed | CRC32 | Status |
 |---|---|---|---|---|
 | `3b_hybrid_3bfuel_s2ign_404aa.bin` | 3B fuel/ign chip `0x0AE3CACD` | S2 ignition maps 2/3/5/6/7 copied in (1280 bytes); 3B fuel maps 1–4, idle ignition A–E, axes (7200 rpm top row), ID text kept; checksum at 0x7F00 recomputed | `0x8C966737` | ⚠ EXPERIMENTAL — built 2026-09-14 for the 2000 rpm stumble on RR boost + S2 fuel/ign; not yet driven |
+| `3b_rs2turbo_boost_mpx4250.bin` | 3B boost chip `0xF50660DA` | **RS2-turbo chipset, boost half**: re-encoded for the AAN/ADU MPX4250A 250 kPa sensor, RS2 factory WOT target curve (7.3 psi @2250 → 14.2 psi from 5000 rpm) with the 3B part-throttle shape under it, RS2 per-rpm N75 duty envelope, duty ceiling 78 %, release 22 psi (`urrom.cli rs2-chipset`) | `0xFACB0622` | ⚠ EXPERIMENTAL — needs the K24-7200 and the 250 kPa sensor; not yet driven; `docs/3B_RS2_turbo_chipset.md` |
+| `3b_rs2turbo_fuel-ign_greens38.bin` | 3B fuel/ign chip `0x0AE3CACD` | **RS2-turbo chipset, fuel/ign half**: fuel maps 1–4 + cranking × 305/405 for RS2 greens at 3.8 bar, ADU main ignition map resampled into maps 2/5/6/7, cap 255, load limiter 210/168, checksum | `0x71FE7FA3` | ⚠ EXPERIMENTAL — fuel is 3B × injector ratio, trim on a wideband; not yet driven |
 | `3b_inj550_404aa.bin` | 3B fuel/ign chip `0x0AE3CACD` | Fuel maps 1–4 and the cranking table × 305/550 = 0.555 for **Bosch 550 cc injectors** (stock 3B injector 0 280 150 737 = 305 cc at 3 bar); nothing else changed (`urrom.cli injectors --new-cc 550`) | `0x079AAFD5` | ⚠ EXPERIMENTAL — for the 550s on the otherwise stock car; check idle / cruise lambda before trusting it |
 | `3b_gt3071_scaffold_k075.bin` | 3B fuel/ign chip `0x0AE3CACD` | `urrom.cli gt-scaffold --injector-ratio 0.5545`: load scale ×0.75, fuel/ign maps re-gridded to LOAD 11…105 / 145 / 185 / 225 with a conservative ramp in the new columns, load limiter 250/200, fuel ×0.555 for the 550s, checksum | `0x343E8CDF` | ⛔ SCAFFOLD — not drivable; a starting point for the GT3071 calibration, see `docs/3B_GT3071_step4_fuel_spark.md` |
 | `rr_boost_404b_3bar034.bin` | RR boost chip `0xEA8D46DF` | Re-encoded for the 034 3-bar VMAP sensor (`urrom.cli boost-sensor --to vmap300_034`): targets, overboost release thresholds, ambient floor, ceilings, corrections and adaptive steps converted so every kPa stays the same; duty tables untouched. Stock RR boost on a 3-bar sensor | `0x0BCA8FA9` | ⚠ EXPERIMENTAL — requires the 3-bar sensor fitted; first step of the GT3071 build, not yet driven |
@@ -152,6 +154,8 @@ native` folds them back; UrROM's File → Open does it automatically.
 | `3b_stage1_boost_rrbase_plus5kpa_27C512.bin` | `tunes/3b_stage1_boost_rrbase_plus5kpa.bin` | 8 | `0xA3792C99` |
 | `3b_hybrid_3bfuel_s2ign_404aa_27C512.bin` | `tunes/3b_hybrid_3bfuel_s2ign_404aa.bin` | 2 | `0x0748FFD0` |
 | `rr_boost_404b_3bar034_27C512.bin` | `tunes/rr_boost_404b_3bar034.bin` | 8 | `0x2043B69E` |
+| `3b_rs2turbo_boost_mpx4250_27C512.bin` | `tunes/3b_rs2turbo_boost_mpx4250.bin` | 8 | `0x00DEB9A2` |
+| `3b_rs2turbo_fuel-ign_greens38_27C512.bin` | `tunes/3b_rs2turbo_fuel-ign_greens38.bin` | 2 | `0x10B64F24` |
 | `3b_inj550_404aa_27C512.bin` | `tunes/3b_inj550_404aa.bin` | 2 | `0x837B0365` |
 | `3b_gt3071_scaffold_k075_27C512.bin` | `tunes/3b_gt3071_scaffold_k075.bin` (⛔ scaffold) | 2 | `0x5803E398` |
 

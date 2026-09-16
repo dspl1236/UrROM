@@ -2232,6 +2232,13 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                                "and the cranking table x 305/550 = 0.555 (stock 0 280 150 737 = 305 cc at 3 bar); nothing "
                                "else changed, checksum valid. For running the 550s on the stock turbo; verify idle/cruise "
                                "lambda. roms/tunes/3b_inj550_404aa.bin"),
+    0xFACB0622: ("404_boost", "UrROM RS2-TURBO 3B (2026-09-16) — 3B boost chip on the MPX4250A (250 kPa) sensor with the "
+                               "RS2 factory WOT boost curve (7.3 psi @2250 -> 14.2 psi from 5000 rpm) and the RS2 per-rpm N75 "
+                               "duty envelope; duty ceiling 78 %, release 22 psi. REQUIRES the 250 kPa sensor. "
+                               "roms/tunes/3b_rs2turbo_boost_mpx4250.bin, docs/3B_RS2_turbo_chipset.md"),
+    0x71FE7FA3: ("404",       "UrROM RS2-TURBO 3B (2026-09-16) — 3B 447907404AA fuel/ign for RS2 greens at 3.8 bar "
+                               "(fuel x0.753), ADU main ignition map resampled into maps 2/5/6/7, cap 255, load limiter "
+                               "210/168, checksum valid. Pair with 3b_rs2turbo_boost_mpx4250. Fuel to be trimmed on a wideband."),
     0x0BCA8FA9: ("404_boost", "UrROM RR-on-3-bar (2026-09-15) — RR boost chip (0xEA8D46DF) re-encoded for the 034 "
                                "3-bar VMAP (kPa = raw/255*300 + 21): every target, threshold, ceiling and delta table "
                                "keeps its stock kPa meaning; duty tables untouched. Fit the 3-bar sensor first. "

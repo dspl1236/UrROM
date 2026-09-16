@@ -398,6 +398,21 @@ def cmd_injectors(args):
     print(f"fuel maps 1-4 and cranking x {ratio:.4f} ({ns.stock_cc:g} / {ns.new_cc:g} cc); checksum applied -> {ns.out}")
 
 
+def cmd_rs2_chipset(args):
+    """Build the RS2-turbo 3B chipset from the bundled 3B and RS2/ADU chips (docs/3B_RS2_turbo_chipset.md)."""
+    import argparse
+    p = argparse.ArgumentParser(prog='urrom rs2-chipset')
+    p.add_argument('--roms', default=str(Path(__file__).resolve().parent.parent / 'roms'))
+    p.add_argument('--out', default=None, help='output directory (default: <roms>/tunes)')
+    ns = p.parse_args(args)
+    from urrom.rs2_builder import build_chipset
+    roms = Path(ns.roms); out = Path(ns.out) if ns.out else roms / 'tunes'
+    boost, main, report = build_chipset(roms)
+    (out / '3b_rs2turbo_boost_mpx4250.bin').write_bytes(bytes(boost))
+    (out / '3b_rs2turbo_fuel-ign_greens38.bin').write_bytes(bytes(main))
+    print(report.text()); print(f"written {out / '3b_rs2turbo_boost_mpx4250.bin'} and {out / '3b_rs2turbo_fuel-ign_greens38.bin'}")
+
+
 def cmd_gt_scaffold(args):
     """Scaffold a 404 fuel/ign chip for a bigger turbo (docs/3B_GT3071_step4_fuel_spark.md)."""
     import argparse
@@ -435,6 +450,7 @@ def main():
         print("  xcompare <A> <B> [--role fuel|ign] — decoded cross-family map comparison (B resampled onto A)")
         print("  coding <rom> [--adc N | --volts V] — coding-plug bands -> ignition set (3B/RR/S2 and 551)")
         print("  rescale-load <rom> <out> --factor K [--cap N] — compress the 404 load scale (GAIN, axes, limiters, cap)")
+        print("  rs2-chipset [--roms DIR] [--out DIR]          — build the RS2-turbo 3B chipset (boost on MPX4250A + fuel/ign for RS2 greens)")
         print("  injectors <rom> <out> --new-cc N [--stock-cc 305] — re-fuel a 404 chip for different injectors")
         print("  gt-scaffold <rom> <out> [--factor K --top N --injector-ratio R ...] — big-turbo scaffold for a 404 fuel/ign chip")
         print("  boost-sensor <rom> <out> --to KEY [--from KEY] [--limits-psi P] [--scale-gains] — re-encode a 404 boost chip for another MAP sensor")
@@ -451,6 +467,8 @@ def main():
         cmd_chip(rest)
     elif cmd == 'xcompare':
         cmd_xcompare(rest)
+    elif cmd == 'rs2-chipset':
+        cmd_rs2_chipset(rest)
     elif cmd == 'injectors':
         cmd_injectors(rest)
     elif cmd == 'gt-scaffold':

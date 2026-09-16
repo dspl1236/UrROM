@@ -1357,7 +1357,9 @@ class TestPublishedImages:
                  "3b_hybrid_3bfuel_s2ign_404aa_27C512.bin": ("tunes/3b_hybrid_3bfuel_s2ign_404aa.bin", 2),
                  "rr_boost_404b_3bar034_27C512.bin": ("tunes/rr_boost_404b_3bar034.bin", 8),
                  "3b_gt3071_scaffold_k075_27C512.bin": ("tunes/3b_gt3071_scaffold_k075.bin", 2),
-                 "3b_inj550_404aa_27C512.bin": ("tunes/3b_inj550_404aa.bin", 2)}
+                 "3b_inj550_404aa_27C512.bin": ("tunes/3b_inj550_404aa.bin", 2),
+                 "3b_rs2turbo_boost_mpx4250_27C512.bin": ("tunes/3b_rs2turbo_boost_mpx4250.bin", 8),
+                 "3b_rs2turbo_fuel-ign_greens38_27C512.bin": ("tunes/3b_rs2turbo_fuel-ign_greens38.bin", 2)}
         for img, (native, copies) in pairs.items():
             b = bytes(load_rom("27c512/" + img)); o = bytes(load_rom(native))
             folded, n, _ = fold_repeated_image(b)
@@ -2107,3 +2109,62 @@ class TestGtScaffold:
         assert all(out[i] == rom[i] for i in range(len(rom)) if i not in touched)
         pub = bytes(load_rom("tunes/3b_inj550_404aa.bin"))
         assert pub == out and zlib.crc32(pub) & 0xFFFFFFFF in KNOWN_CRCS
+
+
+class TestRS2TurboChipset:
+    def test_boost_chip_carries_the_rs2_profile_on_the_250_sensor(self):
+        import urrom.boost_sensor as bs
+        from urrom.rs2_builder import build_chipset, rs2_curves
+        from urrom.ecu_profiles import VARIANT_404, read_map, get_axes, KNOWN_CRCS
+        import zlib
+        boost, main, rep = build_chipset(Path(__file__).resolve().parent.parent / "roms")
+        boost = bytes(boost); main = bytes(main)
+        assert boost == bytes(load_rom("tunes/3b_rs2turbo_boost_mpx4250.bin"))
+        assert main == bytes(load_rom("tunes/3b_rs2turbo_fuel-ign_greens38.bin"))
+        assert zlib.crc32(boost) & 0xFFFFFFFF in KNOWN_CRCS and zlib.crc32(main) & 0xFFFFFFFF in KNOWN_CRCS
+        m250 = next(s for s in bs.sensors() if s.key == "mpx4250")
+        rpm_axis, rs2_kpa, rs2_duty = rs2_curves(bytes(load_rom("rs2_d02_boost_551b.bin")))
+        assert abs(max(rs2_kpa) - 198) < 1.5
+        tb = next(m for m in VARIANT_404.boost_maps if m.main_addr == 0x1934)
+        rows, cols = get_axes(boost, tb, VARIANT_404)
+        wot = read_map(boost, tb)[7]
+        # WOT row follows the RS2 curve: 14.2 psi from 5000 up, ~7.3 psi at 2250
+        for j, rpm in enumerate(cols):
+            psi = bs.kpa_to_psi_gauge(m250.kpa(wot[j]))
+            if rpm >= 5300: assert abs(psi - 14.2) < 0.4, (rpm, psi)
+            if rpm < 2300: assert 6.8 < psi < 7.8, (rpm, psi)
+        # part-throttle rows keep the 3B shape: TPS 43 row stays well below WOT
+        low = read_map(boost, tb)[0]
+        assert all(low[j] < wot[j] for j in range(16))
+        td = next(m for m in VARIANT_404.boost_maps if m.main_addr == 0x1AB4)
+        dwot = read_map(boost, td)[7]
+        assert dwot[0] == 189 and dwot[-1] < 80                       # 74 % on top, ~27 % at 2250
+        assert list(boost[0x1C47:0x1C4F]) == [200] * 8
+        # release above the profile
+        assert bs.kpa_to_psi_gauge(m250.kpa(boost[0x1EC7])) > 20
+        # duty tables untouched by the sensor conversion except the RS2 envelope: A/D/F tables also written
+        assert read_map(boost, next(m for m in VARIANT_404.boost_maps if m.main_addr == 0x1B34))[7][0] == 189
+
+    def test_main_chip_is_rs2_ignition_and_green_injectors(self):
+        from urrom.ecu_profiles import VARIANT_404, VARIANT_551C, read_map, verify_checksum_for, normalize_rom
+        from urrom.xcompare import side_from_bytes, resample
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin")); main = bytes(load_rom("tunes/3b_rs2turbo_fuel-ign_greens38.bin"))
+        assert verify_checksum_for(main, VARIANT_404)
+        fm = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x6A8E)
+        assert read_map(main, fm)[0][0] == int(read_map(rom, fm)[0][0] * 305 / 405 + 0.5)
+        i3 = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x71F8)
+        ma = next(m for m in VARIANT_551C.main_maps if m.main_addr == 0x3598)
+        wh, _ = normalize_rom(bytes(load_rom("adu_fuel-ign_551c.bin")))
+        sa = side_from_bytes(rom, VARIANT_404, i3); sb = side_from_bytes(bytes(wh), VARIANT_551C, ma)
+        deg = resample(sb, sa.rows, sa.cols)
+        got = side_from_bytes(main, VARIANT_404, i3).data
+        for r in range(16):
+            for c in range(16):
+                assert abs(got[r][c] - deg[r][c]) <= 0.4, (r, c)
+        for a in (0x7667, 0x77CF, 0x7937):
+            m = next(x for x in VARIANT_404.main_maps if x.main_addr == a)
+            assert read_map(main, m) == read_map(main, i3)
+        assert list(main[0x6970:0x6974]) == [255] * 4 and list(main[0x6951:0x6956]) == [210] * 5
+        # fault map 1 untouched
+        m1 = next(x for x in VARIANT_404.main_maps if x.main_addr == 0x7076)
+        assert read_map(main, m1) == read_map(rom, m1)
