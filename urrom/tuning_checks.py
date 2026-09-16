@@ -49,7 +49,8 @@ def check_fuel_range(rom: bytes, variant, *, lean_threshold=170, rich_threshold=
     # overrode the defaults.
     sw = getattr(variant, "software_id", "") if variant else ""
     q7 = sw in ("404", "404V8")
-    if q7 and lean_threshold == 170 and rich_threshold == 80:
+    relative = q7 and lean_threshold == 170 and rich_threshold == 80
+    if relative:
         lean_threshold, rich_threshold = 215, 100
     # On the 404 the fuel map is a Q7 multiplier on the MAF air-per-rev pulse
     # (docs/3B_injection_path_RE.md): HIGH raw = more fuel = rich, LOW raw = lean.
@@ -66,6 +67,13 @@ def check_fuel_range(rom: bytes, variant, *, lean_threshold=170, rich_threshold=
             data = read_map(rom, m)
         except Exception:
             continue
+        if relative:
+            # Q7 maps scale with the injectors (a 550 cc chip sits at 0.55 x stock), so
+            # judge each cell against the map's own median instead of fixed counts:
+            # below 0.6 x median = lean outlier, above 1.6 x median = rich outlier.
+            cells = sorted(v for row in data for v in row if v)
+            med = cells[len(cells) // 2] if cells else 128
+            rich_threshold, lean_threshold = int(med * 0.6), int(med * 1.6)
         for r in range(m.rows):
             for c in range(m.cols):
                 rv = data[r][c]

@@ -324,6 +324,29 @@ def build() -> Path:
           P("The stock sensor caps any 200 kPa-sensor chip near 1.0 bar (raw 255 is full scale). Beyond that the first "
             "step is a 250 kPa sensor, identified by its voltage at atmosphere, after which the same tables mean about "
             "1.4 bar and must be scaled back down in the editor.", NOTE),
+          P("The RS2-turbo chipset", H2),
+          P("What the 200 20V would have shipped with if it had the RS2's K24-7200: <b>roms/tunes/3b_rs2turbo_boost_mpx4250.bin</b> "
+            "and <b>3b_rs2turbo_fuel-ign_greens38.bin</b>, built by <b>python -m urrom.cli rs2-chipset</b> from the 3B's own chips "
+            "with the RS2 D02 boost chip and the ADU fuel/ign chip as references. Hardware assumed: K24-7200, RS2 green injectors "
+            "(0 280 150 984, 405 cc) on the RS2 3.8 bar regulator, and the AAN/ADU 250 kPa MPX4250A sensor on the boost board."),
+          bullets(["<b>Boost chip:</b> the 3B chip re-encoded for the 250 kPa sensor (the RS2's 14.2 psi peak is raw 253 of 255 on the "
+                   "200 kPa sensor), the RS2 factory full-throttle curve written in by rpm with the 3B's part-throttle shape scaled "
+                   "under it, the RS2 per-rpm N75 duty envelope, duty ceiling 78 %, overboost release 22 psi.",
+                   "<b>Fuel/ign chip:</b> fuel maps and cranking × 305/405 for the greens, the ADU main ignition map resampled onto "
+                   "the 3B axes into all four main maps, air-per-rev cap 255, load limiter 210, checksum valid.",
+                   "<b>Not RS2 on purpose:</b> the fuel map. The ADU's runs 15 % leaner above load 100 relative to an injector scale "
+                   "the 551 keeps elsewhere, so it is 3B × injector ratio here, to be trimmed on a wideband."]),
+          table([["rpm", "3B WOT target", "RS2 WOT target (in the chip)"],
+                 ["2250", "12.5 psi", "7.3 psi"], ["3300", "12.5", "9.8"], ["4100", "12.5", "12.4"],
+                 ["4900", "12.3", "14.0"], ["5300 and up", "12.2 → 10.3", "14.2"]],
+                widths=[30 * mm, 40 * mm, 60 * mm]),
+          Spacer(1, 4)]
+    s += shot("guide_rs2_boost.png", "The RS2-turbo boost chip in the boost tab on the MPX4250A preset in psi: the RS2 curve "
+              "in the top TPS row (7.3 psi at 2250 rpm rising to 14.2 from 5000), the 3B's part-throttle rows scaled beneath it. "
+              "Rpm runs right to left as the boost MCU stores it.")
+    s += [P("Order on the car: greens and regulator with the old boost chip first (idle and cruise lambda), then the 250 kPa "
+            "sensor with this boost chip (about 1.5 V at atmosphere on the bench), then the first pulls with a wideband, checking "
+            "the loop reaches 14 psi by 5000 rpm without the release tripping. docs/3B_RS2_turbo_chipset.md has the numbers.", NOTE),
           P("Where to read more", H2),
           table([["Document", "What it holds"],
                  ["docs/3B_boost_chip_RE.md", "boost MCU tables, axes, knock evaluator, control loop, sensor scale"],
@@ -332,6 +355,9 @@ def build() -> Path:
                  ["docs/3B_launch_control_RE.md", "the launch-control patch, byte by byte, and the 404 checksum"],
                  ["docs/AAN_3B_port_notes.md", "AAN/ABY vs 3B comparison, prj file verdict"],
                  ["docs/3B_stage1_notes.md", "the OEM combo and stage-1 numbers"],
+                 ["docs/3B_RS2_turbo_chipset.md", "the RS2-turbo chipset, table by table"],
+                 ["docs/3B_injection_path_RE.md, 3B_load_headroom_RE.md", "how the 3B computes fuel and load, and where load stops"],
+                 ["docs/3B_GT3071_plan.md", "the bigger-turbo build order and the 034 kit analysis"],
                  ["docs/ROADMAP.md", "what was built and in what order"]],
                 widths=[62 * mm, 108 * mm])]
 
