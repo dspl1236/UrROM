@@ -18,13 +18,13 @@ that needs the car.
 | injectors | fuel maps 1–4 and the cranking table × stock/new (`--injector-ratio`; post-start and IAT/warm-up are relative and stay) | the 3B has no injector constant (docs/3B_injection_path_RE.md §6) |
 | checksum | 0x7F00 recomputed | the ECU checks it at boot |
 
-`roms/tunes/3b_gt3071_scaffold_k075.bin` is that build with the 305/550 = 0.555
+`roms/tunes/404/3b_gt3071_scaffold_k075.bin` is that build with the 305/550 = 0.555
 injector ratio (stock 3B injector: Bosch 0 280 150 737, 305 cc at 3 bar).
 **It is still not drivable** — the three new columns are guesses and the
 turbo is not on the car — its purpose is to be opened in UrROM next to the
 034 GT3071 R9 chip.
 
-`roms/tunes/3b_inj550_404aa.bin` (`python -m urrom.cli injectors 3b.bin out.bin
+`roms/tunes/404/3b_inj550_404aa.bin` (`python -m urrom.cli injectors 3b.bin out.bin
 --new-cc 550`) is the other thing the ratio makes possible: the stock 3B
 calibration re-fuelled for the Bosch 550s and nothing else. That is the chip
 for step 2 below.

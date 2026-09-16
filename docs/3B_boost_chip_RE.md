@@ -265,7 +265,7 @@ cannot yet confirm the sensor scale; a mechanical gauge on the manifold can.
   stock RR peak (153 kPa) is raw 112, a 23 psi hold is raw 202 (135 above
   ambient) and 26 psi is raw 220 — the number 034's own GT3071 boost chips
   top out at.
-- `roms/tunes/rr_boost_404b_3bar034.bin` is the RR chip converted at the same
+- `roms/tunes/404/rr_boost_404b_3bar034.bin` is the RR chip converted at the same
   kPa: fit the 3-bar sensor, burn it, and the car should drive exactly as on
   the RR chip. That is the test that proves the sensor scale and the
   conversion before any target is raised.

@@ -309,7 +309,7 @@ def build() -> Path:
             "with more wastegate duty at high rpm; the S2 fuel/ignition chip adds 1.5–3° in the mid band and top-end fuel "
             "while leaning idle and cruise; the S2 boost chip is 0.2 bar lower. The combination that moves the right "
             "things is the <b>RR boost chip with the S2 fuel/ignition chip</b>, every byte factory. Images are in "
-            "<b>roms/27c512/</b>."),
+            "<b>roms/27c512/404/</b>."),
           table([["Boost chip", "Target B peak (200 kPa scale)", "gauge"],
                  ["3B stock", "186 kPa", "+0.86 bar / 12.5 psi"],
                  ["RR", "191 kPa", "+0.91 bar / 13.2 psi"],
@@ -318,14 +318,14 @@ def build() -> Path:
                 widths=[52 * mm, 62 * mm, 56 * mm]),
           Spacer(1, 4),
           P("Stage 1", H2),
-          P("<b>roms/tunes/3b_stage1_boost_rrbase_plus5kpa.bin</b> is the RR boost chip with the three target tables "
+          P("<b>roms/tunes/404/3b_stage1_boost_rrbase_plus5kpa.bin</b> is the RR boost chip with the three target tables "
             "lifted 6 raw and capped at 250. Duty, gains, knock tables and ceilings are untouched. Run it with a boost "
             "gauge: about 14 psi confirms the sensor scale and that the controller reaches its target."),
           P("The stock sensor caps any 200 kPa-sensor chip near 1.0 bar (raw 255 is full scale). Beyond that the first "
             "step is a 250 kPa sensor, identified by its voltage at atmosphere, after which the same tables mean about "
             "1.4 bar and must be scaled back down in the editor.", NOTE),
           P("The RS2-turbo chipset", H2),
-          P("What the 200 20V would have shipped with if it had the RS2's K24-7200: <b>roms/tunes/3b_rs2turbo_boost_mpx4250.bin</b> "
+          P("What the 200 20V would have shipped with if it had the RS2's K24-7200: <b>roms/tunes/404/3b_rs2turbo_boost_mpx4250.bin</b> "
             "and <b>3b_rs2turbo_fuel-ign_greens38.bin</b>, built by <b>python -m urrom.cli rs2-chipset</b> from the 3B's own chips "
             "with the RS2 D02 boost chip and the ADU fuel/ign chip as references. Hardware assumed: K24-7200, RS2 green injectors "
             "(0 280 150 984, 405 cc) on the RS2 3.8 bar regulator, and the AAN/ADU 250 kPa MPX4250A sensor on the boost board."),

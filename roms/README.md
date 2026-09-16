@@ -118,7 +118,7 @@ including blank/erased chips not stored here.
 
 ---
 
-## UrROM-built tunes — `roms/tunes/`
+## UrROM-built tunes — `roms/tunes/` (per ECU family: `404/`, `551/`)
 
 | File | Base | What changed | CRC32 | Status |
 |---|---|---|---|---|
@@ -139,7 +139,7 @@ any kind. If your intake, turbo, fuel pump, injectors or sensor differ from stoc
 not transfer. Keep the original chip and put it back at the first sign of knock or lean running.
 
 
-## Burner images — `roms/27c512/`
+## Burner images — `roms/27c512/` (per ECU family: `404/`, `551/`)
 
 27C512 (64 KB) images ready to burn: a 32 KB fuel/ignition chip stored twice,
 an 8 KB boost chip stored eight times. `python -m urrom.cli chip <image> --to
@@ -151,13 +151,13 @@ native` folds them back; UrROM's File → Open does it automatically.
 | `3b_boost_404aa_27C512.bin` | `3b_boost_404aa.bin` (stock 3B boost) | 8 | `0x4EA7AE16` |
 | `rr_boost_404b_27C512.bin` | `rr_boost_404b.bin` (stock RR boost) | 8 | `0xD2D38A92` |
 | `s2_fuel-ign_404_27C512.bin` | `s2_fuel-ign_404.bin` (stock S2, checksum OK) | 2 | `0x8405BD3F` |
-| `3b_stage1_boost_rrbase_plus5kpa_27C512.bin` | `tunes/3b_stage1_boost_rrbase_plus5kpa.bin` | 8 | `0xA3792C99` |
-| `3b_hybrid_3bfuel_s2ign_404aa_27C512.bin` | `tunes/3b_hybrid_3bfuel_s2ign_404aa.bin` | 2 | `0x0748FFD0` |
-| `rr_boost_404b_3bar034_27C512.bin` | `tunes/rr_boost_404b_3bar034.bin` | 8 | `0x2043B69E` |
-| `3b_rs2turbo_boost_mpx4250_27C512.bin` | `tunes/3b_rs2turbo_boost_mpx4250.bin` | 8 | `0x00DEB9A2` |
-| `3b_rs2turbo_fuel-ign_greens38_27C512.bin` | `tunes/3b_rs2turbo_fuel-ign_greens38.bin` | 2 | `0x10B64F24` |
-| `3b_inj550_404aa_27C512.bin` | `tunes/3b_inj550_404aa.bin` | 2 | `0x837B0365` |
-| `3b_gt3071_scaffold_k075_27C512.bin` | `tunes/3b_gt3071_scaffold_k075.bin` (⛔ scaffold) | 2 | `0x5803E398` |
+| `3b_stage1_boost_rrbase_plus5kpa_27C512.bin` | `tunes/404/3b_stage1_boost_rrbase_plus5kpa.bin` | 8 | `0xA3792C99` |
+| `3b_hybrid_3bfuel_s2ign_404aa_27C512.bin` | `tunes/404/3b_hybrid_3bfuel_s2ign_404aa.bin` | 2 | `0x0748FFD0` |
+| `rr_boost_404b_3bar034_27C512.bin` | `tunes/404/rr_boost_404b_3bar034.bin` | 8 | `0x2043B69E` |
+| `3b_rs2turbo_boost_mpx4250_27C512.bin` | `tunes/404/3b_rs2turbo_boost_mpx4250.bin` | 8 | `0x00DEB9A2` |
+| `3b_rs2turbo_fuel-ign_greens38_27C512.bin` | `tunes/404/3b_rs2turbo_fuel-ign_greens38.bin` | 2 | `0x10B64F24` |
+| `3b_inj550_404aa_27C512.bin` | `tunes/404/3b_inj550_404aa.bin` | 2 | `0x837B0365` |
+| `3b_gt3071_scaffold_k075_27C512.bin` | `tunes/404/3b_gt3071_scaffold_k075.bin` (⛔ scaffold) | 2 | `0x5803E398` |
 
 OEM combo for a 3B: `rr_boost_404b_27C512` + `s2_fuel-ign_404_27C512`
 (or the car's own 3B fuel/ign chip). Stage 1: the `3b_stage1_boost…` image

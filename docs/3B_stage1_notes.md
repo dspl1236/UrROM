@@ -85,7 +85,7 @@ in the idle ignition maps, 19 bytes at 0x7BE8 (unlabelled ramp table), 8 at
 **S2 = 7000 rpm, 3B = 7200 rpm** (the `11 4C` / `0C 51` pair before every map).
 Ignition maps 1 and 4 and all axes below the top row are identical.
 
-**Hybrid chip** `roms/tunes/3b_hybrid_3bfuel_s2ign_404aa.bin` (CRC
+**Hybrid chip** `roms/tunes/404/3b_hybrid_3bfuel_s2ign_404aa.bin` (CRC
 `0x8C966737`, 27C512 image `0x0748FFD0`): the 3B chip with the S2's ignition
 maps 2/3/5/6/7 copied in (1280 bytes), checksum recomputed. Fuel maps, idle
 ignition, the 7200 rpm axis, the unlabelled tables and the ID text stay 3B.

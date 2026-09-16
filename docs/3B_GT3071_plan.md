@@ -84,8 +84,8 @@ Check the 3B's regulator pressure before ordering: flow ratings are quoted at
    composes the load rescale, a re-gridded 16-point LOAD axis (11…105, 145,
    185, 225) with resampled maps, a conservative starter ramp in the three new
    columns, the limiter release and the injector scaling into one chip.
-   `roms/tunes/3b_gt3071_scaffold_k075.bin` is that build with the 305/550
-   injector ratio applied; `roms/tunes/3b_inj550_404aa.bin` is the stock 3B
+   `roms/tunes/404/3b_gt3071_scaffold_k075.bin` is that build with the 305/550
+   injector ratio applied; `roms/tunes/404/3b_inj550_404aa.bin` is the stock 3B
    re-fuelled for the 550s only (drivable on the stock turbo: step 2 of the
    procedure). The calibration itself is data-driven and waits on the car:
    injector part number → ratio, idle/cruise lambda on the new injectors,

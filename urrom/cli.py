@@ -406,7 +406,7 @@ def cmd_rs2_chipset(args):
     p.add_argument('--out', default=None, help='output directory (default: <roms>/tunes)')
     ns = p.parse_args(args)
     from urrom.rs2_builder import build_chipset
-    roms = Path(ns.roms); out = Path(ns.out) if ns.out else roms / 'tunes'
+    roms = Path(ns.roms); out = Path(ns.out) if ns.out else roms / 'tunes' / '404'
     boost, main, report = build_chipset(roms)
     (out / '3b_rs2turbo_boost_mpx4250.bin').write_bytes(bytes(boost))
     (out / '3b_rs2turbo_fuel-ign_greens38.bin').write_bytes(bytes(main))

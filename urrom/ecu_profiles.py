@@ -2218,12 +2218,12 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x8F9059E2: ("404_boost", "UrROM STAGE 1 (2026-09-09) — RR boost chip (0xEA8D46DF) with Boost Target "
                                "A/B/C +6 raw capped at 250: peak 196 kPa abs / +0.96 bar at the assumed 200 kPa "
                                "sensor scale. Duty, gains, knock tables, ceilings = RR. Pair with 3B or S2 "
-                               "fuel/ign chip. roms/tunes/3b_stage1_boost_rrbase_plus5kpa.bin. Road test in progress."),
+                               "fuel/ign chip. roms/tunes/404/3b_stage1_boost_rrbase_plus5kpa.bin. Road test in progress."),
     0x8C966737: ("404",       "UrROM HYBRID (2026-09-14) — 3B 447907404AA fuel/ign chip with the S2 895907404 "
                                "ignition maps 2/3/5/6/7 (1280 bytes) dropped in; fuel maps, idle ignition, axes, "
                                "ID text = 3B. Checksum at 0x7F00 valid. For a 3B on the RR boost chip that "
                                "stumbled at 2000 rpm on the leaner S2 fuel map. "
-                               "roms/tunes/3b_hybrid_3bfuel_s2ign_404aa.bin"),
+                               "roms/tunes/404/3b_hybrid_3bfuel_s2ign_404aa.bin"),
     0x343E8CDF: ("404",       "UrROM GT3071 SCAFFOLD (2026-09-15) — NOT DRIVABLE. 3B 447907404AA on a x0.75 load "
                                "scale (GAIN 139, cap 255), fuel/ign maps re-gridded to LOAD 11..105,145,185,225 with a "
                                "starter ramp in the three new columns, load limiter 250/200, fuel x0.555 for Bosch 550 cc "
@@ -2231,18 +2231,18 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
     0x079AAFD5: ("404",       "UrROM 3B + Bosch 550 cc injectors (2026-09-15) — stock 447907404AA with fuel maps 1-4 "
                                "and the cranking table x 305/550 = 0.555 (stock 0 280 150 737 = 305 cc at 3 bar); nothing "
                                "else changed, checksum valid. For running the 550s on the stock turbo; verify idle/cruise "
-                               "lambda. roms/tunes/3b_inj550_404aa.bin"),
+                               "lambda. roms/tunes/404/3b_inj550_404aa.bin"),
     0xFACB0622: ("404_boost", "UrROM RS2-TURBO 3B (2026-09-16) — 3B boost chip on the MPX4250A (250 kPa) sensor with the "
                                "RS2 factory WOT boost curve (7.3 psi @2250 -> 14.2 psi from 5000 rpm) and the RS2 per-rpm N75 "
                                "duty envelope; duty ceiling 78 %, release 22 psi. REQUIRES the 250 kPa sensor. "
-                               "roms/tunes/3b_rs2turbo_boost_mpx4250.bin, docs/3B_RS2_turbo_chipset.md"),
+                               "roms/tunes/404/3b_rs2turbo_boost_mpx4250.bin, docs/3B_RS2_turbo_chipset.md"),
     0x71FE7FA3: ("404",       "UrROM RS2-TURBO 3B (2026-09-16) — 3B 447907404AA fuel/ign for RS2 greens at 3.8 bar "
                                "(fuel x0.753), ADU main ignition map resampled into maps 2/5/6/7, cap 255, load limiter "
                                "210/168, checksum valid. Pair with 3b_rs2turbo_boost_mpx4250. Fuel to be trimmed on a wideband."),
     0x0BCA8FA9: ("404_boost", "UrROM RR-on-3-bar (2026-09-15) — RR boost chip (0xEA8D46DF) re-encoded for the 034 "
                                "3-bar VMAP (kPa = raw/255*300 + 21): every target, threshold, ceiling and delta table "
                                "keeps its stock kPa meaning; duty tables untouched. Fit the 3-bar sensor first. "
-                               "roms/tunes/rr_boost_404b_3bar034.bin"),
+                               "roms/tunes/404/rr_boost_404b_3bar034.bin"),
     0xEA8D46DF: ("404_boost", "Stock — RR boost chip, 857907404B, build 0x0255 (direct read). "
                                "Executable 8051 MCU code — NOT a data-only ROM. "
                                "Correct filename: rr_boost_404b.bin"),

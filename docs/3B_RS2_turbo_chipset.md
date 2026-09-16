@@ -21,7 +21,7 @@ its own target and the overboost release could never sit above it. On the
 A 300 kPa sensor would also work but makes every count 1.2 times coarser for
 no benefit at this pressure.
 
-## Boost chip — `roms/tunes/3b_rs2turbo_boost_mpx4250.bin`
+## Boost chip — `roms/tunes/404/3b_rs2turbo_boost_mpx4250.bin`
 
 1. `convert_sensor(bosch200 -> mpx4250, limits_psi=19)`: every absolute and
    delta table keeps its stock kPa meaning on the new sensor; target ceiling
@@ -52,7 +52,7 @@ no benefit at this pressure.
    envelope of its tables is used. The adaptive offset and the P/I loop cover
    what the envelope does not.
 
-## Fuel/ign chip — `roms/tunes/3b_rs2turbo_fuel-ign_greens38.bin`
+## Fuel/ign chip — `roms/tunes/404/3b_rs2turbo_fuel-ign_greens38.bin`
 
 1. **Injectors**: fuel maps 1–4 and the cranking table × 305/405 = 0.753 (3B
    stock 0 280 150 737 = 305 cc at 3 bar; greens = 405 cc at 3.8 bar). The
@@ -93,5 +93,5 @@ wideband; the RS2's factory AFR under boost is the target.
 
 | file | CRC32 | copies in 27C512 |
 |---|---|---|
-| `roms/tunes/3b_rs2turbo_boost_mpx4250.bin` | see roms/README.md | 8 |
-| `roms/tunes/3b_rs2turbo_fuel-ign_greens38.bin` | see roms/README.md | 2 |
+| `roms/tunes/404/3b_rs2turbo_boost_mpx4250.bin` | see roms/README.md | 8 |
+| `roms/tunes/404/3b_rs2turbo_fuel-ign_greens38.bin` | see roms/README.md | 2 |

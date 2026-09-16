@@ -1321,7 +1321,7 @@ class TestPublishedImages:
         from urrom.ecu_profiles import VARIANT_404, KNOWN_CRCS
         import zlib
         rr = bytes(load_rom("rr_boost_404b.bin"))
-        st = bytes(load_rom("tunes/3b_stage1_boost_rrbase_plus5kpa.bin"))
+        st = bytes(load_rom("tunes/404/3b_stage1_boost_rrbase_plus5kpa.bin"))
         assert zlib.crc32(st) & 0xFFFFFFFF in KNOWN_CRCS
         targets = {m.main_addr: m for m in VARIANT_404.boost_maps if m.main_addr in (0x18B4, 0x1934, 0x19B4)}
         covered = set()
@@ -1335,7 +1335,7 @@ class TestPublishedImages:
         from urrom.ecu_profiles import VARIANT_404, KNOWN_CRCS, verify_checksum_for
         import zlib
         b3 = bytes(load_rom("3b_fuel-ign_404aa.bin")); s2 = bytes(load_rom("s2_fuel-ign_404.bin"))
-        hy = bytes(load_rom("tunes/3b_hybrid_3bfuel_s2ign_404aa.bin"))
+        hy = bytes(load_rom("tunes/404/3b_hybrid_3bfuel_s2ign_404aa.bin"))
         assert zlib.crc32(hy) & 0xFFFFFFFF in KNOWN_CRCS
         assert verify_checksum_for(hy, VARIANT_404)
         s2_cells = set()
@@ -1353,15 +1353,15 @@ class TestPublishedImages:
                  "3b_boost_404aa_27C512.bin": ("3b_boost_404aa.bin", 8),
                  "rr_boost_404b_27C512.bin": ("rr_boost_404b.bin", 8),
                  "s2_fuel-ign_404_27C512.bin": ("s2_fuel-ign_404.bin", 2),
-                 "3b_stage1_boost_rrbase_plus5kpa_27C512.bin": ("tunes/3b_stage1_boost_rrbase_plus5kpa.bin", 8),
-                 "3b_hybrid_3bfuel_s2ign_404aa_27C512.bin": ("tunes/3b_hybrid_3bfuel_s2ign_404aa.bin", 2),
-                 "rr_boost_404b_3bar034_27C512.bin": ("tunes/rr_boost_404b_3bar034.bin", 8),
-                 "3b_gt3071_scaffold_k075_27C512.bin": ("tunes/3b_gt3071_scaffold_k075.bin", 2),
-                 "3b_inj550_404aa_27C512.bin": ("tunes/3b_inj550_404aa.bin", 2),
-                 "3b_rs2turbo_boost_mpx4250_27C512.bin": ("tunes/3b_rs2turbo_boost_mpx4250.bin", 8),
-                 "3b_rs2turbo_fuel-ign_greens38_27C512.bin": ("tunes/3b_rs2turbo_fuel-ign_greens38.bin", 2)}
+                 "3b_stage1_boost_rrbase_plus5kpa_27C512.bin": ("tunes/404/3b_stage1_boost_rrbase_plus5kpa.bin", 8),
+                 "3b_hybrid_3bfuel_s2ign_404aa_27C512.bin": ("tunes/404/3b_hybrid_3bfuel_s2ign_404aa.bin", 2),
+                 "rr_boost_404b_3bar034_27C512.bin": ("tunes/404/rr_boost_404b_3bar034.bin", 8),
+                 "3b_gt3071_scaffold_k075_27C512.bin": ("tunes/404/3b_gt3071_scaffold_k075.bin", 2),
+                 "3b_inj550_404aa_27C512.bin": ("tunes/404/3b_inj550_404aa.bin", 2),
+                 "3b_rs2turbo_boost_mpx4250_27C512.bin": ("tunes/404/3b_rs2turbo_boost_mpx4250.bin", 8),
+                 "3b_rs2turbo_fuel-ign_greens38_27C512.bin": ("tunes/404/3b_rs2turbo_fuel-ign_greens38.bin", 2)}
         for img, (native, copies) in pairs.items():
-            b = bytes(load_rom("27c512/" + img)); o = bytes(load_rom(native))
+            b = bytes(load_rom("27c512/404/" + img)); o = bytes(load_rom(native))
             folded, n, _ = fold_repeated_image(b)
             assert n == copies and folded == o, img
             if len(o) == 32768:
@@ -2087,7 +2087,7 @@ class TestGtScaffold:
         assert read_map(bytes(out2), fm)[0][0] == int(new_f[0][0] * 0.6 + 0.5)
         assert bytes(out2)[0x6A47:0x6A4C] == rom[0x6A47:0x6A4C]
         assert bytes(out2)[0x6BC8] == int(216 * 0.6 + 0.5)
-        pub = bytes(load_rom("tunes/3b_gt3071_scaffold_k075.bin"))
+        pub = bytes(load_rom("tunes/404/3b_gt3071_scaffold_k075.bin"))
         exp, _ = build_scaffold(rom, injector_ratio=305 / 550)
         assert pub == bytes(exp) and zlib.crc32(pub) & 0xFFFFFFFF in KNOWN_CRCS
 
@@ -2107,7 +2107,7 @@ class TestGtScaffold:
             touched.update(range(a, a + 256))
         touched.update(range(0x6BC8, 0x6BCE)); touched.update((0x7F00, 0x7F01))
         assert all(out[i] == rom[i] for i in range(len(rom)) if i not in touched)
-        pub = bytes(load_rom("tunes/3b_inj550_404aa.bin"))
+        pub = bytes(load_rom("tunes/404/3b_inj550_404aa.bin"))
         assert pub == out and zlib.crc32(pub) & 0xFFFFFFFF in KNOWN_CRCS
 
 
@@ -2119,8 +2119,8 @@ class TestRS2TurboChipset:
         import zlib
         boost, main, rep = build_chipset(Path(__file__).resolve().parent.parent / "roms")
         boost = bytes(boost); main = bytes(main)
-        assert boost == bytes(load_rom("tunes/3b_rs2turbo_boost_mpx4250.bin"))
-        assert main == bytes(load_rom("tunes/3b_rs2turbo_fuel-ign_greens38.bin"))
+        assert boost == bytes(load_rom("tunes/404/3b_rs2turbo_boost_mpx4250.bin"))
+        assert main == bytes(load_rom("tunes/404/3b_rs2turbo_fuel-ign_greens38.bin"))
         assert zlib.crc32(boost) & 0xFFFFFFFF in KNOWN_CRCS and zlib.crc32(main) & 0xFFFFFFFF in KNOWN_CRCS
         m250 = next(s for s in bs.sensors() if s.key == "mpx4250")
         rpm_axis, rs2_kpa, rs2_duty = rs2_curves(bytes(load_rom("rs2_d02_boost_551b.bin")))
@@ -2148,7 +2148,7 @@ class TestRS2TurboChipset:
     def test_main_chip_is_rs2_ignition_and_green_injectors(self):
         from urrom.ecu_profiles import VARIANT_404, VARIANT_551C, read_map, verify_checksum_for, normalize_rom
         from urrom.xcompare import side_from_bytes, resample
-        rom = bytes(load_rom("3b_fuel-ign_404aa.bin")); main = bytes(load_rom("tunes/3b_rs2turbo_fuel-ign_greens38.bin"))
+        rom = bytes(load_rom("3b_fuel-ign_404aa.bin")); main = bytes(load_rom("tunes/404/3b_rs2turbo_fuel-ign_greens38.bin"))
         assert verify_checksum_for(main, VARIANT_404)
         fm = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x6A8E)
         assert read_map(main, fm)[0][0] == int(read_map(rom, fm)[0][0] * 305 / 405 + 0.5)
