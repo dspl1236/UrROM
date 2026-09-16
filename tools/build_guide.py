@@ -390,6 +390,7 @@ def build() -> Path:
                  ["docs/3B_RS2_turbo_chipset.md", "the RS2-turbo chipset, table by table"],
                  ["docs/3B_injection_path_RE.md, 3B_load_headroom_RE.md", "how the 3B computes fuel and load, and where load stops"],
                  ["docs/3B_GT3071_plan.md", "the bigger-turbo build order and the 034 kit analysis"],
+                 ["docs/3B_MAF_hotfilm_notes.md", "the hot-wire MAF, how the ECU counts it, and what a hot-film swap takes"],
                  ["docs/ROADMAP.md", "what was built and in what order"]],
                 widths=[62 * mm, 108 * mm])]
 
