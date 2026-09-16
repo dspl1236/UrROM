@@ -16,9 +16,11 @@ Every fuel/ign `.034` descrambles with `urrom.descramble` and identifies as a
 | boost chips | ~17 300 of 32 768 bytes differ from the stock AAN boost chip |
 
 So 034 shipped its own main-ECU firmware build and its own boost-MCU code
-("brand new code" in their blurb). UrROM's 551 boost map addresses do not apply
-to the 034 boost chips; those need their own trace before their targets can be
-read. None of it runs in a 3B's 404 ECU, and the kits require coil-on-plug
+("brand new code" in their blurb). The table layout survives, though: the GT3071 and GT2871
+boost chips differ from each other only at 0x2480–0x25CE (the 551's N75 duty
+and boost target tables) and a 28-byte label at 0x2F87, so UrROM's 551AA target
+and duty addresses do read them. One boost chip per turbo kit serves every
+injector variant. None of it runs in a 3B's 404 ECU, and the kits require coil-on-plug
 AAN/ABY/ADU, a 3.0 bar VMAP, 440 cc injectors and a 4 bar FPR.
 
 ## The definitions (.ecu)
