@@ -328,6 +328,19 @@ def build() -> Path:
           P("The stock sensor caps any 200 kPa-sensor chip near 1.0 bar (raw 255 is full scale). Beyond that the first "
             "step is a 250 kPa sensor, identified by its voltage at atmosphere, after which the same tables mean about "
             "1.4 bar and must be scaled back down in the editor.", NOTE),
+          P("Stock boost on a 3-bar sensor", H2),
+          P("The main ECU reads the MAP sensor in one place only, a 3-point correction that is 1.00 on every stock chip, so a "
+            "different sensor changes nothing but the boost board. <b>python -m urrom.cli boost-sensor &lt;chip&gt; &lt;out&gt; "
+            "--to vmap300_034</b> re-encodes a stock boost chip so every target, threshold, ceiling and correction keeps its kPa; "
+            "duty tables are untouched. Two are published for the GM / 034 3-bar sensor (kPa = raw/255 × 300 + 21):"),
+          table([["File (roms/tunes/404/)", "Base", "Peak target", "Use"],
+                 ["3b_boost_404aa_3bar034.bin", "stock 3B boost", "12.4 psi (stock)", "3-bar sensor, otherwise stock car"],
+                 ["rr_boost_404b_3bar034.bin", "stock RR boost", "13.3 psi (RR)", "3-bar sensor with the RR profile"]],
+                widths=[58 * mm, 30 * mm, 32 * mm, 50 * mm]),
+          P("Bench the sensor before burning: 5 V supply, about 1.3 V at atmosphere for a GM 3-bar; the identifier in the boost "
+            "tab confirms the preset from that number. The cluster boost gauge is driven off the boost board with an untraced "
+            "scale and will read about 1.5 × high on a 3-bar sensor; use a mechanical gauge. One raw count is now 1.18 kPa instead "
+            "of 0.78, so the loop acts 1.5 × harder per kPa; if boost hunts on a steady pull, rebuild with --scale-gains.", NOTE),
           P("The RS2-turbo chipset", H2),
           P("What the 200 20V would have shipped with if it had the RS2's K24-7200: <b>roms/tunes/404/3b_rs2turbo_boost_mpx4250.bin</b> "
             "and <b>3b_rs2turbo_fuel-ign_greens38.bin</b>, built by <b>python -m urrom.cli rs2-chipset</b> from the 3B's own chips "
