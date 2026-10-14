@@ -29,6 +29,12 @@ Headroom in stock-load units is 255/k (k = 0.75 -> 340, ~1.8x the stock top).
 
 The transient-enrichment index (4Ah) and the MAF linearisation offsets are
 per-pulse quantities and are left alone.  The boost board never sees LOAD.
+
+Known limits (2026-10-14 review): only the four tables in LOAD_COMPARED are known
+to hold LOAD-valued cells; other small tables in the lambda/idle task sets (e.g.
+0x7C9A, 0x7CB2) may also be load thresholds and are NOT rescaled until their
+readers are traced.  The cranking fixed air-per-rev (0x6343) is left alone, so
+during cranking the warm-up shaping lookup lands at stock-load 20/k instead of 20.
 """
 from __future__ import annotations
 
@@ -60,7 +66,7 @@ class RescaleReport:
         out = [f"load rescale x{self.factor:g}: GAIN 0x{GAIN_ADDR:04X} {self.gain_before} -> {self.gain_after}, "
                f"CAP 0x{CAP_ADDR:04X} {self.cap_before} -> {self.cap_after}",
                f"  {len(self.axes)} load axes re-gridded (top: "
-               + ", ".join(f"{o}->{n}" for _, o, n in sorted(set((0, o, n) for _, o, n in self.axes))) + ")"]
+               + ", ".join(f"{o}->{n}" for o, n in sorted({o: n for _, o, n in self.axes}.items())) + ")"]
         for a, o, n in self.tables:
             out.append(f"  0x{a:04X}: {o} -> {n}")
         out.append(f"  headroom: stock-load {255 / self.factor:.0f} before the 8-bit LOAD wraps (stock 255)")

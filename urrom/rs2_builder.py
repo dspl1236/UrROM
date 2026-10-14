@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import urrom.boost_sensor as bs
-from urrom.boost_rescale import convert_sensor, TARGETS, TARGET_CEILING
+from urrom.boost_rescale import convert_sensor, TARGETS
 from urrom.ecu_profiles import (VARIANT_404, VARIANT_551B_D02, VARIANT_551C, apply_checksum_for,
                                 read_map, write_map, get_axes, ign_encode_3b, normalize_rom)
 from urrom.gt_builder import injector_chip

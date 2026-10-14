@@ -114,7 +114,7 @@ def _rpm_bin(rpm: float, width: float = 250.0) -> int:
 
 
 def fit_from_logs(rom: bytes, stock_log: list[dict], new_log: list[dict],
-                  rpm_bin: float = 250.0) -> tuple[dict[int, list[int]], int, MafReport]:
+                  rpm_bin: float = 250.0, allow_clip: bool = False) -> tuple[dict[int, list[int]], int, MafReport]:
     """
     Solve M'(x') = M(x) * p / p' at matched (point, rpm bin) operating points and
     bin the results onto the three tables' axes.  Returns ({table_addr: new offsets},
@@ -134,11 +134,17 @@ def fit_from_logs(rom: bytes, stock_log: list[dict], new_log: list[dict],
             continue
         p_old = statistics.median(s["pulses"] for s in ref)
         x_old = statistics.median(s["rate"] for s in ref)
-        lam = statistics.median(s["lambda"] for s in ref) / (r["lambda"] or 1.0)
         m_old = multiplier(rom, x_old)
-        if r["pulses"] <= 0:
+        if r["pulses"] > 0:
+            # same true air from different pulses: M' = M(x) * p / p'
+            m_new = m_old * p_old / r["pulses"]
+        elif r["lambda"] and r["lambda"] > 0:
+            # no pulse count: the lambda the STOCK tables produced on the new sensor says how
+            # far the computed air was off (richer = lambda lower = computed air too high)
+            lam_old = statistics.median(s["lambda"] for s in ref) or 1.0
+            m_new = multiplier(rom, r["rate"]) * r["lambda"] / lam_old
+        else:
             continue
-        m_new = m_old * p_old / r["pulses"] * lam
         c = class_of(r["rate"])
         samples.append((c, r["rate"] * TABLES[c][2], m_new))
     if not samples:
@@ -146,6 +152,7 @@ def fit_from_logs(rom: bytes, stock_log: list[dict], new_log: list[dict],
     rep.lines.append(f"{len(samples)} matched samples over {len({key(r) for r in new_log})} operating points")
 
     new_tables: dict[int, list[float]] = {}
+    fitted_points: set[tuple[int, int]] = set()      # (table, index) the logs actually covered
     ratios = []
     for c, (addr, axis, offs) in enumerate(tables(rom)):
         per_point: dict[int, list[float]] = {}
@@ -158,6 +165,7 @@ def fit_from_logs(rom: bytes, stock_log: list[dict], new_log: list[dict],
         fitted = {i: statistics.median(v) for i, v in per_point.items()}
         for i, m in fitted.items():
             ratios.append(m / (BASE + offs[i]))
+            fitted_points.add((addr, i))
         if fitted:
             # unfitted points: stock value x the nearest fitted point's ratio
             vals = []
@@ -176,17 +184,22 @@ def fit_from_logs(rom: bytes, stock_log: list[dict], new_log: list[dict],
     for addr, _, offs in tables(rom):
         if addr in new_tables and all(abs(v - (BASE + o)) < 1e-9 for v, o in zip(new_tables[addr], offs)):
             new_tables[addr] = [(BASE + o) * overall for o in offs]     # no samples: stock shape x overall ratio
-    return _finish(rom, new_tables, rep)
+    return _finish(rom, new_tables, rep, allow_clip, check=fitted_points)
 
 
-def uniform(rom: bytes, ratio: float) -> tuple[dict[int, list[int]], int, MafReport]:
+def uniform(rom: bytes, ratio: float, allow_clip: bool = False) -> tuple[dict[int, list[int]], int, MafReport]:
     """M' = M * ratio everywhere (a sensor that gives 1/ratio times the hot-wire's pulses)."""
     rep = MafReport([f"uniform ratio x{ratio:g} on every point of the three range tables"])
     new = {addr: [(BASE + o) * ratio for o in offs] for addr, _, offs in tables(rom)}
-    return _finish(rom, new, rep)
+    return _finish(rom, new, rep, allow_clip)
 
 
-def _finish(rom: bytes, m_tables: dict[int, list[float]], rep: MafReport):
+class ClipError(ValueError):
+    """The sensor's curve does not fit the offset/GAIN range; the chip would be silently wrong."""
+
+
+def _finish(rom: bytes, m_tables: dict[int, list[float]], rep: MafReport, allow_clip: bool = False,
+            check: set | None = None):
     """
     Turn required multipliers M' into offset bytes and a GAIN.  The offset can only
     add to the fixed BASE (244), so a sensor that needs LESS multiplier than BASE
@@ -207,12 +220,26 @@ def _finish(rom: bytes, m_tables: dict[int, list[float]], rep: MafReport):
     for addr, _, old in tables(rom):
         rep.lines.append(f"  0x{addr:04X}: {old} -> {offs[addr]}")
     rep.lines.append(f"  GAIN 0x{GAIN_ADDR:04X}: {gain} -> {new_gain}" + ("" if g == 1.0 else f"  (tables scaled x{g:.3f}, gain x{1 / g:.3f})"))
-    clipped = sum(1 for addr, vals in m_tables.items() for v in vals if not (BASE <= v * g <= BASE + 255))
+    # a point counts as clipped when the clamp moves its multiplier by more than 2 % (fit
+    # noise of a count or two at the ends of the range is not a range violation)
+    # Points never covered by a log are extrapolated; a clip there cannot be verified
+    # either way, so the refusal only counts points the logs fitted (all points for
+    # uniform()).  Every clipped point is still listed.
+    clipped_pts = [(addr, i) for addr, vals in m_tables.items() for i, v in enumerate(vals)
+                   if abs(min(BASE + 255, max(BASE, v * g)) - v * g) > 0.02 * v * g]
+    clipped = len([pt for pt in clipped_pts if check is None or pt in check])
+    if clipped_pts:
+        rep.lines.append("  clipped points (>2 %): " + ", ".join(f"0x{a:04X}[{i}]" for a, i in clipped_pts)
+                         + ("" if check is None else "  (only log-covered points can refuse the chip)"))
+    gain_ok = 1 <= gain / g <= 255
     if clipped:
         rep.lines.append(f"  WARNING: {clipped} points clipped — the sensor's curve spans more than the offset "
                          f"range can hold ({(BASE + 255) / BASE:.2f}x); the exponent byte 0x6352 would have to move")
-    if not 1 <= gain / g <= 255:
+    if not gain_ok:
         rep.lines.append("  WARNING: GAIN out of range; the exponent byte 0x6352 would have to move (not automated)")
+    if (clipped or not gain_ok) and not allow_clip:
+        raise ClipError(rep.text() + "\n(refusing to write a chip whose air scale is wrong in part of its range; "
+                        "pass allow_clip / --allow-clip to override)")
     return offs, new_gain, rep
 
 

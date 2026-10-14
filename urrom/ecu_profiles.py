@@ -2229,7 +2229,7 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                                "ID text = 3B. Checksum at 0x7F00 valid. For a 3B on the RR boost chip that "
                                "stumbled at 2000 rpm on the leaner S2 fuel map. "
                                "roms/tunes/404/3b_hybrid_3bfuel_s2ign_404aa.bin"),
-    0x343E8CDF: ("404",       "UrROM GT3071 SCAFFOLD (2026-09-15) — NOT DRIVABLE. 3B 447907404AA on a x0.75 load "
+    0xBD7D4D5A: ("404",       "UrROM GT3071 SCAFFOLD (2026-09-15) — NOT DRIVABLE. 3B 447907404AA on a x0.75 load "
                                "scale (GAIN 139, cap 255), fuel/ign maps re-gridded to LOAD 11..105,145,185,225 with a "
                                "starter ramp in the three new columns, load limiter 250/200, fuel x0.555 for Bosch 550 cc "
                                "injectors. Open next to the 034 GT3071 R9 chip; docs/3B_GT3071_step4_fuel_spark.md."),
@@ -2237,7 +2237,7 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                                "and the cranking table x 305/550 = 0.555 (stock 0 280 150 737 = 305 cc at 3 bar); nothing "
                                "else changed, checksum valid. For running the 550s on the stock turbo; verify idle/cruise "
                                "lambda. roms/tunes/404/3b_inj550_404aa.bin"),
-    0xFACB0622: ("404_boost", "UrROM RS2-TURBO 3B (2026-09-16) — 3B boost chip on the MPX4250A (250 kPa) sensor with the "
+    0xA642898F: ("404_boost", "UrROM RS2-TURBO 3B (2026-09-16) — 3B boost chip on the MPX4250A (250 kPa) sensor with the "
                                "RS2 factory WOT boost curve (7.3 psi @2250 -> 14.2 psi from 5000 rpm) and the RS2 per-rpm N75 "
                                "duty envelope; duty ceiling 78 %, release 22 psi. REQUIRES the 250 kPa sensor. "
                                "roms/tunes/404/3b_rs2turbo_boost_mpx4250.bin, docs/3B_RS2_turbo_chipset.md"),

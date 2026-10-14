@@ -66,6 +66,11 @@ def _sensor(key_or_obj):
 def convert_sensor(rom: bytes | bytearray, old, new, limits_psi: float | None = None,
                    scale_gains: bool = False) -> tuple[bytearray, BoostConvertReport]:
     o, n = _sensor(old), _sensor(new)
+    if len(rom) == 0x10000:                          # a 27C512 image: convert the native chip, not copy 1 of 8
+        from urrom.ecu_profiles import fold_repeated_image
+        rom, _, _ = fold_repeated_image(bytes(rom))
+    if len(rom) != 0x2000:
+        raise ValueError(f"expected an 8 KB 404 boost chip (or its 64 KB 27C512 image), got {len(rom)} bytes")
     out = bytearray(rom)
     ratio = o.span_kpa / n.span_kpa
     rep = BoostConvertReport(o.key, n.key, ratio)
@@ -98,14 +103,25 @@ def convert_sensor(rom: bytes | bytearray, old, new, limits_psi: float | None = 
         rep.lines.append(f"P/I gain tables scaled x{ratio:.3f} (same duty per kPa as before)")
 
     if limits_psi is not None:
+        # Raise the TOP band to the requested boost and scale the lower bands by the same
+        # ratio, so the per-rpm shape Bosch gave the ceiling (lower at low rpm) and the
+        # release threshold survives instead of being flattened to the top value.
         amb = n.raw(bs.ATM_KPA)
-        ceil = min(255, n.raw(bs.ATM_KPA + limits_psi * bs.KPA_PER_PSI) - amb)
-        thr = min(255, n.raw(bs.ATM_KPA + (limits_psi + 3.0) * bs.KPA_PER_PSI))
-        a, k = TARGET_CEILING; out[a:a + k] = bytes([ceil] * k)
-        a, k = OVERBOOST_THR; out[a:a + k] = bytes([thr] * k)
-        rep.lines.append(f"limits raised for {limits_psi:g} psi: target ceiling {ceil} counts above ambient "
-                         f"({bs.kpa_to_psi_gauge(n.kpa(amb + ceil)):.1f} psi), overboost duty-release at raw {thr} "
-                         f"({bs.kpa_to_psi_gauge(n.kpa(thr)):.1f} psi)")
+        ceil_top = min(255, n.raw(bs.ATM_KPA + limits_psi * bs.KPA_PER_PSI) - amb)
+        thr_top = min(255, n.raw(bs.ATM_KPA + (limits_psi + 3.0) * bs.KPA_PER_PSI))
+        a, k = TARGET_CEILING
+        cur = list(out[a:a + k]); top = max(cur) or 1
+        out[a:a + k] = bytes(max(1, min(255, int(v * ceil_top / top + 0.5))) for v in cur)
+        a, k = OVERBOOST_THR
+        cur = list(out[a:a + k]); top = max(cur) or 1
+        # thresholds are absolute: scale the boost-above-ambient part, keep ambient
+        out[a:a + k] = bytes(max(amb + 1, min(255, int(amb + (v - amb) * (thr_top - amb) / max(1, top - amb) + 0.5)))
+                             for v in cur)
+        rep.lines.append(f"limits raised for {limits_psi:g} psi: target ceiling top band {ceil_top} counts above ambient "
+                         f"({bs.kpa_to_psi_gauge(n.kpa(amb + ceil_top)):.1f} psi), lower bands scaled to keep the "
+                         f"stock shape {list(out[TARGET_CEILING[0]:TARGET_CEILING[0] + 8])}; overboost duty-release top "
+                         f"band raw {thr_top} ({bs.kpa_to_psi_gauge(n.kpa(thr_top)):.1f} psi), bands "
+                         f"{list(out[OVERBOOST_THR[0]:OVERBOOST_THR[0] + 8])}")
     return out, rep
 
 

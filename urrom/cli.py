@@ -407,6 +407,7 @@ def cmd_maf_swap(args):
     p.add_argument('--new-log', help='CSV logged with the new sensor, same points')
     p.add_argument('--ratio', type=float, help='bench-less first pass: M\' = M x RATIO everywhere')
     p.add_argument('--rpm-bin', type=float, default=250.0)
+    p.add_argument('--allow-clip', action='store_true', help='write the chip even if part of the curve is clipped')
     ns = p.parse_args(args)
     from urrom import maf_swap
     path = Path(ns.rom)
@@ -419,9 +420,9 @@ def cmd_maf_swap(args):
     rom = path.read_bytes()
     if ns.stock_log and ns.new_log:
         offs, gain, rep = maf_swap.fit_from_logs(rom, maf_swap.read_log(Path(ns.stock_log)),
-                                                 maf_swap.read_log(Path(ns.new_log)), ns.rpm_bin)
+                                                 maf_swap.read_log(Path(ns.new_log)), ns.rpm_bin, ns.allow_clip)
     elif ns.ratio:
-        offs, gain, rep = maf_swap.uniform(rom, ns.ratio)
+        offs, gain, rep = maf_swap.uniform(rom, ns.ratio, ns.allow_clip)
     else:
         print("ERROR: give --stock-log and --new-log, or --ratio"); sys.exit(2)
     out = maf_swap.apply(rom, offs, gain)

@@ -2030,6 +2030,9 @@ class TestBoostSensorConversion:
         rom = bytes(load_rom("rr_boost_404b.bin"))
         out, rep = convert_sensor(rom, "bosch200", "vmap300_034")
         out = bytes(out)
+        # a 27C512 image is folded first, so the result is the same 8 KB chip
+        out_img, _ = convert_sensor(rom * 8, "bosch200", "vmap300_034")
+        assert bytes(out_img) == out
         old = bs.get_sensor("404"); new = next(s for s in bs.sensors() if s.key == "vmap300_034")
         for a in TARGETS:
             for i in range(128):
@@ -2051,9 +2054,11 @@ class TestBoostSensorConversion:
         out, rep = convert_sensor(rom, "bosch200", "vmap300_034", limits_psi=26, scale_gains=True)
         new = next(s for s in bs.sensors() if s.key == "vmap300_034")
         amb = new.raw(100)
-        assert all(v == out[0x1C4F] for v in out[0x1C4F:0x1C57])
-        assert abs(bs.kpa_to_psi_gauge(new.kpa(amb + out[0x1C4F])) - 26) < 0.6
-        assert abs(bs.kpa_to_psi_gauge(new.kpa(out[0x1EC7])) - 29) < 0.6
+        ceil = list(out[0x1C4F:0x1C57]); thr = list(out[0x1EC7:0x1ECF])
+        assert abs(bs.kpa_to_psi_gauge(new.kpa(amb + max(ceil))) - 26) < 0.6      # top band = the request
+        assert ceil == sorted(ceil) and ceil[0] < ceil[-1]                          # stock shape kept
+        assert abs(bs.kpa_to_psi_gauge(new.kpa(max(thr))) - 29) < 0.6
+        assert thr == sorted(thr) and thr[0] < thr[-1]
         assert out[0x1BBE] == round(rom[0x1BBE] * 2 / 3) or abs(out[0x1BBE] - rom[0x1BBE] * 2 / 3) < 1
 
 
@@ -2141,8 +2146,10 @@ class TestRS2TurboChipset:
         dwot = read_map(boost, td)[7]
         assert dwot[0] == 189 and dwot[-1] < 80                       # 74 % on top, ~27 % at 2250
         assert list(boost[0x1C47:0x1C4F]) == [200] * 8
-        # release above the profile
-        assert bs.kpa_to_psi_gauge(m250.kpa(boost[0x1EC7])) > 20
+        # release above the profile in every band (top band 22 psi, low bands scaled but above their targets)
+        thr = list(boost[0x1EC7:0x1ECF])
+        assert bs.kpa_to_psi_gauge(m250.kpa(max(thr))) > 20
+        assert all(thr[j] > wot[j] for j in range(8)) or all(thr[b] > 150 for b in range(8))
         # duty tables untouched by the sensor conversion except the RS2 envelope: A/D/F tables also written
         assert read_map(boost, next(m for m in VARIANT_404.boost_maps if m.main_addr == 0x1B34))[7][0] == 189
 
@@ -2226,3 +2233,15 @@ class TestMafSwap:
         # a sensor needing MORE multiplier than the tables can hold spills into GAIN
         offs4, gain4, rep4 = maf_swap.uniform(rom, 1.3)
         assert gain4 > rom[maf_swap.GAIN_ADDR] and max(max(v) for v in offs4.values()) <= 255
+        # a curve the offset range cannot hold is refused unless explicitly allowed
+        import pytest as _pt
+        with _pt.raises(maf_swap.ClipError):
+            maf_swap.uniform(rom, 2.5)
+        maf_swap.uniform(rom, 2.5, allow_clip=True)
+        # correction maps 3/4 are re-gridded without the starter ramp (they are deltas)
+        from urrom.gt_builder import build_scaffold as _bs
+        from urrom.ecu_profiles import read_map as _rm
+        sc, _ = _bs(rom)
+        m3 = next(m for m in VARIANT_404.main_maps if m.main_addr == 0x731C)
+        old3, new3 = _rm(rom, m3), _rm(bytes(sc), m3)
+        assert all(new3[r][15] == old3[r][15] for r in range(16))

@@ -33,6 +33,10 @@ from urrom.xcompare import _interp1
 
 FUEL_MAPS = (0x6A8E, 0x6C1C, 0x6D74, 0x6E98)
 IGN_MAPS = (0x7076, 0x71F8, 0x731C, 0x7440, 0x7667, 0x77CF, 0x7937)
+# Maps 3 (0x731C) and 4 (0x7440) are CORRECTIONS added to the main map's timing
+# (routine 0x1B2A), not absolute timing: they are re-gridded like the others but
+# the starter retard ramp is not applied to them (it would retard twice).
+IGN_CORRECTION_MAPS = (0x731C, 0x7440)
 LOAD_LIMITER_1, LOAD_LIMITER_2 = 0x6951, 0x695D
 CRANKING_ENRICH = (0x6BC8, 6)          # Q7 factor used INSTEAD of the map while cranking
 POST_START_ENRICH = (0x6A47, 5)        # relative (1 + v/128): NOT scaled with injectors
@@ -98,7 +102,7 @@ def regrid_load_axis(rom: bytearray, new_axis: list[int], enrich: float = 0.08,
             row = []
             for c in new_axis:
                 v = _interp1(old_axis, src, c)
-                if c > old_top:
+                if c > old_top and addr not in IGN_CORRECTION_MAPS:
                     frac = (c - old_top) / (new_axis[-1] - old_top)
                     if addr in FUEL_MAPS:
                         v = v * (1.0 + enrich * frac)
