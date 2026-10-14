@@ -782,8 +782,10 @@ class TestMapTableEditing:
 class TestXDFImport:
     """Tests for urrom/xdf_import.py — XDF v1.50 parser."""
 
-    XDF_FUEL = "/home/claude/rs2_xdf/RS2 551B fuel timing.xdf"
-    XDF_BOOST = "/home/claude/rs2_xdf/8D0907551B RS2 Boost.xdf"
+    # prj's GPL-3 TunerPro definition, vendored in rs2_xdf/ (see rs2_xdf/README.md);
+    # the 3B MapFinder XDF in docs/ covers the direct-address (32 KB) case.
+    XDF_FUEL = str(Path(__file__).resolve().parent.parent / "rs2_xdf" / "m232.xdf")
+    XDF_3B = str(Path(__file__).resolve().parent.parent / "docs" / "mapfinder_3b_404aa.xdf")
 
     def _skip_if_missing(self, path):
         import pytest
@@ -797,7 +799,7 @@ class TestXDFImport:
         r = parse_xdf(self.XDF_FUEL)
         assert r.region_size == 0x10000   # 64KB fuel chip
         assert r.wh_offset_delta == 0x8000
-        assert len(r.tables) >= 100       # vwnut8392 XDF has 314 tables
+        assert len(r.tables) >= 100       # prj's m232.xdf has 136 tables
 
     def test_fuel_xdf_map_address(self):
         self._skip_if_missing(self.XDF_FUEL)
@@ -821,21 +823,15 @@ class TestXDFImport:
         # (X * 0.75) - 22.5 at raw=83: 83*0.75-22.5 = 39.75
         assert abs(decode(83) - 39.75) < 0.1
 
-    def test_parse_boost_xdf_basic(self):
-        self._skip_if_missing(self.XDF_BOOST)
+    def test_parse_direct_address_xdf(self):
+        """A 32 KB flat-chip XDF (3B MapFinder export): no working-half delta."""
+        self._skip_if_missing(self.XDF_3B)
         from urrom.xdf_import import parse_xdf
-        r = parse_xdf(self.XDF_BOOST)
-        assert r.region_size == 0x7FFF   # 32KB boost chip
-        assert r.wh_offset_delta == 0    # direct addresses
-        assert len(r.tables) == 20
-
-    def test_boost_xdf_n75_address(self):
-        self._skip_if_missing(self.XDF_BOOST)
-        from urrom.xdf_import import parse_xdf
-        r = parse_xdf(self.XDF_BOOST)
-        n75 = [t for t in r.tables if "N75" in t.title and t.rows >= 8]
-        assert n75
-        assert n75[0].address == 0x2480
+        r = parse_xdf(self.XDF_3B)
+        assert r.region_size == 0x8000
+        assert r.wh_offset_delta == 0
+        assert len(r.tables) > 200
+        assert all(0 <= t.address < 0x8000 for t in r.tables)
 
     def test_equation_identity(self):
         from urrom.xdf_import import equation_to_decode, equation_to_encode
@@ -877,7 +873,7 @@ class TestXDFImport:
 class TestKnownCRCsFingerprinting:
     """Verify all .034 files fingerprint correctly against KNOWN_CRCS."""
 
-    BASE = "/home/claude/034_files/034 Files"
+    BASE = "Z:/Archive/Google Drive/home flashing/034 Files/034 Files"   # the owner's archive; skipped elsewhere
 
     def _skip_if_missing(self):
         import pytest
@@ -1131,7 +1127,7 @@ class TestMapExport:
     def _get_aby(self):
         import pytest
         from pathlib import Path
-        p = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        p = Path(__file__).resolve().parent.parent / "roms" / "aby_fuel-ign_551aa.bin"
         if not p.exists():
             pytest.skip("ABY ROM not available")
         return p.read_bytes()
@@ -1217,7 +1213,7 @@ class TestTuningChecks:
         import pytest
         from pathlib import Path
         from urrom.ecu_profiles import normalize_rom, detect_rom
-        p = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        p = Path(__file__).resolve().parent.parent / "roms" / "aby_fuel-ign_551aa.bin"
         if not p.exists():
             pytest.skip("ABY ROM not available")
         raw = p.read_bytes()
@@ -1260,12 +1256,16 @@ class TestTuningChecks:
         wh, det = self._get_aby_wh()
         wh_mut = bytearray(wh)
         v = det.variant
+        # a MAIN map: the fault-fallback / idle tables are excluded from the check
         ign_m = next(m for m in v.main_maps
                      if m.map_type == 'ign' and m.confidence == 'CONFIRMED'
-                     and m.rows > 1 and m.decode)
-        # Write a value that decodes to 60° (extreme)
-        # decode = raw * 0.6491 - 8.2186; 60 = raw * 0.6491 - 8.22 → raw ≈ 105
-        wh_mut[ign_m.main_addr + 5] = 105
+                     and m.rows > 1 and m.decode and 'main' in m.name.lower())
+        # Write a value that decodes above 58 deg under the map's own decode
+        # (Bosch 0.75 deg/count - 22.5: raw 112 -> 61.5 deg).  The old comment used
+        # the RS2.xdf formula, which docs/AAN_3B_port_notes.md showed is wrong.
+        raw = ign_m.encode(61.5) if ign_m.encode else 112
+        assert ign_m.decode(raw) > 58.0
+        wh_mut[ign_m.main_addr + 5] = raw
         issues = check_ign_advance(bytes(wh_mut), v, warn_advance=52.0, error_advance=58.0)
         errors = [i for i in issues if i.severity == 'error']
         assert len(errors) > 0, "Extreme advance not flagged"
@@ -1400,7 +1400,7 @@ class TestDataLog:
         from urrom.datalog import load_log, compute_coverage
         from urrom.ecu_profiles import normalize_rom, detect_rom
 
-        aby_path = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        aby_path = Path(__file__).resolve().parent.parent / "roms" / "aby_fuel-ign_551aa.bin"
         if not aby_path.exists():
             pytest.skip("ABY ROM not available")
 
@@ -1439,7 +1439,7 @@ class TestWidebandOverlay:
         from urrom.datalog import load_log, compute_afr_overlay
         from urrom.ecu_profiles import normalize_rom, detect_rom
 
-        aby_path = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        aby_path = Path(__file__).resolve().parent.parent / "roms" / "aby_fuel-ign_551aa.bin"
         if not aby_path.exists():
             pytest.skip("ABY ROM not available")
 
@@ -1467,7 +1467,7 @@ class TestWidebandOverlay:
         from urrom.datalog import load_log, compute_afr_overlay
         from urrom.ecu_profiles import normalize_rom, detect_rom
 
-        aby_path = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        aby_path = Path(__file__).resolve().parent.parent / "roms" / "aby_fuel-ign_551aa.bin"
         if not aby_path.exists():
             pytest.skip("ABY ROM not available")
 
@@ -1499,7 +1499,7 @@ class TestWidebandOverlay:
         from urrom.datalog import load_log, compute_afr_overlay
         from urrom.ecu_profiles import normalize_rom, detect_rom
 
-        aby_path = Path("/mnt/user-data/uploads/aby_fuel-ign_551aa.bin")
+        aby_path = Path(__file__).resolve().parent.parent / "roms" / "aby_fuel-ign_551aa.bin"
         if not aby_path.exists():
             pytest.skip("ABY ROM not available")
 

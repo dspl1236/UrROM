@@ -112,9 +112,11 @@ def check_ign_advance(rom: bytes, variant,
     from urrom.ecu_profiles import read_map
     issues = []
     # Only check primary ign maps — skip correction, warmup, overrun, LPG etc.
-    _SKIP_IGN = {"failsafe", "overrun", "lpg", "race fuel", "correction",
+    _SKIP_IGN = {"failsafe", "fallback", "overrun", "lpg", "race fuel", "correction",
                  "warmup", "decel", "coolant", "iat", "closed throttle",
-                 "cat converter", "adaptive", "trim"}
+                 "cat converter", "adaptive", "trim",
+                 # limp / idle tables legitimately sit at heavy retard
+                 "idle", "low-load"}
     ign_maps = [m for m in (variant.main_maps or [])
                 if m.map_type == 'ign' and m.confidence in ('CONFIRMED', 'PROVISIONAL')
                 and m.rows > 1 and m.decode

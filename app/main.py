@@ -5332,7 +5332,7 @@ class MainWindow(QMainWindow):
         # This XDF uses prjmod firmware layout (64KB doubled ROM, 0x0202 firmware)
         # Only inject into 551AA_0202 (prjmod) variants — stock 551B/C have different map offsets
         XDF_MAP = {
-            "551AA_0202": "rs2_xdf/RS2 551B fuel timing.xdf",
+            "551AA_0202": "rs2_xdf/m232.xdf",      # prj's own definition (GPL-3), see rs2_xdf/README.md
         }
         sw_id = variant.software_id
         xdf_rel = XDF_MAP.get(sw_id)

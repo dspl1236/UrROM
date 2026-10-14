@@ -181,6 +181,45 @@ def parse_xdf(path: str | Path) -> XDFResult:
 
 # ── Equation → decode/encode helpers ─────────────────────────────────────────
 
+def _linear_coeffs(eq: str):
+    """Evaluate an arbitrary arithmetic equation in X (e.g. prj's ``0.75*(X-30)``)
+    at three points and return (a, b) if it is linear, else None.  Only numbers,
+    X, + - * / and parentheses are accepted."""
+    import ast
+    try:
+        tree = ast.parse(eq, mode="eval")
+    except SyntaxError:
+        return None
+    ok_ops = (ast.Add, ast.Sub, ast.Mult, ast.Div)
+
+    def ev(node, x):
+        if isinstance(node, ast.Expression):
+            return ev(node.body, x)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.Name) and node.id == "X":
+            return x
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            v = ev(node.operand, x)
+            return -v if isinstance(node.op, ast.USub) else v
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ok_ops):
+            l, r = ev(node.left, x), ev(node.right, x)
+            if isinstance(node.op, ast.Add):  return l + r
+            if isinstance(node.op, ast.Sub):  return l - r
+            if isinstance(node.op, ast.Mult): return l * r
+            return l / r
+        raise ValueError("unsupported equation")
+
+    try:
+        y0, y1, y2 = ev(tree, 0.0), ev(tree, 1.0), ev(tree, 2.0)
+    except (ValueError, ZeroDivisionError):
+        return None
+    a, b = y1 - y0, y0
+    if abs((y2 - y0) - 2 * a) > 1e-9 or a == 0:
+        return None
+    return a, b
+
+
 def equation_to_decode(eq: str):
     """
     Convert a TunerPro equation string to a Python decode callable.
@@ -223,6 +262,12 @@ def equation_to_decode(eq: str):
         numer = float(m.group(1))
         return lambda x, n=numer: round(n / x, 3) if x else None
 
+    # anything else linear in X, e.g. 0.75*(X-30)
+    lin = _linear_coeffs(eq)
+    if lin:
+        a, b = lin
+        return lambda x, a=a, b=b: round(x * a + b, 3)
+
     return None
 
 
@@ -253,6 +298,11 @@ def equation_to_encode(eq: str):
     if m:
         numer = float(m.group(1))
         return lambda d, n=numer: max(1, min(255, round(n / d))) if d else 128
+
+    lin = _linear_coeffs(eq)
+    if lin:
+        a, b = lin
+        return lambda d, a=a, b=b: max(0, min(255, round((d - b) / a)))
 
     return None
 
