@@ -1545,7 +1545,9 @@ class TestMockEngine:
             assert len(cells1) == 4
 
     def test_idle_rpm_range(self):
+        import random
         from tools.mock_engine import IdleScenario, EngineState
+        random.seed(1991)   # the scenario adds gauss(0, 0.01) to lambda; unseeded, 3-sigma trips CI now and then
         s = EngineState()
         sc = IdleScenario()
         for t in [0, 5, 10, 20, 30]:
