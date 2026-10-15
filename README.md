@@ -153,7 +153,12 @@ python app/main.py
 ## Architecture
 
 ```
-app/main.py             # PyQt5 workbench: map tree dock · editor/compare · inspector dock
+app/main.py             # PyQt5 workbench: MainWindow (docks, menus, live data, session) + entry point
+urrom/ui/map_table.py   # The editable map grid
+urrom/ui/main_chip_tab.py, boost_tab.py, hardware_tab.py, compare_tab.py, overview_tab.py  # the tabs
+urrom/ui/widgets.py     # Info strip, changed-cell delegate, edit line, view switch
+urrom/ui/colours.py     # Heat-map colours shared by grid, tabs and compare
+urrom/ui/map_view.py    # Heat / 3D plot views
 urrom/ui/theme.py       # Shared palette + stylesheet
 urrom/ui/map_tree.py    # Map navigator (grouped by chip/category, live filter)
 urrom/ui/health_panel.py# Tuning health scan results panel
@@ -167,7 +172,7 @@ urrom/kwp.py            # KWP2000 live data dashboard
 urrom/cli.py            # Headless CLI scan mode
 ```
 
-Full documentation: `docs/UrROM_Master_Reference.md`
+Full documentation: `docs/UrROM_Master_Reference.md`; every reverse-engineering write-up is indexed in [docs/README.md](docs/README.md).
 
 ---
 
