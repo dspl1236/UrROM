@@ -30,11 +30,13 @@ Headroom in stock-load units is 255/k (k = 0.75 -> 340, ~1.8x the stock top).
 The transient-enrichment index (4Ah) and the MAF linearisation offsets are
 per-pulse quantities and are left alone.  The boost board never sees LOAD.
 
-Known limits (2026-10-14 review): only the four tables in LOAD_COMPARED are known
-to hold LOAD-valued cells; other small tables in the lambda/idle task sets (e.g.
-0x7C9A, 0x7CB2) may also be load thresholds and are NOT rescaled until their
-readers are traced.  The cranking fixed air-per-rev (0x6343) is left alone, so
-during cranking the warm-up shaping lookup lands at stock-load 20/k instead of 20.
+Known limits: the five tables in LOAD_COMPARED are the ones whose VALUES the
+firmware compares with LOAD (limiters, closed-loop limits, and the lambda task's
+load boundary 0x7C9A, traced 2026-10-14 in docs/3B_injection_path_RE.md §7).  The
+lambda task's other small table, 0x7CB2, holds a gain-like quantity, not load;
+its load AXIS is re-gridded with the rest.  The cranking fixed air-per-rev
+(0x6343) is left alone, so during cranking the warm-up shaping lookup lands at
+stock-load 20/k instead of 20.
 """
 from __future__ import annotations
 
@@ -48,6 +50,7 @@ CAP_ADDR, CAP_N = 0x6970, 4  # air-per-rev cap / 25 per rpm point (stock 200 x4)
 LOAD_COMPARED = {           # 1-D tables whose VALUES are load counts
     0x6951: 5, 0x695D: 5,   # load limiter 1 / 2
     0x7C72: 6, 0x7C80: 6,   # closed-loop lambda load limit / limp
+    0x7C9A: 6,              # lambda task load boundary (slot 6, compared with 3Fh at 0x3165)
 }
 LOAD_INPUT = 0x3F
 

@@ -147,3 +147,57 @@ valve PWM (compare 2, 5000-tick period, from XRAM 4F/50/51/53).
   the start-event multiplier use is traced.
 - Whether 0x6328 alone re-scales load without side effects on the boost-board
   hand-off (5Eh:5Fh goes to the knock MCU).
+
+## 7. The lambda / idle task table set (task 0x21CC, stub 0x35B0) — traced 2026-10-14
+
+The stub sets DPTR to the scalar table 0x63B8, the READ_MAP pointer base
+(75h:76h) to **0x6698** and the index base (77h:78h) to one of three lists by
+the coding byte and the boost-board flag:
+
+| A0h.3 | 20h.2 | index list | contents (offset into the pointer list, bit 0 = 2-D) |
+|---|---|---|---|
+| clear | any | 0x6282 | 03 05 07 08 0A 0D 0E 11 |
+| set | clear | 0x628A | 03 05 13 08 0A 0D 0E 11 |
+| set | set | 0x6292 | 03 05 15 08 0A 0D 0E 11 |
+
+Only slot 2 differs between the lists. The pointer list holds big-endian
+descriptor addresses (0x6698: 6860 7BF8 7C1E 7C44 7C6A 7C78 7C86 7C92 7CA0
+7CE2 7D08 7D2E 7D3C 7D62 7D70). READ_MAP (0x0D92) takes the slot in R2, reads
+the index byte, fetches the descriptor pointer, strips bit 0 as the 1-D/2-D
+flag, and returns the interpolated value in A. The task reads slots 0–5 at
+0x254C–0x257F and slots 6–7 after the jump to 0x3148:
+
+| slot | index | descriptor | data | shape | where the value goes |
+|---|---|---|---|---|---|
+| 0 | 03 | 0x7BF8 | 0x7C06 | 4 rpm × 6 load | XRAM 11h (0x2553) — "Idle/Low-load Ign A" |
+| 1 | 05 | 0x7C1E | 0x7C2C | 4 × 6 | XRAM 12h — "Idle/Low-load Ign B" |
+| 2 | 07 / 13 / 15 | 0x7C44 / 0x7CE2 / 0x7D08 | 0x7C52 / 0x7CF0 / 0x7D16 | 4 × 6 | XRAM 13h — "Idle/Low-load Ign C / D / E", chosen by A0h.3 and 20h.2 as above |
+| 3 | 08 | 0x7C6A | 0x7C72 | 6 rpm | XRAM 1Ch when XRAM CAh.1 is clear — closed-loop load limit |
+| 4 | 0A | 0x7C78 | 0x7C80 | 6 rpm | XRAM 1Ch when XRAM CAh.1 is set — the limp copy |
+| 5 | 0D | 0x7C86 | 0x7C8E | 2 × 2, all zero | XRAM 1Dh |
+| 6 | 0E | 0x7C92 | 0x7C9A | 6 rpm (600…6000) | compared with LOAD 3Fh at 0x3165: **XRAM 68h.4 = LOAD ≤ table** |
+| 7 | 11 | 0x7CA0 | 0x7CB2 | 6 rpm × 8 load (26…68) | × scalar 0x63EC (Q7, 128 = ×1) × 2, saturating at 255 → XRAM 6Eh (0x314C–0x315D) |
+
+The task keeps its state in XRAM 68h…6Eh and mirrors it into RAM 2Fh…35h
+while it runs (0x2F6F copies seven bytes in, 0x30EC six bytes back; the
+seventh, 6Eh, is only written by the slot-7 read). So the consumers test
+**2Fh.4** and use **35h**:
+
+- 2Fh.4 (LOAD at or below the 0x7C9A boundary, 58…50 load by rpm) is one of
+  three conditions ANDed at 0x2FF2 (`2Fh.3 ∧ 2Fh.4 ∧ 29h.5`) that admit the
+  controller block at 0x2FFA, and it selects between scalar constants at
+  0x22BB (0x63B8+0x19 vs +0x05) and 0x3058 (+0x39 path). The boundary sits
+  just above idle and cruise load (tester idle 20–26) and below the
+  closed-loop limit at 0x7C72 (54…96), so it marks a low-load region inside
+  the closed-loop window. Which quantity it steers is not yet pinned.
+- 35h (the 0x7CB2 result) is multiplied by the task state byte 33h at 0x30E0
+  while 27h.0 is set, and the 16-bit product goes to XRAM 6Fh. The values
+  rise with rpm and load, the top load column is 0 and the cap is 0xFD. A
+  gain or step size by operating point is the shape; the name waits on a log.
+
+Consequences: 0x7C9A holds LOAD-valued cells and is now in
+`load_rescale.LOAD_COMPARED`; 0x7CB2's values are not load (its load axis is
+re-gridded like every other descriptor axis); the five 4 × 6 blocks are the
+idle-ignition family read by this task, with C/D/E selected by coding bit
+A0h.3 — which coding numbers set that bit is still to be read off the plug
+ladder (docs/551_calibration_descriptors_RE.md §3f).

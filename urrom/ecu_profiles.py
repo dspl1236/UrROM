@@ -494,17 +494,26 @@ _MAPS_3B_MAIN = [
 
     # Smaller RPM x LOAD tables the firmware references (function TBD)
     _b3_raw("Idle/Low-load Ign A (0x7C06)", 0x7C06, 4, 6,
-            "4 RPM x 6 load, first of three sibling blocks — the 551's idle-ignition family.",
+            "Lambda/idle task slot 0 -> XRAM 11h (0x2553). 4 RPM x 6 load, first of the idle-ignition family (the 551 has the same).",
             unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
-    _b3_raw("Idle/Low-load Ign B (0x7C2C)", 0x7C2C, 4, 6, "Second sibling 4x6 block.",
+    _b3_raw("Idle/Low-load Ign B (0x7C2C)", 0x7C2C, 4, 6, "Lambda/idle task slot 1 -> XRAM 12h.",
             unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
-    _b3_raw("Idle/Low-load Ign C (0x7C52)", 0x7C52, 4, 6, "Third sibling 4x6 block.",
+    _b3_raw("Idle/Low-load Ign C (0x7C52)", 0x7C52, 4, 6, "Lambda/idle task slot 2 -> XRAM 13h when coding bit A0h.3 is clear (index list 0x6282).",
             unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
-    _b3_raw("Idle/Low-load Ign D (0x7CF0)", 0x7CF0, 4, 6, "Fourth 4x6 block (+0xEA).",
+    _b3_raw("Idle/Low-load Ign D (0x7CF0)", 0x7CF0, 4, 6, "Slot 2 -> XRAM 13h when A0h.3 is set and the boost-board flag 20h.2 is clear (index list 0x628A).",
             unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
-    _b3_raw("Idle/Low-load Ign E (0x7D16)", 0x7D16, 4, 6, "Fifth 4x6 block.",
+    _b3_raw("Idle/Low-load Ign E (0x7D16)", 0x7D16, 4, 6, "Slot 2 -> XRAM 13h when A0h.3 and 20h.2 are both set (index list 0x6292).",
             unit="°BTDC", decode=ign_decode_3b, encode=ign_encode_3b),
-    _b3_raw("RPM x Load 6x8 (0x7CB2)", 0x7CB2, 6, 8, "6 RPM x 8 load table."),
+    _b3_raw("Lambda task load boundary (RPM, 0x7C9A)", 0x7C9A, 6, 1,
+            "Lambda/idle task slot 6 (pointer list 0x6698 +0E): compared with LOAD (3Fh) at 0x3165, "
+            "XRAM 68h.4 = LOAD at or below this value. The bit gates the controller block at 0x2FF2 "
+            "(with 68h.3 and 29h.5) and selects between two scalar constants at 0x22BB / 0x3058. "
+            "Values are LOAD counts (58..50 by rpm), so rescale-load scales them "
+            "(docs/3B_injection_path_RE.md §7)."),
+    _b3_raw("Lambda task gain (RPM x Load, 0x7CB2)", 0x7CB2, 6, 8,
+            "Lambda/idle task slot 7: result x scalar 0x63EC (Q7, 128 = x1), saturating, -> XRAM 6Eh (0x314C); "
+            "then x task state byte 33h while 27h.0 is set, 16-bit product at XRAM 6Fh (0x30E0). Load axis 26..68, "
+            "top column 0, cap 0xFD. Role beyond that unconfirmed; the values are not LOAD."),
     _b3_raw("RPM x Load 6x4 (0x7D4A)", 0x7D4A, 6, 4, "6 RPM x 4 load table."),
     _b3_raw("Air-per-rev filter gain (RPM x Load, 0x698E)", 0x698E, 6, 4,
             "Fuel task slot 3 -> RAM 65h: gain of the 40h:41h air-per-rev filter that load (3Fh) is "
@@ -2229,7 +2238,7 @@ KNOWN_CRCS: dict[int, tuple[str, str]] = {
                                "ID text = 3B. Checksum at 0x7F00 valid. For a 3B on the RR boost chip that "
                                "stumbled at 2000 rpm on the leaner S2 fuel map. "
                                "roms/tunes/404/3b_hybrid_3bfuel_s2ign_404aa.bin"),
-    0xBD7D4D5A: ("404",       "UrROM GT3071 SCAFFOLD (2026-09-15) — NOT DRIVABLE. 3B 447907404AA on a x0.75 load "
+    0x1A4C1553: ("404",       "UrROM GT3071 SCAFFOLD (2026-09-15) — NOT DRIVABLE. 3B 447907404AA on a x0.75 load "
                                "scale (GAIN 139, cap 255), fuel/ign maps re-gridded to LOAD 11..105,145,185,225 with a "
                                "starter ramp in the three new columns, load limiter 250/200, fuel x0.555 for Bosch 550 cc "
                                "injectors. Open next to the 034 GT3071 R9 chip; docs/3B_GT3071_step4_fuel_spark.md."),
