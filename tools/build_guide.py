@@ -379,7 +379,37 @@ def build() -> Path:
     s += [P("Order on the car: greens and regulator with the old boost chip first (idle and cruise lambda), then the 250 kPa "
             "sensor with this boost chip (about 1.5 V at atmosphere on the bench), then the first pulls with a wideband, checking "
             "the loop reaches 14 psi by 5000 rpm without the release tripping. docs/3B_RS2_turbo_chipset.md has the numbers.", NOTE),
-          P("Where to read more", H2),
+          CondPageBreak(90 * mm)]
+
+    # ── 10 What to log ───────────────────────────────────────────────────
+    s += [P("10. What to log, and when", H1),
+          P("Every tool in the repository that is still waiting on something is waiting on a log. KWPBridge's 3B profile "
+            "reads <b>group 100</b>, a RAM window that carries rpm at 40 rpm per count and LOAD in the unit the map axes use; "
+            "group 000's rpm byte saturates at 2550 rpm, so it serves idle only. <b>Group 101</b> is the MAF window. "
+            "In UrROM, Tools → Start recording live data writes the CSV and paints the trace on the open map."),
+          table([["Situation", "Record", "Decides"],
+                 ["Hybrid chip (3B fuel, S2 ign, RR boost), first drives",
+                  "group 100 at a steady 2000 rpm cruise and a gentle roll-on from 1800; whether the stumble is there",
+                  "daily chip, or the 2k region of the fuel map is the next edit"],
+                 ["Any chip, third gear, 2000 to 6500 rpm full throttle", "group 100: LOAD and rpm",
+                  "where LOAD sits against the 200 cap; sets the GT3071 load-scale factor (a guess until then)"],
+                 ["GM 3-bar MAP sensor, key on, before any chip is burned", "output voltage at atmosphere",
+                  "about 1.3 V = vmap300_034 preset; about 1.0 V = zero-offset part, lin300"],
+                 ["The present chip, any drive", "fault memory, boost-gauge peak, coding number",
+                  "the baseline every later change is compared with"],
+                 ["Bosch 550 injectors on the 550 chip", "wideband lambda at idle and 3000 rpm cruise, warm, plus group 100",
+                  "the fuel trim on top of the 305/550 scaling"],
+                 ["3-bar sensor on the stock-kPa boost chip", "gauge peak on a pull, against the baseline",
+                  "that the sensor conversion is right before any target is raised"],
+                 ["3-bar sensor, targets raised in steps", "gauge peak, wideband on the pull, group 100",
+                  "each step; stop when lambda moves or knock retard shows"]],
+                widths=[48 * mm, 66 * mm, 56 * mm]),
+          Spacer(1, 4),
+          P("Name the file with the chip and the situation, note the coding number and the ambient temperature, and for "
+            "a pull the gear and rpm range. Several short clean segments beat one long file: the fits use medians per rpm "
+            "bin. docs/3B_what_to_log.md has the full list and says which tool each number feeds.", NOTE)]
+
+    s += [P("Where to read more", H2),
           table([["Document", "What it holds"],
                  ["docs/3B_boost_chip_RE.md", "boost MCU tables, axes, knock evaluator, control loop, sensor scale"],
                  ["docs/551_calibration_descriptors_RE.md", "descriptor tables, ignition selection (3B §3c, 551 §3e), coding plug §3f"],
@@ -390,6 +420,8 @@ def build() -> Path:
                  ["docs/3B_RS2_turbo_chipset.md", "the RS2-turbo chipset, table by table"],
                  ["docs/3B_injection_path_RE.md, 3B_load_headroom_RE.md", "how the 3B computes fuel and load, and where load stops"],
                  ["docs/3B_GT3071_plan.md", "the bigger-turbo build order and the 034 kit analysis"],
+                 ["docs/3B_what_to_log.md", "the logging checklist: what to record, how, and what each log decides"],
+                 ["docs/README.md", "index of every write-up in the docs folder, grouped by ECU family"],
                  ["docs/ROADMAP.md", "what was built and in what order"]],
                 widths=[62 * mm, 108 * mm])]
 
